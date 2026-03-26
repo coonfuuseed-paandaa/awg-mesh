@@ -1,23 +1,29 @@
 # Continuity State
 
-**Last Updated:** 2026-03-26
-**Session:** Project initialization — spec, plan, tasks, constitution, analyze
+**Last Updated:** 2026-03-27
+**Session:** Phase 0 implementation + PR review
 
 ## Done This Session
 
-- Designed full AWG mesh architecture through iterative brainstorming
-- Created spec.md: 14 FR, 6 NFR, 7 user stories, 8 edge cases
-- Ran /speckit-clarify: resolved 4 open questions (key storage, token model, thin mode, metrics)
-- Created plan.md: 6 phases, 12 Go libraries, architecture, file structure
-- Verified amneziawg-go: N devices per process confirmed (no patches needed)
-- Verified Jipok/wgctrl-go: all AWG params supported (Jc/Jmin/Jmax, S1-S4, H1-H4, I1-I5)
-- Created tasks.md: 82 tasks across 6 phases
-- Ran /speckit-analyze: 14 findings (0 CRITICAL, 4 HIGH)
-- Fixed all 4 HIGH findings (stale references from pre-clarification decisions)
-- Created constitution.md: 7 non-negotiable principles (C1-C7)
-- Created architecture checklist: 65 items
-- Initialized repo at D:\Dev\awg-mesh, pushed to github.com/thebtf/awg-mesh (private)
-- Studied amneziawg-scripts research: UAPI rotation, DPI fingerprinting, rotation consistency
+- Implemented Phase 0 (T001-T006) via codex delegation
+- cmd/awg-mesh-node/main.go: --mode flag dispatch (master/endpoint/client)
+- cmd/mesh-ctl/main.go: cobra root + version subcommand
+- Makefile: build/test/lint/proto-gen/docker/clean
+- deploy/Dockerfile: multi-stage golang:1.24-alpine → alpine:3.21
+- mesh-topology.example.yml: full schema with realistic values
+- .github/workflows/build.yml: lint + test + build + GHCR push
+- Fixed .gitignore binary patterns (was excluding cmd/ subdirs)
+- Fixed CI branch refs (main → master)
+- Fixed Dockerfile version injection (ldflags)
+- Fixed Makefile docker target (-f deploy/Dockerfile)
+- Fixed topology preset (paranoid → aggressive per spec)
+- go build ./... passes clean
+- Created PR #1, pushed to worktree-phase-0-init branch
+- Launched PR review (CodeRabbit + Gemini + Codex)
+
+## Done Previous Session
+
+- Full spec/plan/tasks/constitution/analyze cycle (see below)
 
 ## Key Design Decisions
 
@@ -48,30 +54,11 @@
   constitution.md      — 7 principles (C1-C7)
 ```
 
-## Design Docs
+## Working Set
 
-```
-.agent/data/
-  mesh-router-design.md    — core architecture, labels, load balancing, terminology
-  mesh-processes.md        — operational processes, rotation, capture, gRPC, commands
-  mesh-onboarding.md       — prepare → deploy → init protocol
-  mesh-unified-node.md     — single container per host design
-  mesh-address-space.md    — named ranges, CIDR notation, MTU, clamp-to-PMTU
-  mesh-overlay-design.md   — overlay network concept (early draft)
-```
-
-## Analyze Report (2026-03-26)
-
-| ID | Sev | Status | Summary |
-|----|-----|--------|---------|
-| A1 | HIGH | FIXED | FR-10 "except thin mode" removed |
-| A2 | HIGH | FIXED | NFR-2 updated to MESH_TOKEN dual auth |
-| A3 | HIGH | FIXED | FR-9 token remains as fallback, not invalidated |
-| A4 | MEDIUM | FIXED | FR-12 MikroTik full gRPC/UAPI support |
-| C1 | HIGH | FIXED | Bootstrap task T006a added |
-| C2 | MEDIUM | FIXED | Reconciliation task T016a added |
-| E1 | MEDIUM | FIXED | INIT_TOKEN → MESH_TOKEN everywhere |
-| B1-F2 | LOW-MED | NOTED | Non-blocking, documented in checklist |
+- Worktree: D:\Dev\awg-mesh\.claude\worktrees\phase-0-init (branch: worktree-phase-0-init)
+- PR: https://github.com/thebtf/awg-mesh/pull/1
+- PR review: CodeRabbit + Gemini + Codex invoked, awaiting results
 
 ## Dependencies (verified)
 
@@ -79,11 +66,13 @@
 |---------|--------|
 | amneziawg-go | VERIFIED: N devices per process, no patches |
 | Jipok/wgctrl-go | VERIFIED: all AWG params in Config struct |
+| spf13/cobra | VERIFIED: in go.mod, build passes |
 | MikroTik container gRPC | UNVERIFIED: needs Phase 5 test |
 | gopacket on Alpine | UNVERIFIED: needs Phase 4 test |
 
 ## Next
 
-1. Phase 0 tasks: T001 (done: repo created), T002-T006a
-2. Phase 1: AWG interface management PoC
-3. Start in `D:\Dev\awg-mesh` — run `/load` then `/autopilot` or manual phase execution
+1. Wait for PR #1 review results, address findings, merge
+2. T006a: mesh-ctl bootstrap --host (SSH Docker install) — may skip for now
+3. Phase 1: AWG interface management PoC (T007-T017)
+4. Testing: Docker Desktop available locally

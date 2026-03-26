@@ -6,12 +6,12 @@
 
 ## Phase 0: Project Init
 
-- [ ] T001 Create repository D:\Dev\awg-mesh with Go module, CLAUDE.md, AGENTS.md, .agent/ in cmd/awg-mesh-node/main.go
-- [ ] T002 [P] Create Makefile with targets: build, test, proto-gen, docker, lint in Makefile
-- [ ] T003 [P] Create Dockerfile (multi-stage: Go build + Alpine runtime) in deploy/Dockerfile
-- [ ] T004 Create mesh-topology.example.yml with full schema example in mesh-topology.example.yml
-- [ ] T005 [P] Set up GitHub Actions build + push to GHCR in .github/workflows/build.yml
-- [ ] T006 Add amneziawg-go and Jipok/wgctrl-go as Go dependencies in go.mod
+- [x] T001 Create repository D:\Dev\awg-mesh with Go module, CLAUDE.md, AGENTS.md, .agent/ in cmd/awg-mesh-node/main.go
+- [x] T002 [P] Create Makefile with targets: build, test, proto-gen, docker, lint in Makefile
+- [x] T003 [P] Create Dockerfile (multi-stage: Go build + Alpine runtime) in deploy/Dockerfile
+- [x] T004 Create mesh-topology.example.yml with full schema example in mesh-topology.example.yml
+- [x] T005 [P] Set up GitHub Actions build + push to GHCR in .github/workflows/build.yml
+- [x] T006 Add amneziawg-go and Jipok/wgctrl-go as Go dependencies in go.mod
 - [ ] T006a [P] Implement `mesh-ctl bootstrap --host IP` — SSH Docker install, pull image in cmd/mesh-ctl/cmd/bootstrap.go
 
 ## Phase 1: AWG Interface Management (FR-1 partial, FR-2)
