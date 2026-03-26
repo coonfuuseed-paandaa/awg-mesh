@@ -1,0 +1,77 @@
+overlay:
+  space: 172.20.70.0/24
+  physical_mtu: 1500
+  awg_overhead: 80
+  ranges:
+    - name: masters
+      cidr: 172.20.70.0/27
+      balancer_ip: 172.20.70.1
+    - name: endpoints
+      cidr: 172.20.70.32/27
+      balancer_ip: 172.20.70.33
+    - name: clients
+      cidr: 172.20.70.128/25
+
+masters:
+  - name: ru-master-01
+    host: 185.10.20.30
+    overlay_ip: 172.20.70.2
+    listen_port: 51820
+    endpoints:
+      - kz-01
+      - kz-02
+      - pl-01
+  - name: ru-master-02
+    host: 185.10.20.31
+    overlay_ip: 172.20.70.3
+    listen_port: 51820
+    endpoints:
+      - kz-03
+      - pl-01
+
+endpoints:
+  - name: kz-01
+    host: 195.200.100.10
+    overlay_ip: 172.20.70.34
+    listen_port: 51820
+    region: kz
+  - name: kz-02
+    host: 195.200.100.11
+    overlay_ip: 172.20.70.35
+    listen_port: 51820
+    region: kz
+  - name: kz-03
+    host: 195.200.100.12
+    overlay_ip: 172.20.70.36
+    listen_port: 51820
+    region: kz
+  - name: pl-01
+    host: 91.200.50.100
+    overlay_ip: 172.20.70.37
+    listen_port: 51820
+    region: pl
+
+clients:
+  - name: office-linux
+    type: linux
+    overlay_ip: 172.20.70.130
+    masters:
+      - ru-master-01
+      - ru-master-02
+  - name: branch-router
+    type: mikrotik
+    overlay_ip: 172.20.70.131
+    masters:
+      - ru-master-01
+
+capture:
+  domains_file: /config/domains.txt
+  schedule: "0 3 * * *"
+  retention_days: 30
+
+rotation:
+  defaults:
+    tier1_interval: 24h
+    tier2_interval: 168h
+    tier3_interval: 720h
+    preset: aggressive

@@ -1,8 +1,8 @@
 # Binaries
 /bin/
 /dist/
-awg-mesh-node
-mesh-ctl
+/awg-mesh-node
+/mesh-ctl
 *.exe
 
 # Go
