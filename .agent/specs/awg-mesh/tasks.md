@@ -62,13 +62,13 @@
 **Goal:** Master node with multi-tunnel, routing, ECMP, healthcheck, auto MTU.
 **Test criteria:** Master routes traffic through overlay to endpoint, failover works.
 
-- [ ] T037 [US2] Implement master mode: multi-interface management via AddTunnel/RemoveTunnel gRPC in pkg/node/master.go
-- [ ] T038 [US2] Implement Linux route management (ip route add/del/replace) in pkg/routing/route.go
-- [ ] T039 [P] [US2] Implement ECMP multipath routes for balancer IPs in pkg/routing/ecmp.go
-- [ ] T040 [P] [US2] Implement iptables NAT rules (MASQUERADE) in pkg/routing/nat.go
-- [ ] T041 [P] [US2] Implement TCP MSS clamping (--clamp-mss-to-pmtu) in pkg/routing/mss.go
-- [ ] T042 [US4] Implement healthcheck loop: ping overlay IPs, auto-remove/re-add routes in pkg/node/health.go
-- [ ] T043 [US2] Implement auto MTU calculation based on hop count in pkg/node/mtu.go
+- [x] T037 [US2] Implement master mode: multi-interface management via AddTunnel/RemoveTunnel gRPC in pkg/node/master.go
+- [x] T038 [US2] Implement Linux route management (ip route add/del/replace) in pkg/routing/route.go
+- [x] T039 [P] [US2] Implement ECMP multipath routes for balancer IPs in pkg/routing/ecmp.go
+- [x] T040 [P] [US2] Implement iptables NAT rules (MASQUERADE) in pkg/routing/nat.go
+- [x] T041 [P] [US2] Implement TCP MSS clamping (--clamp-mss-to-pmtu) in pkg/routing/mss.go
+- [x] T042 [US4] Implement healthcheck loop: ping overlay IPs, auto-remove/re-add routes in pkg/node/health.go
+- [x] T043 [US2] Implement auto MTU calculation based on hop count in pkg/node/mtu.go
 - [ ] T044 [US1] Implement `mesh-ctl endpoint prepare/init/remove` full lifecycle calling master AddTunnel in cmd/mesh-ctl/cmd/endpoint.go
 - [ ] T045 [US2] Implement `mesh-ctl master prepare/init/remove` full lifecycle with all endpoints in cmd/mesh-ctl/cmd/master.go
 - [ ] T046 [P] Implement docker-compose templates for master and endpoint in deploy/templates/
