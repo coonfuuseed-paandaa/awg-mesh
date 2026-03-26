@@ -19,42 +19,42 @@
 **Goal:** Create and manage AWG interfaces programmatically. Single tunnel proof-of-concept.
 **Test criteria:** Two awg-mesh-node processes establish a tunnel and ping each other.
 
-- [ ] T007 [US1] Implement TUN device creation + device.NewDevice() wrapper in pkg/wg/interface.go
-- [ ] T008 [US1] Implement UAPI param set/get via device.IpcSet() in pkg/wg/uapi.go
-- [ ] T009 [P] [US1] Implement WG key generation (Curve25519) in pkg/wg/keygen.go
-- [ ] T010 [P] [US1] Implement AWG conf file generation from Go structs in pkg/wg/config.go
-- [ ] T011 [US1] Implement topology.yml parser with CIDR range support in pkg/topology/topology.go
-- [ ] T012 [P] [US1] Implement named range management + IP allocator in pkg/topology/ranges.go
-- [ ] T013 [P] [US1] Implement topology validation (overlap, orphan, CIDR) in pkg/topology/validate.go
-- [ ] T014 [US1] Implement awg-mesh-node skeleton with --mode flag dispatch in cmd/awg-mesh-node/main.go
-- [ ] T015 [US1] Implement endpoint mode: single AWG server interface + NAT + overlay IP in pkg/node/endpoint.go
-- [ ] T016 [US1] Implement client mode: single AWG client interface in pkg/node/client.go
-- [ ] T016a Implement config persistence + startup reconciliation (load saved config → restore interfaces on restart) in pkg/node/config.go
-- [ ] T017 Verify: two awg-mesh-node containers establish tunnel + ping overlay IP (integration test)
+- [x] T007 [US1] Implement TUN device creation + device.NewDevice() wrapper in pkg/wg/interface.go
+- [x] T008 [US1] Implement UAPI param set/get via device.IpcSet() in pkg/wg/uapi.go
+- [x] T009 [P] [US1] Implement WG key generation (Curve25519) in pkg/wg/keygen.go
+- [x] T010 [P] [US1] Implement AWG conf file generation from Go structs in pkg/wg/config.go
+- [x] T011 [US1] Implement topology.yml parser with CIDR range support in pkg/topology/topology.go
+- [x] T012 [P] [US1] Implement named range management + IP allocator in pkg/topology/ranges.go
+- [x] T013 [P] [US1] Implement topology validation (overlap, orphan, CIDR) in pkg/topology/validate.go
+- [x] T014 [US1] Implement awg-mesh-node skeleton with --mode flag dispatch in cmd/awg-mesh-node/main.go
+- [x] T015 [US1] Implement endpoint mode: single AWG server interface + NAT + overlay IP in pkg/node/endpoint.go
+- [x] T016 [US1] Implement client mode: single AWG client interface in pkg/node/client.go
+- [x] T016a Implement config persistence + startup reconciliation (load saved config → restore interfaces on restart) in pkg/node/config.go
+- [x] T017 Verify: two awg-mesh-node containers establish tunnel + ping overlay IP (integration test)
 
 ## Phase 2: gRPC + Auth (FR-9, FR-10)
 
 **Goal:** gRPC server with dual auth, mesh-ctl init workflow.
 **Test criteria:** mesh-ctl prepare → deploy → init completes, mTLS active.
 
-- [ ] T018 Define protobuf service AwgAgent (Init, AddPeer, RemovePeer, RotateParams, Status) in proto/agent.proto
-- [ ] T019 [P] Define protobuf shared types (AwgParams, NodeStatus, TunnelStatus) in proto/types.proto
-- [ ] T020 Generate Go code from protobuf in Makefile (proto-gen target)
-- [ ] T021 Implement mTLS CA generation + cert issuance in pkg/tls/ca.go
-- [ ] T022 [P] Implement cert load/save/validate utilities in pkg/tls/cert.go
-- [ ] T023 [P] Implement MESH_TOKEN generation + hashing + rotation in pkg/tls/token.go
-- [ ] T024 Implement gRPC server with dual auth interceptor (mTLS primary, token fallback) in pkg/grpc/server.go
-- [ ] T025 [P] Implement gRPC client with auto-fallback (try mTLS → token) in pkg/grpc/client.go
-- [ ] T026 Implement Init RPC handler: receive certs, save config, transition to mTLS in pkg/grpc/handlers.go
-- [ ] T027 Implement mesh-ctl cobra skeleton with root + version commands in cmd/mesh-ctl/main.go
-- [ ] T028 Implement `mesh-ctl endpoint prepare` — generate docker-compose + token in cmd/mesh-ctl/cmd/endpoint.go
-- [ ] T029 [P] Implement `mesh-ctl master prepare` — generate docker-compose + token in cmd/mesh-ctl/cmd/master.go
-- [ ] T030 [P] Implement `mesh-ctl client prepare` — generate config for linux/mikrotik in cmd/mesh-ctl/cmd/client.go
-- [ ] T031 Implement `mesh-ctl endpoint init` — connect via token, exchange certs, configure node in cmd/mesh-ctl/cmd/endpoint.go
-- [ ] T032 Implement `mesh-ctl master init` in cmd/mesh-ctl/cmd/master.go
-- [ ] T033 Implement `mesh-ctl client init` in cmd/mesh-ctl/cmd/client.go
-- [ ] T034 Implement `mesh-ctl token rotate --node X` in cmd/mesh-ctl/cmd/token.go
-- [ ] T035 Implement `mesh-ctl status` — query all nodes via gRPC in cmd/mesh-ctl/cmd/status.go
+- [x] T018 Define protobuf service AwgAgent (Init, AddPeer, RemovePeer, RotateParams, Status) in proto/agent.proto
+- [x] T019 [P] Define protobuf shared types (AwgParams, NodeStatus, TunnelStatus) in proto/types.proto
+- [x] T020 Generate Go code from protobuf in Makefile (proto-gen target)
+- [x] T021 Implement mTLS CA generation + cert issuance in pkg/tls/ca.go
+- [x] T022 [P] Implement cert load/save/validate utilities in pkg/tls/cert.go
+- [x] T023 [P] Implement MESH_TOKEN generation + hashing + rotation in pkg/tls/token.go
+- [x] T024 Implement gRPC server with dual auth interceptor (mTLS primary, token fallback) in pkg/grpc/server.go
+- [x] T025 [P] Implement gRPC client with auto-fallback (try mTLS → token) in pkg/grpc/client.go
+- [x] T026 Implement Init RPC handler: receive certs, save config, transition to mTLS in pkg/grpc/handlers.go
+- [x] T027 Implement mesh-ctl cobra skeleton with root + version commands in cmd/mesh-ctl/main.go
+- [x] T028 Implement `mesh-ctl endpoint prepare` — generate docker-compose + token in cmd/mesh-ctl/cmd/endpoint.go
+- [x] T029 [P] Implement `mesh-ctl master prepare` — generate docker-compose + token in cmd/mesh-ctl/cmd/master.go
+- [x] T030 [P] Implement `mesh-ctl client prepare` — generate config for linux/mikrotik in cmd/mesh-ctl/cmd/client.go
+- [x] T031 Implement `mesh-ctl endpoint init` — connect via token, exchange certs, configure node in cmd/mesh-ctl/cmd/endpoint.go
+- [x] T032 Implement `mesh-ctl master init` in cmd/mesh-ctl/cmd/master.go
+- [x] T033 Implement `mesh-ctl client init` in cmd/mesh-ctl/cmd/client.go
+- [x] T034 Implement `mesh-ctl token rotate --node X` in cmd/mesh-ctl/cmd/token.go
+- [x] T035 Implement `mesh-ctl status` — query all nodes via gRPC in cmd/mesh-ctl/cmd/status.go
 - [ ] T036 Verify: full prepare → deploy → init → mTLS active → status works (integration test)
 
 ## Phase 3: Master Mode (FR-1, FR-4, FR-5, FR-13)
