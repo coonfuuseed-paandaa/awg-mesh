@@ -1,9 +1,17 @@
 package cmd
 
 import (
+	"context"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
+	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
+	"github.com/thebtf/awg-mesh/pkg/topology"
+	proto "github.com/thebtf/awg-mesh/proto"
 )
 
 func newEndpointCommand() *cobra.Command {
@@ -25,7 +33,71 @@ func newEndpointPrepareCommand() *cobra.Command {
 		Short: "Generate docker-compose and token for an endpoint",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("endpoint prepare: %s (not yet implemented)\n", args[0])
+			name := args[0]
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology %q: %w", topologyPath, err)
+			}
+
+			ep := topo.FindEndpoint(name)
+			if ep == nil {
+				return fmt.Errorf("endpoint %q not found in topology", name)
+			}
+
+			caCert, caKey, err := ensureCA(configDir)
+			_ = caCert
+			_ = caKey
+			if err != nil {
+				return fmt.Errorf("ensure CA: %w", err)
+			}
+
+			token, err := pkgtls.GenerateToken()
+			if err != nil {
+				return fmt.Errorf("generate token: %w", err)
+			}
+
+			hash, err := pkgtls.HashToken(token)
+			if err != nil {
+				return fmt.Errorf("hash token: %w", err)
+			}
+
+			nd := nodeDir(configDir, name)
+			if err := pkgtls.SaveTokenHash(nd, hash); err != nil {
+				return fmt.Errorf("save token hash: %w", err)
+			}
+
+			if err := saveToken(nd, token); err != nil {
+				return fmt.Errorf("save token: %w", err)
+			}
+
+			data := struct {
+				Name       string
+				Host       string
+				OverlayIP  string
+				Image      string
+				ListenPort int
+				Token      string
+			}{
+				Name:       ep.Name,
+				Host:       ep.Host,
+				OverlayIP:  ep.OverlayIP,
+				Image:      "ghcr.io/thebtf/awg-mesh-node:latest",
+				ListenPort: ep.ListenPort,
+				Token:      token,
+			}
+			outputPath := ep.Name + "-docker-compose.yml"
+			if err := renderDockerCompose(endpointComposeTemplate, data, outputPath); err != nil {
+				return fmt.Errorf("render docker-compose: %w", err)
+			}
+
+			fmt.Printf("Endpoint %q prepared.\n\nToken: %s\n\nDocker Compose written to: %s\n\nNext steps:\n  1. Copy %s to the target host\n  2. docker compose -f %s up -d\n  3. mesh-ctl endpoint init %s\n",
+				name,
+				token,
+				outputPath,
+				outputPath,
+				outputPath,
+				name,
+			)
 			return nil
 		},
 	}
@@ -37,7 +109,74 @@ func newEndpointInitCommand() *cobra.Command {
 		Short: "Initialize endpoint via gRPC — exchange certs, configure node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("endpoint init: %s (not yet implemented)\n", args[0])
+			name := args[0]
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology %q: %w", topologyPath, err)
+			}
+
+			ep := topo.FindEndpoint(name)
+			if ep == nil {
+				return fmt.Errorf("endpoint %q not found in topology", name)
+			}
+
+			caCert, caKey, err := pkgtls.LoadCA(configDir)
+			if err != nil {
+				return fmt.Errorf("load CA: %w", err)
+			}
+
+			certPEM, keyPEM, err := pkgtls.IssueCert(caCert, caKey, ep.Name, []string{ep.Host})
+			if err != nil {
+				return fmt.Errorf("issue cert: %w", err)
+			}
+
+			caCertPEM, err := os.ReadFile(caPath(configDir))
+			if err != nil {
+				return fmt.Errorf("read CA cert: %w", err)
+			}
+
+			nd := nodeDir(configDir, name)
+			token, err := loadToken(nd)
+			if err != nil {
+				return fmt.Errorf("load token: %w", err)
+			}
+
+			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
+				Target:     ep.Host + ":9090",
+				CACertPath: caPath(configDir),
+				Token:      token,
+			})
+			if err != nil {
+				return fmt.Errorf("create gRPC client: %w", err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client: %v\n", closeErr)
+				}
+			}()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			resp, err := client.Agent().Init(ctx, &proto.InitRequest{
+				CaCert:   caCertPEM,
+				NodeCert: certPEM,
+				NodeKey:  keyPEM,
+				Config: &proto.NodeConfig{
+					Name:       ep.Name,
+					Mode:       "endpoint",
+					OverlayIp:  ep.OverlayIP,
+					ListenPort: int32(ep.ListenPort),
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("init RPC: %w", err)
+			}
+			if !resp.Success {
+				return fmt.Errorf("init failed: %s", resp.Message)
+			}
+
+			fmt.Printf("Endpoint %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
 			return nil
 		},
 	}

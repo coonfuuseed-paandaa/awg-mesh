@@ -1,9 +1,17 @@
 package cmd
 
 import (
+	"context"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
+	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
+	"github.com/thebtf/awg-mesh/pkg/topology"
+	proto "github.com/thebtf/awg-mesh/proto"
 )
 
 func newMasterCommand() *cobra.Command {
@@ -12,25 +20,164 @@ func newMasterCommand() *cobra.Command {
 		Short: "Manage master nodes",
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	cmd.AddCommand(newMasterPrepareCommand())
+	cmd.AddCommand(newMasterInitCommand())
+
+	return cmd
+}
+
+func newMasterPrepareCommand() *cobra.Command {
+	return &cobra.Command{
 		Use:   "prepare [name]",
 		Short: "Generate docker-compose and token for a master",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("master prepare: %s (not yet implemented)\n", args[0])
+			name := args[0]
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology %q: %w", topologyPath, err)
+			}
+
+			master := topo.FindMaster(name)
+			if master == nil {
+				return fmt.Errorf("master %q not found in topology", name)
+			}
+
+			caCert, caKey, err := ensureCA(configDir)
+			_ = caCert
+			_ = caKey
+			if err != nil {
+				return fmt.Errorf("ensure CA: %w", err)
+			}
+
+			token, err := pkgtls.GenerateToken()
+			if err != nil {
+				return fmt.Errorf("generate token: %w", err)
+			}
+
+			hash, err := pkgtls.HashToken(token)
+			if err != nil {
+				return fmt.Errorf("hash token: %w", err)
+			}
+
+			nd := nodeDir(configDir, name)
+			if err := pkgtls.SaveTokenHash(nd, hash); err != nil {
+				return fmt.Errorf("save token hash: %w", err)
+			}
+
+			if err := saveToken(nd, token); err != nil {
+				return fmt.Errorf("save token: %w", err)
+			}
+
+			data := struct {
+				Name       string
+				Host       string
+				OverlayIP  string
+				Image      string
+				ListenPort int
+				Token      string
+			}{
+				Name:       master.Name,
+				Host:       master.Host,
+				OverlayIP:  master.OverlayIP,
+				Image:      "ghcr.io/thebtf/awg-mesh-node:latest",
+				ListenPort: master.ListenPort,
+				Token:      token,
+			}
+
+			outputPath := master.Name + "-docker-compose.yml"
+			if err := renderDockerCompose(masterComposeTemplate, data, outputPath); err != nil {
+				return fmt.Errorf("render docker-compose: %w", err)
+			}
+
+			fmt.Printf("Master %q prepared.\n\nToken: %s\n\nDocker Compose written to: %s\n\nNext steps:\n  1. Copy %s to the target host\n  2. docker compose -f %s up -d\n  3. mesh-ctl master init %s\n",
+				name,
+				token,
+				outputPath,
+				outputPath,
+				outputPath,
+				name,
+			)
 			return nil
 		},
-	})
+	}
+}
 
-	cmd.AddCommand(&cobra.Command{
+func newMasterInitCommand() *cobra.Command {
+	return &cobra.Command{
 		Use:   "init [name]",
 		Short: "Initialize master via gRPC",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("master init: %s (not yet implemented)\n", args[0])
+			name := args[0]
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology %q: %w", topologyPath, err)
+			}
+
+			master := topo.FindMaster(name)
+			if master == nil {
+				return fmt.Errorf("master %q not found in topology", name)
+			}
+
+			caCert, caKey, err := pkgtls.LoadCA(configDir)
+			if err != nil {
+				return fmt.Errorf("load CA: %w", err)
+			}
+
+			certPEM, keyPEM, err := pkgtls.IssueCert(caCert, caKey, master.Name, []string{master.Host})
+			if err != nil {
+				return fmt.Errorf("issue cert: %w", err)
+			}
+
+			caCertPEM, err := os.ReadFile(caPath(configDir))
+			if err != nil {
+				return fmt.Errorf("read CA cert: %w", err)
+			}
+
+			nd := nodeDir(configDir, name)
+			token, err := loadToken(nd)
+			if err != nil {
+				return fmt.Errorf("load token: %w", err)
+			}
+
+			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
+				Target:     master.Host + ":9090",
+				CACertPath: caPath(configDir),
+				Token:      token,
+			})
+			if err != nil {
+				return fmt.Errorf("create gRPC client: %w", err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client: %v\n", closeErr)
+				}
+			}()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			resp, err := client.Agent().Init(ctx, &proto.InitRequest{
+				CaCert:   caCertPEM,
+				NodeCert: certPEM,
+				NodeKey:  keyPEM,
+				Config: &proto.NodeConfig{
+					Name:       master.Name,
+					Mode:       "master",
+					OverlayIp:  master.OverlayIP,
+					ListenPort: int32(master.ListenPort),
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("init RPC: %w", err)
+			}
+			if !resp.Success {
+				return fmt.Errorf("init failed: %s", resp.Message)
+			}
+
+			fmt.Printf("Master %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
 			return nil
 		},
-	})
-
-	return cmd
+	}
 }

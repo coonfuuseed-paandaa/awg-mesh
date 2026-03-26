@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
+	"github.com/thebtf/awg-mesh/pkg/topology"
 )
 
 func newStatusCommand() *cobra.Command {
@@ -11,7 +16,63 @@ func newStatusCommand() *cobra.Command {
 		Use:   "status",
 		Short: "Query status of all mesh nodes via gRPC",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("status: not yet implemented")
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology: %w", err)
+			}
+
+			type nodeInfo struct {
+				name string
+				host string
+				mode string
+			}
+
+			var nodes []nodeInfo
+			for _, m := range topo.Masters {
+				nodes = append(nodes, nodeInfo{name: m.Name, host: m.Host, mode: "master"})
+			}
+			for _, e := range topo.Endpoints {
+				nodes = append(nodes, nodeInfo{name: e.Name, host: e.Host, mode: "endpoint"})
+			}
+
+			fmt.Printf("%-20s %-10s %-20s %-10s %-15s %s\n", "NAME", "MODE", "HOST", "STATUS", "OVERLAY_IP", "TUNNELS")
+			fmt.Println("--------------------------------------------------------------------------------------------")
+
+			for _, n := range nodes {
+				nd := nodeDir(configDir, n.name)
+				token, tokenErr := loadToken(nd)
+				if tokenErr != nil {
+					fmt.Printf("%-20s %-10s %-20s %-10s\n", n.name, n.mode, n.host, "NO_TOKEN")
+					continue
+				}
+
+				client, err := grpcclient.NewClient(grpcclient.ClientConfig{
+					Target:     n.host + ":9090",
+					CACertPath: caPath(configDir),
+					Token:      token,
+				})
+				if err != nil {
+					fmt.Printf("%-20s %-10s %-20s %-10s\n", n.name, n.mode, n.host, "CONNECT_ERR")
+					continue
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				resp, err := client.Agent().GetStatus(ctx, nil)
+				cancel()
+
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close %s: %v\n", n.name, closeErr)
+				}
+
+				if err != nil {
+					fmt.Printf("%-20s %-10s %-20s %-10s\n", n.name, n.mode, n.host, "OFFLINE")
+					continue
+				}
+
+				fmt.Printf("%-20s %-10s %-20s %-10s %-15s %d\n",
+					resp.Name, resp.Mode, n.host, "ONLINE", resp.OverlayIp, len(resp.Tunnels))
+			}
+
 			return nil
 		},
 	}
