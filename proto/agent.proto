@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package awgmesh;
+
+option go_package = "github.com/thebtf/awg-mesh/proto";
+
+import "types.proto";
+
+service AwgAgent {
+  // Onboarding
+  rpc Init(InitRequest) returns (InitResponse);
+  rpc RotateToken(RotateTokenRequest) returns (RotateTokenResponse);
+
+  // Tunnel management (master mode)
+  rpc AddTunnel(AddTunnelRequest) returns (AddTunnelResponse);
+  rpc RemoveTunnel(RemoveTunnelRequest) returns (RemoveTunnelResponse);
+  rpc ListTunnels(Empty) returns (TunnelList);
+
+  // Peer management (endpoint mode)
+  rpc AddPeer(AddPeerRequest) returns (AddPeerResponse);
+  rpc RemovePeer(RemovePeerRequest) returns (RemovePeerResponse);
+  rpc ListPeers(Empty) returns (PeerList);
+
+  // Rotation
+  rpc RotateParams(RotateParamsRequest) returns (RotateParamsResponse);
+  rpc GetParams(GetParamsRequest) returns (AwgParams);
+
+  // Capture (master only)
+  rpc CaptureRefresh(CaptureRequest) returns (CaptureResponse);
+
+  // Status
+  rpc GetStatus(Empty) returns (NodeStatus);
+  rpc GetRoutes(Empty) returns (RouteTable);
+  rpc GetHealth(Empty) returns (HealthResponse);
+}

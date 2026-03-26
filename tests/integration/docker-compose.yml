@@ -1,0 +1,59 @@
+services:
+  node-server:
+    image: awg-mesh:test
+    command:
+      - "--mode"
+      - "endpoint"
+      - "--name"
+      - "server"
+      - "--overlay-ip"
+      - "172.20.70.2"
+      - "--listen-port"
+      - "51820"
+      - "--config-dir"
+      - "/config"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - node-server-config:/config
+    networks:
+      test-mesh:
+        ipv4_address: 192.168.100.10
+
+  node-client:
+    image: awg-mesh:test
+    command:
+      - "--mode"
+      - "client"
+      - "--name"
+      - "client"
+      - "--overlay-ip"
+      - "172.20.70.3"
+      - "--config-dir"
+      - "/config"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - node-client-config:/config
+    networks:
+      test-mesh:
+        ipv4_address: 192.168.100.11
+    depends_on:
+      - node-server
+
+networks:
+  test-mesh:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.100.0/24
+
+volumes:
+  node-server-config:
+  node-client-config:
