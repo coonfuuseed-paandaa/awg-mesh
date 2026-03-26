@@ -6,7 +6,7 @@
 ## Principle: 3-Step Onboarding
 
 ```
-1. PREPARE  — mesh-ctl generates config + INIT_TOKEN (offline, on admin PC)
+1. PREPARE  — mesh-ctl generates config + MESH_TOKEN (offline, on admin PC)
 2. DEPLOY   — image deployed manually or automatically (docker/mikrotik)
 3. INIT     — mesh-ctl connects via token, completes onboarding, switches to mTLS
 ```
@@ -43,14 +43,14 @@ mesh-ctl endpoint prepare \
 ### What mesh-ctl does:
 
 ```
-1. Generate INIT_TOKEN (random, one-time, time-limited)
+1. Generate MESH_TOKEN (random, one-time, time-limited)
    e.g., "mesh-init-EXAMPLE"
 
 2. Generate node-specific config:
    For MikroTik: container env vars + .rsc script
-     Required params: INIT_TOKEN + CONFIG_DIR (host path for persistent config)
+     Required params: MESH_TOKEN + CONFIG_DIR (host path for persistent config)
    For Linux: docker-compose.yml + .env
-     Required params: INIT_TOKEN + CONFIG_DIR (host volume mount)
+     Required params: MESH_TOKEN + CONFIG_DIR (host volume mount)
 
 3. Save pending node info locally:
    ~/.mesh-ctl/pending/<name>.json
@@ -73,12 +73,12 @@ mesh-ctl endpoint prepare \
 ✓ Prepared: mikrotik-home (client, mikrotik)
 
 Files:
-  ./mikrotik-home/container-env.txt    # INIT_TOKEN=mesh-init-EXAMPLE
+  ./mikrotik-home/container-env.txt    # MESH_TOKEN=mesh-init-EXAMPLE
   ./mikrotik-home/setup.rsc            # RouterOS import script
 
 Required:
   1. Create USB directory: /usb1/docker/awg-mikrotik-home/
-  2. Set container env: INIT_TOKEN=mesh-init-EXAMPLE
+  2. Set container env: MESH_TOKEN=mesh-init-EXAMPLE
   3. Set container env: CONFIG_DIR=/config (mapped to persistent volume)
   4. Deploy image: ghcr.io/thebtf/awg-agent:latest
   5. Start container
@@ -94,7 +94,7 @@ Token expires: 2026-03-27 12:00 UTC (24h)
 
 Files:
   ./office-gateway/docker-compose.yml
-  ./office-gateway/.env                # INIT_TOKEN=mesh-init-EXAMPLE
+  ./office-gateway/.env                # MESH_TOKEN=mesh-init-EXAMPLE
 
 Required:
   1. Copy to target host
@@ -120,7 +120,7 @@ services:
     volumes:
       - ${CONFIG_DIR:-./config}:/config   # MUST be persistent
     environment:
-      - INIT_TOKEN=${INIT_TOKEN}
+      - MESH_TOKEN=${MESH_TOKEN}
 ```
 
 ## Step 2: DEPLOY
@@ -133,7 +133,7 @@ Manual or automated — mesh-ctl doesn't care.
 
 awg-agent starts in **init mode**:
 - Listens on gRPC port 9090
-- Accepts connections authenticated by INIT_TOKEN (not mTLS yet)
+- Accepts connections authenticated by MESH_TOKEN (not mTLS yet)
 - Waits for `Init` RPC call
 - Does NOT create tunnels yet
 
@@ -153,7 +153,7 @@ mesh-ctl endpoint init --name kz-04 --ip 1.2.3.4
 ### What mesh-ctl does:
 
 ```
-1. CONNECT to awg-agent at <ip>:9090 with INIT_TOKEN auth
+1. CONNECT to awg-agent at <ip>:9090 with MESH_TOKEN auth
 
 2. EXCHANGE:
    mesh-ctl → agent:
@@ -170,7 +170,7 @@ mesh-ctl endpoint init --name kz-04 --ip 1.2.3.4
 3. AGENT transitions:
    - Saves mTLS cert to /config/tls/
    - Saves AWG config to /config/wg/
-   - Invalidates INIT_TOKEN
+   - Invalidates MESH_TOKEN
    - Restarts gRPC server with mTLS (replaces token auth)
    - Creates WireGuard interfaces
    - Establishes tunnels

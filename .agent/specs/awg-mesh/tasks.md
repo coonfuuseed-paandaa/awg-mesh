@@ -12,6 +12,7 @@
 - [ ] T004 Create mesh-topology.example.yml with full schema example in mesh-topology.example.yml
 - [ ] T005 [P] Set up GitHub Actions build + push to GHCR in .github/workflows/build.yml
 - [ ] T006 Add amneziawg-go and Jipok/wgctrl-go as Go dependencies in go.mod
+- [ ] T006a [P] Implement `mesh-ctl bootstrap --host IP` — SSH Docker install, pull image in cmd/mesh-ctl/cmd/bootstrap.go
 
 ## Phase 1: AWG Interface Management (FR-1 partial, FR-2)
 
@@ -28,6 +29,7 @@
 - [ ] T014 [US1] Implement awg-mesh-node skeleton with --mode flag dispatch in cmd/awg-mesh-node/main.go
 - [ ] T015 [US1] Implement endpoint mode: single AWG server interface + NAT + overlay IP in pkg/node/endpoint.go
 - [ ] T016 [US1] Implement client mode: single AWG client interface in pkg/node/client.go
+- [ ] T016a Implement config persistence + startup reconciliation (load saved config → restore interfaces on restart) in pkg/node/config.go
 - [ ] T017 Verify: two awg-mesh-node containers establish tunnel + ping overlay IP (integration test)
 
 ## Phase 2: gRPC + Auth (FR-9, FR-10)

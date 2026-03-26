@@ -19,7 +19,7 @@ awg-agent replaces awg-node, awg-client, awg-ingress — single binary, differen
 All node types (client, master, endpoint) follow the same 3-step protocol:
 
 ```
-1. mesh-ctl <role> prepare   → generates config + INIT_TOKEN
+1. mesh-ctl <role> prepare   → generates config + MESH_TOKEN
 2. Image deployed            → manually or automated
 3. mesh-ctl <role> init      → connects via token, completes setup, switches to mTLS
 ```
@@ -41,7 +41,7 @@ mesh-ctl endpoint prepare \
   --balancer-ip 172.20.70.20
 ```
 
-Output: `./kz-04/docker-compose.yml` + `./kz-04/.env` (with INIT_TOKEN, CONFIG_DIR)
+Output: `./kz-04/docker-compose.yml` + `./kz-04/.env` (with MESH_TOKEN, CONFIG_DIR)
 
 ### Deploy
 
@@ -58,7 +58,7 @@ mesh-ctl endpoint init --name kz-04 --ip 1.2.3.4
 ```
 
 What happens:
-1. mesh-ctl connects to awg-agent:9090 with INIT_TOKEN
+1. mesh-ctl connects to awg-agent:9090 with MESH_TOKEN
 2. Sends: mTLS certs, overlay-ip config, NAT rules
 3. awg-agent saves config, starts AWG server on port 853
 4. Token invalidated → mTLS active
@@ -99,7 +99,7 @@ mesh-ctl master prepare \
   --overlay-ip 172.20.70.13
 ```
 
-Output: `./master-03/docker-compose.yml` + `.env` (INIT_TOKEN, CONFIG_DIR)
+Output: `./master-03/docker-compose.yml` + `.env` (MESH_TOKEN, CONFIG_DIR)
 
 docker-compose includes: mesh-router + awg-agent (ingress mode)
 
@@ -118,7 +118,7 @@ mesh-ctl master init --name master-03 --ip 5.6.7.8
 ```
 
 What happens:
-1. mesh-ctl connects with INIT_TOKEN → sends mTLS certs
+1. mesh-ctl connects with MESH_TOKEN → sends mTLS certs
 2. awg-agent switches to mTLS, starts awg-ingress (server for MikroTik)
 3. mesh-ctl creates awg-client containers for EACH endpoint in topology:
    - Generates unique keypair + AWG params per tunnel
@@ -165,8 +165,8 @@ mesh-ctl client prepare --name office-gw --type linux --masters master-01,master
 ```
 
 Output:
-- MikroTik: container env + .rsc script (INIT_TOKEN + CONFIG_DIR)
-- Linux: docker-compose.yml + .env (INIT_TOKEN + CONFIG_DIR)
+- MikroTik: container env + .rsc script (MESH_TOKEN + CONFIG_DIR)
+- Linux: docker-compose.yml + .env (MESH_TOKEN + CONFIG_DIR)
 
 ### Deploy
 
@@ -178,7 +178,7 @@ Manual: create container on MikroTik or `docker compose up -d` on Linux.
 mesh-ctl client init --name mikrotik-home --ip 172.33.23.28
 ```
 
-1. Connects with INIT_TOKEN
+1. Connects with MESH_TOKEN
 2. Sends AWG configs for each master
 3. Agent creates tunnels, switches to mTLS (Linux) or config-only (MikroTik)
 4. Registers client peer on each master's ingress

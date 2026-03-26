@@ -117,7 +117,7 @@ services:
     volumes:
       - ${CONFIG_DIR:-/srv/awg-mesh}:/config
     environment:
-      - INIT_TOKEN=${INIT_TOKEN}
+      - MESH_TOKEN=${MESH_TOKEN}
     sysctls:
       - net.ipv4.ip_forward=1
 ```
@@ -139,7 +139,7 @@ services:
     volumes:
       - ${CONFIG_DIR:-/srv/awg-mesh}:/config
     environment:
-      - INIT_TOKEN=${INIT_TOKEN}
+      - MESH_TOKEN=${MESH_TOKEN}
     sysctls:
       - net.ipv4.ip_forward=1
 ```

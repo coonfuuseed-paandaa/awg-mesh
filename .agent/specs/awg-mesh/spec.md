@@ -34,7 +34,7 @@ Single Go binary (`awg-mesh-node`) running as one Docker container per host. Top
 
 ### FR-1: Unified Node Binary
 
-The system MUST provide a single binary (`awg-mesh-node`) that operates in four modes:
+The system MUST provide a single binary (`awg-mesh-node`) that operates in three modes:
 - **master** (ingress): accepts client connections, creates tunnels to endpoints, routes between them, performs health checks, captures TLS/QUIC packets for AWG param generation
 - **endpoint** (egress): accepts tunnels from masters, NATs traffic to internet
 - **client**: connects to masters, routes overlay traffic (works identically on Linux Docker and MikroTik container runtime)
@@ -100,16 +100,16 @@ The system MUST support periodic capture of TLS/QUIC packets from popular websit
 ### FR-9: Node Onboarding (prepare → deploy → init)
 
 The system MUST follow a three-step onboarding protocol:
-1. **prepare**: `mesh-ctl` generates config files + one-time INIT_TOKEN
+1. **prepare**: `mesh-ctl` generates config files + MESH_TOKEN
 2. **deploy**: user deploys container manually (Docker or MikroTik)
-3. **init**: `mesh-ctl` connects via token, exchanges mTLS certs and configs, token invalidated
+3. **init**: `mesh-ctl` connects via token, exchanges mTLS certs and configs, mTLS becomes primary auth (token remains as permanent fallback)
 
 Config files MUST require a persistent volume (CONFIG_DIR) — nodes MUST survive container restart.
 
 ### FR-10: gRPC Management API
 
-The system MUST expose a gRPC API on each node (except thin mode):
-- Authenticated with mTLS (after init) or INIT_TOKEN (during init)
+The system MUST expose a gRPC API on each node:
+- Authenticated with mTLS (after init) or MESH_TOKEN (permanent fallback)
 - Services: peer management, parameter rotation, capture refresh, status/health
 - No SSH required for management after bootstrap
 
@@ -126,10 +126,10 @@ The system MUST provide a CLI tool (`mesh-ctl`) for all management operations:
 ### FR-12: MikroTik Client Support
 
 The system MUST support MikroTik AWG containers as clients:
-- Generate RouterOS-compatible config files and import scripts
+- Same awg-mesh-node binary with gRPC + UAPI (MikroTik container runtime is full Docker)
+- Generate RouterOS-compatible `/container add` commands and .rsc import scripts
 - Sequential rotation with ECMP coverage (one master at a time)
-- Config delivery via SMB share or file copy
-- MikroTik container restart for config changes (no UAPI access)
+- SMB share for initial config delivery; gRPC for runtime management
 
 ### FR-13: Automatic MTU Calculation
 
@@ -152,11 +152,12 @@ Each master node MUST have its own unique set of AWG keys and obfuscation parame
 - ECMP hash distribution: within 20% of uniform across masters
 
 ### NFR-2: Security
-- All management: mTLS (mutual TLS with mesh-internal CA)
+- All management: dual auth — mTLS primary, MESH_TOKEN permanent fallback (always active in parallel)
 - All transport: WireGuard Curve25519 + ChaCha20-Poly1305 + optional PSK
-- Init token: time-limited (default 24h), single-use
+- MESH_TOKEN: permanent per-node, rotatable via `mesh-ctl token rotate`, stored on node + admin PC
 - No unauthenticated endpoints exposed
-- Key material stored encrypted on disk or in restricted file permissions (0600)
+- WG private keys stored ONLY on nodes (/config/, 0600). mesh-ctl does not retain private keys.
+- CA key stored at ~/.mesh-ctl/ca.key (0600) — single root of trust
 
 ### NFR-3: Reliability
 - Node restart: automatic tunnel re-establishment from persistent config
@@ -188,7 +189,7 @@ Each master node MUST have its own unique set of AWG keys and obfuscation parame
 **As an** operator, **I want** to add a new endpoint node to the mesh, **so that** I can expand egress capacity in a region.
 
 **Acceptance Criteria:**
-- [ ] `mesh-ctl endpoint prepare` generates valid docker-compose + INIT_TOKEN
+- [ ] `mesh-ctl endpoint prepare` generates valid docker-compose + MESH_TOKEN
 - [ ] After deploy + `mesh-ctl endpoint init`, node is reachable via overlay IP from all masters
 - [ ] Balancer pool for the region includes the new node
 - [ ] topology.yml is updated and committed
@@ -198,7 +199,7 @@ Each master node MUST have its own unique set of AWG keys and obfuscation parame
 **As an** operator, **I want** to add a new master node, **so that** I can increase transport bandwidth and redundancy.
 
 **Acceptance Criteria:**
-- [ ] `mesh-ctl master prepare` generates valid docker-compose + INIT_TOKEN
+- [ ] `mesh-ctl master prepare` generates valid docker-compose + MESH_TOKEN
 - [ ] After deploy + init, master has tunnels to ALL endpoints
 - [ ] MikroTik setup instructions generated (RouterOS commands)
 - [ ] MikroTik ECMP route distributes traffic across all masters
@@ -257,7 +258,7 @@ Each master node MUST have its own unique set of AWG keys and obfuscation parame
 - **Overlay /24 exhausted (254 nodes)**: topology supports changing overlay space to /16 but requires re-init of all nodes. Documented as disruptive migration.
 - **MikroTik container restart during rotation**: ECMP across ≥2 masters ensures zero user-visible downtime. Rotation requires min 2 healthy masters before proceeding.
 - **Capture fails for domain**: skip failed domains, log warning, continue with available data. Minimum 1 successful capture required for param generation.
-- **gRPC connection interrupted during init**: INIT_TOKEN not invalidated until init fully completes. Re-run `mesh-ctl init` is idempotent.
+- **gRPC connection interrupted during init**: MESH_TOKEN not invalidated until init fully completes. Re-run `mesh-ctl init` is idempotent.
 
 ## Out of Scope
 
