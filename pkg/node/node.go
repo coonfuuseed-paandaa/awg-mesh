@@ -94,7 +94,7 @@ func (n *Node) Run(ctx context.Context) error {
 	case "client":
 		err = n.runClient(ctx)
 	case "master":
-		return fmt.Errorf("master mode not yet implemented")
+		err = n.runMaster(ctx)
 	default:
 		return fmt.Errorf("unsupported node mode %q", n.config.Mode)
 	}
@@ -118,5 +118,10 @@ func (n *Node) runEndpoint(ctx context.Context) error {
 
 func (n *Node) runClient(ctx context.Context) error {
 	runner := NewClientRunner(n)
+	return runner.Run(ctx)
+}
+
+func (n *Node) runMaster(ctx context.Context) error {
+	runner := NewMasterRunner(n)
 	return runner.Run(ctx)
 }
