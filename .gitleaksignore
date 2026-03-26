@@ -1,0 +1,6 @@
+# Design docs contain example tokens/configs — not real secrets
+.agent/data/mesh-onboarding.md:generic-api-key:76
+.agent/data/mesh-onboarding.md:generic-api-key:80
+.agent/data/mesh-processes.md
+.agent/data/mesh-router-design.md
+.agent/data/mesh-address-space.md

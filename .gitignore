@@ -1,0 +1,32 @@
+# Binaries
+/bin/
+/dist/
+awg-mesh-node
+mesh-ctl
+*.exe
+
+# Go
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent state (local only)
+.agent/status/
+.agent/autopilot.local.md
+
+# Secrets
+*.key
+*.pem
+!*.pub
+/keys/
+
+# Build
+*.o
+*.a
