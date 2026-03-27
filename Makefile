@@ -1,8 +1,7 @@
 .DEFAULT_GOAL := build
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X main.version=$(VERSION) -s -w
 GOFLAGS := -trimpath
+LDFLAGS := -s -w
 BIN_DIR := bin
 
 .PHONY: build install install-all test lint proto-gen docker clean
