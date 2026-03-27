@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -53,5 +54,5 @@ func defaultConfigDir() string {
 	if err != nil {
 		return ".mesh-ctl"
 	}
-	return home + "/.mesh-ctl"
+	return filepath.Join(home, ".mesh-ctl")
 }
