@@ -11,6 +11,7 @@ import (
 	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
 	"github.com/thebtf/awg-mesh/pkg/topology"
 	proto "github.com/thebtf/awg-mesh/proto"
+	"gopkg.in/yaml.v3"
 )
 
 func newCaptureCommand() *cobra.Command {
@@ -21,6 +22,7 @@ func newCaptureCommand() *cobra.Command {
 
 	cmd.AddCommand(newCaptureRefreshCommand())
 	cmd.AddCommand(newCaptureDomainsCommand())
+	cmd.AddCommand(newCaptureScheduleCommand())
 
 	return cmd
 }
@@ -165,6 +167,67 @@ func newCaptureDomainsCommand() *cobra.Command {
 			return nil
 		},
 	})
+
+	return cmd
+}
+
+func newCaptureScheduleCommand() *cobra.Command {
+	var (
+		interval string
+		show     bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "schedule",
+		Short: "Show or update capture schedule",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			trimmedInterval := strings.TrimSpace(interval)
+			if show && trimmedInterval != "" {
+				return fmt.Errorf("specify only one of --interval or --show")
+			}
+
+			if show {
+				topo, err := topology.LoadTopology(topologyPath)
+				if err != nil {
+					return fmt.Errorf("load topology: %w", err)
+				}
+
+				schedule := strings.TrimSpace(topo.Capture.Schedule)
+				if schedule == "" {
+					fmt.Println("(not set)")
+				} else {
+					fmt.Println(schedule)
+				}
+				return nil
+			}
+
+			if trimmedInterval == "" {
+				return fmt.Errorf("specify --interval or --show")
+			}
+
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology: %w", err)
+			}
+
+			topo.Capture.Schedule = trimmedInterval
+
+			data, err := yaml.Marshal(topo)
+			if err != nil {
+				return fmt.Errorf("marshal topology yaml: %w", err)
+			}
+
+			if err := os.WriteFile(topologyPath, data, 0644); err != nil {
+				return fmt.Errorf("write topology file: %w", err)
+			}
+
+			fmt.Printf("Capture schedule set to %s\n", trimmedInterval)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&interval, "interval", "", "Capture interval duration (for example 24h)")
+	cmd.Flags().BoolVar(&show, "show", false, "Show current capture schedule")
 
 	return cmd
 }

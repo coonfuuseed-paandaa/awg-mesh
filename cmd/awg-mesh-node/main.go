@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"flag"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/thebtf/awg-mesh/pkg/logging"
 	"github.com/thebtf/awg-mesh/pkg/node"
 )
 
@@ -19,32 +22,39 @@ const (
 	modeClient   = "client"
 )
 
+const metricsShutdownTimeout = 5 * time.Second
+
+type nodeOptions struct {
+	mode        string
+	name        string
+	overlayIP   string
+	listenPort  int
+	configDir   string
+	topology    string
+	logLevel    string
+	metricsAddr string
+}
+
 func main() {
-	mode := flag.String("mode", modeMaster, "Node mode: master|endpoint|client")
-	name := flag.String("name", "", "Node name")
-	overlayIP := flag.String("overlay-ip", "", "Node overlay IP address")
-	listenPort := flag.Int("listen-port", 51820, "AWG listen port")
-	configDir := flag.String("config-dir", "/config", "Node config directory")
-	topologyPath := flag.String("topology", "", "Path to topology YAML")
-	flag.Parse()
+	options := parseNodeOptions()
 
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
-	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+	logging.SetGlobalLevel(options.logLevel)
+	logger := logging.NewLogger("awg-mesh-node")
 
-	if !isValidMode(*mode) {
+	if !isValidMode(options.mode) {
 		logger.Fatal().
-			Str("mode", *mode).
+			Str("mode", options.mode).
 			Str("valid_modes", modeMaster+","+modeEndpoint+","+modeClient).
 			Msg("invalid node mode")
 	}
 
 	cfg := node.NodeConfig{
-		Name:         *name,
-		Mode:         *mode,
-		OverlayIP:    *overlayIP,
-		ListenPort:   *listenPort,
-		ConfigDir:    *configDir,
-		TopologyPath: *topologyPath,
+		Name:         options.name,
+		Mode:         options.mode,
+		OverlayIP:    options.overlayIP,
+		ListenPort:   options.listenPort,
+		ConfigDir:    options.configDir,
+		TopologyPath: options.topology,
 	}
 
 	meshNode, err := node.NewNode(cfg)
@@ -52,13 +62,22 @@ func main() {
 		logger.Fatal().Err(err).Msg("failed to create node")
 	}
 
+	node.RegisterMetrics()
+	metricsServer, metricsErr := node.StartMetricsServer(options.metricsAddr)
+	if metricsErr != nil {
+		logger.Warn().
+			Err(metricsErr).
+			Str("metrics_addr", options.metricsAddr).
+			Msg("failed to start metrics server")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	logger.Info().
 		Str("version", version).
-		Str("mode", *mode).
-		Str("name", *name).
+		Str("mode", options.mode).
+		Str("name", options.name).
 		Msg("awg-mesh-node starting")
 
 	if err := meshNode.Run(ctx); err != nil {
@@ -66,7 +85,45 @@ func main() {
 	}
 
 	if ctx.Err() != nil {
+		shutdownMetricsServer(metricsServer, logger)
 		meshNode.Shutdown()
+		logger.Info().Msg("node exited cleanly")
+	}
+}
+
+func parseNodeOptions() nodeOptions {
+	mode := flag.String("mode", modeMaster, "Node mode: master|endpoint|client")
+	name := flag.String("name", "", "Node name")
+	overlayIP := flag.String("overlay-ip", "", "Node overlay IP address")
+	listenPort := flag.Int("listen-port", 51820, "AWG listen port")
+	configDir := flag.String("config-dir", "/config", "Node config directory")
+	topologyPath := flag.String("topology", "", "Path to topology YAML")
+	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error")
+	metricsAddr := flag.String("metrics-addr", ":9091", "Prometheus metrics listen address")
+	flag.Parse()
+
+	return nodeOptions{
+		mode:        *mode,
+		name:        *name,
+		overlayIP:   *overlayIP,
+		listenPort:  *listenPort,
+		configDir:   *configDir,
+		topology:    *topologyPath,
+		logLevel:    *logLevel,
+		metricsAddr: *metricsAddr,
+	}
+}
+
+func shutdownMetricsServer(server *http.Server, logger zerolog.Logger) {
+	if server == nil {
+		return
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Warn().Err(err).Msg("failed to shut down metrics server")
 	}
 }
 
