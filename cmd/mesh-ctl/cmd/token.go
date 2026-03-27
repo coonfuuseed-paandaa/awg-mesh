@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -93,7 +94,7 @@ func newTokenRotateCommand() *cobra.Command {
 }
 
 func loadNodeHost(nodeDir string) (string, error) {
-	data, err := os.ReadFile(nodeDir + "/host")
+	data, err := os.ReadFile(filepath.Join(nodeDir, "host"))
 	if err != nil {
 		return "", fmt.Errorf("read host file: %w", err)
 	}
