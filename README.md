@@ -28,7 +28,8 @@ graph TB
     end
 
     subgraph Clients["Clients"]
-        mk["MikroTik RouterOS"]
+        lc["awg-mesh-node\n(client, Linux)"]
+        mk["awg-mesh-node\n(client, MikroTik)"]
     end
 
     inet["Internet"]
@@ -43,6 +44,8 @@ graph TB
     m2 -- "AWG tunnels\n(ECMP LB)" --> e1
     m2 -- "AWG tunnels\n(ECMP LB)" --> e2
 
+    lc -- "AWG\n(DPI-obfuscated)" --> m1
+    lc -- "AWG\n(DPI-obfuscated)" --> m2
     mk -- "AWG\n(DPI-obfuscated)" --> m1
     mk -- "AWG\n(DPI-obfuscated)" --> m2
 
@@ -103,30 +106,41 @@ This section walks through deploying a mesh from scratch: two masters in Russia,
 `mesh-ctl` is the CLI you run from your admin workstation to manage the mesh. It does not run on nodes.
 
 ```bash
-# Install directly from source
 go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
-
-# Or build from a cloned repo
-git clone https://github.com/thebtf/awg-mesh.git
-cd awg-mesh
-go build -o ~/bin/mesh-ctl ./cmd/mesh-ctl
 ```
 
-Verify the install:
+This places the `mesh-ctl` binary in `$GOPATH/bin` (usually `~/go/bin`). Make sure it is in your `PATH`:
 
 ```bash
-mesh-ctl version
+export PATH=$PATH:$(go env GOPATH)/bin   # add to ~/.bashrc or ~/.zshrc
+mesh-ctl version                          # verify
+```
+
+Alternatively, build from source:
+
+```bash
+git clone https://github.com/thebtf/awg-mesh.git
+cd awg-mesh
+go build -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
+```
+
+On first use, `mesh-ctl` creates its state directory at **`~/.mesh-ctl/`** automatically. This directory holds the mesh CA, per-node tokens, and public keys. You can check the current state at any time:
+
+```bash
+mesh-ctl config show
 ```
 
 ### Step 2: Create your topology file
 
-Copy the example and edit it to match your infrastructure:
+Create `mesh-topology.yml` in your working directory. You can start from the [example in the repository](mesh-topology.example.yml) or write one from scratch.
+
+If you cloned the repo:
 
 ```bash
 cp mesh-topology.example.yml mesh-topology.yml
 ```
 
-A minimal topology for two masters, two endpoints, and one client:
+Otherwise, create the file manually. A minimal topology for two masters, two endpoints, and one client:
 
 ```yaml
 overlay:

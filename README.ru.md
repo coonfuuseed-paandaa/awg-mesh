@@ -28,7 +28,8 @@ graph TB
     end
 
     subgraph Clients["Clients"]
-        mk["MikroTik RouterOS"]
+        lc["awg-mesh-node\n(client, Linux)"]
+        mk["awg-mesh-node\n(client, MikroTik)"]
     end
 
     inet["Internet"]
@@ -43,6 +44,8 @@ graph TB
     m2 -- "AWG tunnels\n(ECMP LB)" --> e1
     m2 -- "AWG tunnels\n(ECMP LB)" --> e2
 
+    lc -- "AWG\n(DPI-obfuscated)" --> m1
+    lc -- "AWG\n(DPI-obfuscated)" --> m2
     mk -- "AWG\n(DPI-obfuscated)" --> m1
     mk -- "AWG\n(DPI-obfuscated)" --> m2
 
@@ -103,30 +106,41 @@ awg-mesh — это самохостируемая зашифрованная ov
 `mesh-ctl` — это CLI, который запускается на рабочей станции администратора для управления сетью. На узлах он не запускается.
 
 ```bash
-# Установка напрямую из исходников
 go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
-
-# Или сборка из склонированного репозитория
-git clone https://github.com/thebtf/awg-mesh.git
-cd awg-mesh
-go build -o ~/bin/mesh-ctl ./cmd/mesh-ctl
 ```
 
-Проверьте установку:
+Бинарник устанавливается в `$GOPATH/bin` (обычно `~/go/bin`). Убедитесь, что он в `PATH`:
 
 ```bash
-mesh-ctl version
+export PATH=$PATH:$(go env GOPATH)/bin   # добавьте в ~/.bashrc или ~/.zshrc
+mesh-ctl version                          # проверка
+```
+
+Или соберите из исходников:
+
+```bash
+git clone https://github.com/thebtf/awg-mesh.git
+cd awg-mesh
+go build -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
+```
+
+При первом использовании `mesh-ctl` автоматически создаёт директорию состояния **`~/.mesh-ctl/`**. Там хранятся CA сертификат меша, токены и публичные ключи узлов. Текущее состояние можно проверить:
+
+```bash
+mesh-ctl config show
 ```
 
 ### Шаг 2: Создание файла топологии
 
-Скопируйте пример и отредактируйте под вашу инфраструктуру:
+Создайте `mesh-topology.yml` в рабочей директории. Можно начать с [примера из репозитория](mesh-topology.example.yml) или написать с нуля.
+
+Если вы клонировали репозиторий:
 
 ```bash
 cp mesh-topology.example.yml mesh-topology.yml
 ```
 
-Минимальная топология для двух мастеров, двух endpoint-узлов и одного клиента:
+Иначе создайте файл вручную. Минимальная топология для двух мастеров, двух endpoint-узлов и одного клиента:
 
 ```yaml
 overlay:
