@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -61,7 +61,7 @@ jobs:
     needs: [lint, test]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -85,7 +85,7 @@ jobs:
     needs: [build]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build Docker Image
         run: docker build -f deploy/Dockerfile --build-arg VERSION=${{ github.sha }} -t awg-mesh-node:ci .
