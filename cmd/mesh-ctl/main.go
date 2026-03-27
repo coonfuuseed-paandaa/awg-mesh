@@ -23,12 +23,13 @@ func version() string {
 		return "dev"
 	}
 
-	// go install ...@v0.2.0 → "v0.2.0"
-	if v := info.Main.Version; v != "" && v != "(devel)" && !strings.Contains(v, "-0.") {
-		return v
+	// go install ...@v0.2.0 → "v0.2.0" (clean release tag)
+	modVer := info.Main.Version
+	if modVer != "" && modVer != "(devel)" && !strings.Contains(modVer, "-0.") {
+		return modVer
 	}
 
-	// go install ./cmd/mesh-ctl from git repo → git hash
+	// Extract VCS info for local builds
 	var revision, modified string
 	for _, s := range info.Settings {
 		switch s.Key {
@@ -39,16 +40,26 @@ func version() string {
 		}
 	}
 
-	if revision != "" {
-		v := revision
-		if len(v) > 8 {
-			v = v[:8]
+	// Base version: strip pseudo-version to base tag, or "dev"
+	base := "dev"
+	if modVer != "" && modVer != "(devel)" && strings.Contains(modVer, "-0.") {
+		// "v0.2.1-0.20260327..." → "v0.2.1"
+		if idx := strings.Index(modVer, "-0."); idx > 0 {
+			base = modVer[:idx]
 		}
-		if modified == "true" {
-			v += "-dirty"
-		}
-		return v
 	}
 
-	return "dev"
+	if revision == "" {
+		return base
+	}
+
+	short := revision
+	if len(short) > 8 {
+		short = short[:8]
+	}
+
+	if modified == "true" {
+		return base + " (" + short + ", dirty)"
+	}
+	return base + " (" + short + ")"
 }
