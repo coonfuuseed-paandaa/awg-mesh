@@ -41,9 +41,38 @@ Data plane: awg-mesh-node (one container per host)
 - `.agent/specs/constitution.md` — non-negotiable project principles
 - `.agent/specs/awg-mesh/` — spec, plan, tasks (in nvmd-devops repo, reference only)
 
+## VERSIONING
+
+Single version for the entire module (`go.mod` module path). Both binaries (`mesh-ctl`, `awg-mesh-node`) and the Docker image share the same version.
+
+**Version detection:** `runtime/debug.ReadBuildInfo()` — no ldflags needed.
+- `go install ...@v0.3.0` → shows `v0.3.0`
+- `go install ./cmd/mesh-ctl` (local clone) → shows `v0.3.0 (abcd1234)` (base tag + commit)
+- `go run` → shows `dev`
+
+**When to bump:**
+- **PATCH** (v0.3.0 → v0.3.1): bug fix, docs fix, test fix, dependency update, no behavior change
+- **MINOR** (v0.3.0 → v0.4.0): new feature, new CLI command, new config field, new gRPC RPC
+- **MAJOR** (v0.3.0 → v1.0.0): breaking change to CLI flags, topology YAML schema, gRPC API, or config directory layout. Requires explicit user approval.
+
+**How to release:**
+```bash
+gh release create v0.X.Y --title "v0.X.Y" --notes "..."
+git fetch --tags
+```
+Tag is created on GitHub, then fetched locally. No manual `git tag` needed.
+
+**Rules:**
+- Bump AFTER committing all changes for the release, not before
+- Never move or delete existing tags
+- Always include structured release notes with What's New / Changes / Fixes sections
+- Docker image tags: `latest` (master), `v0.X.Y` (release), `<commit-sha>` (CI)
+- `go install ./cmd/mesh-ctl` always shows the latest tag reachable from HEAD
+- After `gh release create`: always `git fetch --tags` to sync local tags
+
 ## CONVENTIONS
 
-- Go 1.24+, static build, no CGO
+- Go 1.25+, CGO enabled (gopacket/libpcap)
 - amneziawg-go as library (import), not subprocess
 - All management via gRPC, SSH only for bootstrap
 - One binary, multiple modes (--mode master|endpoint|client)
