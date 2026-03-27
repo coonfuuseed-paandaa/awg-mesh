@@ -17,9 +17,9 @@
 .DS_Store
 Thumbs.db
 
-# Agent state (local only)
-.agent/status/
-.agent/autopilot.local.md
+# Agent state (not for git)
+.agent/
+TECHNICAL_DEBT.md
 
 # Secrets
 *.key
