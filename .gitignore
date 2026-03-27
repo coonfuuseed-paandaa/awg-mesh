@@ -20,7 +20,6 @@ Thumbs.db
 # Agent/IDE state (not for git)
 .agent/
 .claude/
-TECHNICAL_DEBT.md
 rename-check.tmp
 
 # Secrets
