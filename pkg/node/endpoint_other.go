@@ -5,6 +5,7 @@ package node
 import (
 	"fmt"
 
+	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
 	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
@@ -25,4 +26,16 @@ func (e *EndpointRunner) closeInterface() error {
 
 func (e *EndpointRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
 	return fmt.Errorf("UAPI not supported on this platform")
+}
+
+func (e *EndpointRunner) ListPeers() []grpcserver.PeerInfo {
+	return nil
+}
+
+func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
+	return fmt.Errorf("peer management not supported on this platform")
+}
+
+func (e *EndpointRunner) RemovePeer(publicKey []byte) error {
+	return fmt.Errorf("peer management not supported on this platform")
 }

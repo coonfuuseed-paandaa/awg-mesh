@@ -3,11 +3,15 @@ package node
 import (
 	"context"
 	"fmt"
+	"time"
+
+	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
 )
 
 // EndpointRunner runs node logic for endpoint mode.
 type EndpointRunner struct {
 	node          *Node
+	startTime     time.Time
 	platformState endpointPlatformState
 }
 
@@ -29,9 +33,10 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
-	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e); err != nil {
+	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e, e, e); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
+	e.startTime = time.Now()
 
 	if err := e.createInterface(); err != nil {
 		return fmt.Errorf("create endpoint interface: %w", err)
@@ -51,4 +56,13 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 
 	e.node.logger.Info().Msg("endpoint runner stopping")
 	return nil
+}
+
+func (e *EndpointRunner) GetNodeState() grpcserver.NodeState {
+	return grpcserver.NodeState{
+		Name:      e.node.config.Name,
+		Mode:      "endpoint",
+		OverlayIP: e.node.config.OverlayIP,
+		StartTime: e.startTime,
+	}
 }

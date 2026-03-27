@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
+	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
 	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
@@ -18,14 +20,16 @@ type MasterTunnel struct {
 	PeerPublicKey wg.Key
 	Healthy       bool
 	Weight        int
+	lastParams    wg.Config
 	platformState masterTunnelPlatformState
 }
 
 // MasterRunner runs node logic for master mode.
 type MasterRunner struct {
-	node    *Node
-	tunnels map[string]*MasterTunnel
-	mu      sync.RWMutex
+	node      *Node
+	tunnels   map[string]*MasterTunnel
+	mu        sync.RWMutex
+	startTime time.Time
 }
 
 // NewMasterRunner creates a master mode runner.
@@ -49,9 +53,10 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
-	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m); err != nil {
+	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
+	m.startTime = time.Now()
 
 	defer func() {
 		if closeErr := m.closeAllTunnelInterfaces(); closeErr != nil {
@@ -83,7 +88,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	hcLogger := m.node.logger.With().Str("component", "healthcheck").Logger()
 	hc := NewHealthChecker(hcCfg, hcLogger)
 
-	go hc.Run(ctx, m.ListTunnels,
+	go hc.Run(ctx, m.listMasterTunnels,
 		func(name string) {
 			m.mu.Lock()
 			if t, ok := m.tunnels[name]; ok {
@@ -173,7 +178,7 @@ func (m *MasterRunner) RemoveTunnel(name string) error {
 }
 
 // ListTunnels returns a snapshot of all managed tunnels.
-func (m *MasterRunner) ListTunnels() []MasterTunnel {
+func (m *MasterRunner) listMasterTunnels() []MasterTunnel {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -182,6 +187,42 @@ func (m *MasterRunner) ListTunnels() []MasterTunnel {
 		result = append(result, *t)
 	}
 	return result
+}
+
+func (m *MasterRunner) ListTunnels() []grpcserver.TunnelInfo {
+	tunnels := m.listMasterTunnels()
+	infos := make([]grpcserver.TunnelInfo, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		infos = append(infos, grpcserver.TunnelInfo{
+			Name:          tunnel.Name,
+			OverlayIP:     tunnel.OverlayIP,
+			Healthy:       tunnel.Healthy,
+			Weight:        tunnel.Weight,
+			PeerPublicKey: append([]byte(nil), tunnel.PeerPublicKey[:]...),
+		})
+	}
+	return infos
+}
+
+func (m *MasterRunner) GetNodeState() grpcserver.NodeState {
+	tunnels := m.listMasterTunnels()
+	infos := make([]grpcserver.TunnelInfo, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		infos = append(infos, grpcserver.TunnelInfo{
+			Name:          tunnel.Name,
+			OverlayIP:     tunnel.OverlayIP,
+			Healthy:       tunnel.Healthy,
+			Weight:        tunnel.Weight,
+			PeerPublicKey: append([]byte(nil), tunnel.PeerPublicKey[:]...),
+		})
+	}
+	return grpcserver.NodeState{
+		Name:      m.node.config.Name,
+		Mode:      "master",
+		OverlayIP: m.node.config.OverlayIP,
+		Tunnels:   infos,
+		StartTime: m.startTime,
+	}
 }
 
 func (m *MasterRunner) closeAllTunnelInterfaces() error {

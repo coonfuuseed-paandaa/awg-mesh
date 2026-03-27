@@ -256,7 +256,7 @@ func TestMasterRunnerTunnelLifecycle(t *testing.T) {
 		t.Fatalf("expected duplicate tunnel error, got %v", err)
 	}
 
-	tunnels := runner.ListTunnels()
+	tunnels := runner.listMasterTunnels()
 	if len(tunnels) != 1 {
 		t.Fatalf("expected one tunnel, got %d", len(tunnels))
 	}
@@ -272,7 +272,7 @@ func TestMasterRunnerTunnelLifecycle(t *testing.T) {
 	if err := runner.RemoveTunnel("endpoint-a"); err != nil {
 		t.Fatalf("RemoveTunnel returned error: %v", err)
 	}
-	if len(runner.ListTunnels()) != 0 {
+	if len(runner.listMasterTunnels()) != 0 {
 		t.Fatalf("expected empty tunnel list after removal")
 	}
 }

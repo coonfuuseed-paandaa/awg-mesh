@@ -10,6 +10,9 @@ import (
 
 // EnableMasquerade adds an iptables MASQUERADE rule for outbound traffic on iface.
 func EnableMasquerade(iface string) error {
+	if err := validateInterface(iface); err != nil {
+		return err
+	}
 	out, err := exec.Command(
 		"iptables", "-t", "nat", "-A", "POSTROUTING", "-o", iface, "-j", "MASQUERADE",
 	).CombinedOutput()
@@ -21,6 +24,9 @@ func EnableMasquerade(iface string) error {
 
 // DisableMasquerade removes the iptables MASQUERADE rule for outbound traffic on iface.
 func DisableMasquerade(iface string) error {
+	if err := validateInterface(iface); err != nil {
+		return err
+	}
 	out, err := exec.Command(
 		"iptables", "-t", "nat", "-D", "POSTROUTING", "-o", iface, "-j", "MASQUERADE",
 	).CombinedOutput()

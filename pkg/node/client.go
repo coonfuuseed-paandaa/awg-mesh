@@ -3,11 +3,15 @@ package node
 import (
 	"context"
 	"fmt"
+	"time"
+
+	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
 )
 
 // ClientRunner runs node logic for client mode.
 type ClientRunner struct {
 	node          *Node
+	startTime     time.Time
 	platformState clientPlatformState
 }
 
@@ -29,9 +33,10 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
-	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil); err != nil {
+	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, nil, c); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
+	c.startTime = time.Now()
 
 	if err := c.createInterfaces(ctx); err != nil {
 		return fmt.Errorf("create client interfaces: %w", err)
@@ -50,4 +55,13 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 
 	c.node.logger.Info().Msg("client runner stopping")
 	return nil
+}
+
+func (c *ClientRunner) GetNodeState() grpcserver.NodeState {
+	return grpcserver.NodeState{
+		Name:      c.node.config.Name,
+		Mode:      "client",
+		OverlayIP: c.node.config.OverlayIP,
+		StartTime: c.startTime,
+	}
 }

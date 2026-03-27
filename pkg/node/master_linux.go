@@ -4,6 +4,7 @@ package node
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
@@ -91,12 +92,112 @@ func (m *MasterRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
 	if err := tunnel.platformState.iface.Configure(cfg); err != nil {
 		return fmt.Errorf("configure tunnel %q: %w", trimmedTunnelName, err)
 	}
+	tunnel.lastParams = copyConfig(cfg)
 
 	m.node.logger.Info().
 		Str("tunnel", trimmedTunnelName).
 		Msg("applied AWG parameters to tunnel")
 
 	return nil
+}
+
+func (m *MasterRunner) GetParams(tunnelName string) (wg.Config, error) {
+	if m == nil || m.node == nil {
+		return wg.Config{}, fmt.Errorf("master runner node is required")
+	}
+
+	trimmedTunnelName := strings.TrimSpace(tunnelName)
+	if trimmedTunnelName == "" {
+		return wg.Config{}, fmt.Errorf("tunnel name is required")
+	}
+
+	m.mu.RLock()
+	tunnel, exists := m.tunnels[trimmedTunnelName]
+	m.mu.RUnlock()
+	if !exists {
+		return wg.Config{}, fmt.Errorf("tunnel %q not found", trimmedTunnelName)
+	}
+	if tunnel.platformState.iface == nil {
+		return wg.Config{}, fmt.Errorf("tunnel %q interface is not initialized", trimmedTunnelName)
+	}
+	if _, err := tunnel.platformState.iface.GetDevice(); err != nil {
+		return wg.Config{}, fmt.Errorf("get tunnel %q device: %w", trimmedTunnelName, err)
+	}
+
+	return copyConfig(tunnel.lastParams), nil
+}
+
+func copyConfig(source wg.Config) wg.Config {
+	result := wg.Config{
+		PrivateKey:   copyIntPtr(source.PrivateKey),
+		ListenPort:   copyIntPtr(source.ListenPort),
+		FirewallMark: copyIntPtr(source.FirewallMark),
+		ReplacePeers: source.ReplacePeers,
+		Jc:           copyIntPtr(source.Jc),
+		Jmin:         copyIntPtr(source.Jmin),
+		Jmax:         copyIntPtr(source.Jmax),
+		S1:           copyIntPtr(source.S1),
+		S2:           copyIntPtr(source.S2),
+		S3:           copyIntPtr(source.S3),
+		S4:           copyIntPtr(source.S4),
+		H1:           copyStringPtr(source.H1),
+		H2:           copyStringPtr(source.H2),
+		H3:           copyStringPtr(source.H3),
+		H4:           copyStringPtr(source.H4),
+		I1:           copyStringPtr(source.I1),
+		I2:           copyStringPtr(source.I2),
+		I3:           copyStringPtr(source.I3),
+		I4:           copyStringPtr(source.I4),
+		I5:           copyStringPtr(source.I5),
+	}
+
+	if len(source.Peers) > 0 {
+		result.Peers = make([]wg.PeerConfig, 0, len(source.Peers))
+		for _, peer := range source.Peers {
+			result.Peers = append(result.Peers, copyPeerConfig(peer))
+		}
+	}
+
+	return result
+}
+
+func copyIntPtr(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func copyStringPtr(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func copyPeerConfig(peer wg.PeerConfig) wg.PeerConfig {
+	copied := wg.PeerConfig{
+		PublicKey:                   peer.PublicKey,
+		Remove:                      peer.Remove,
+		UpdateOnly:                  peer.UpdateOnly,
+		ReplaceAllowedIPs:           peer.ReplaceAllowedIPs,
+		AllowedIPs:                  append([]net.IPNet(nil), peer.AllowedIPs...),
+	}
+	if peer.PresharedKey != nil {
+		copiedKey := *peer.PresharedKey
+		copied.PresharedKey = &copiedKey
+	}
+	if peer.Endpoint != nil {
+		endpoint := *peer.Endpoint
+		copied.Endpoint = &endpoint
+	}
+	if peer.PersistentKeepaliveInterval != nil {
+		copiedInterval := *peer.PersistentKeepaliveInterval
+		copied.PersistentKeepaliveInterval = &copiedInterval
+	}
+	return copied
 }
 
 func (m *MasterRunner) closeTunnelInterface(tunnel *MasterTunnel) error {

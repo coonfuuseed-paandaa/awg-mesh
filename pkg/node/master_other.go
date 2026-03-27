@@ -32,3 +32,7 @@ func (m *MasterRunner) closeTunnelInterface(tunnel *MasterTunnel) error {
 func (m *MasterRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
 	return fmt.Errorf("UAPI not supported on this platform")
 }
+
+func (m *MasterRunner) GetParams(tunnelName string) (wg.Config, error) {
+	return wg.Config{}, fmt.Errorf("UAPI not supported on this platform")
+}

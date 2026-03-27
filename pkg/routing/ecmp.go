@@ -23,6 +23,19 @@ func SetECMPRoute(dest string, nexthops []NextHop) error {
 	if len(nexthops) == 0 {
 		return fmt.Errorf("at least one nexthop is required for ECMP route to %s", dest)
 	}
+	if dest != "default" {
+		if err := validateCIDR(dest); err != nil {
+			return err
+		}
+	}
+	for _, nh := range nexthops {
+		if err := validateIP(nh.Via); err != nil {
+			return fmt.Errorf("nexthop via: %w", err)
+		}
+		if err := validateInterface(nh.Dev); err != nil {
+			return fmt.Errorf("nexthop dev: %w", err)
+		}
+	}
 
 	args := []string{"route", "replace", dest}
 	for _, nh := range nexthops {

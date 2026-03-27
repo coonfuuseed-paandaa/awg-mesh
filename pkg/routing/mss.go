@@ -11,6 +11,9 @@ import (
 
 // ClampMSS adds an iptables rule to clamp TCP MSS on SYN packets forwarded out iface.
 func ClampMSS(iface string, mss int) error {
+	if err := validateInterface(iface); err != nil {
+		return err
+	}
 	out, err := exec.Command(
 		"iptables", "-A", "FORWARD",
 		"-o", iface,
@@ -27,6 +30,9 @@ func ClampMSS(iface string, mss int) error {
 
 // RemoveMSSClamp removes the iptables MSS clamping rule for iface.
 func RemoveMSSClamp(iface string, mss int) error {
+	if err := validateInterface(iface); err != nil {
+		return err
+	}
 	out, err := exec.Command(
 		"iptables", "-D", "FORWARD",
 		"-o", iface,

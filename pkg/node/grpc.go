@@ -22,6 +22,8 @@ func startGRPCServer(
 	logger zerolog.Logger,
 	tunnelMgr grpcserver.TunnelManager,
 	paramApplier grpcserver.ParamApplier,
+	peerMgr grpcserver.PeerManager,
+	stateProvider grpcserver.NodeStateProvider,
 ) error {
 	if ctx == nil {
 		return fmt.Errorf("context is required")
@@ -39,6 +41,8 @@ func startGRPCServer(
 		tunnelMgr,
 		paramApplier,
 		newCaptureFunc(),
+		peerMgr,
+		stateProvider,
 	)
 	serverConfig := grpcserver.ServerConfig{
 		ListenAddr:    defaultGRPCListenAddr,

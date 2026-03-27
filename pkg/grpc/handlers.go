@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/thebtf/awg-mesh/pkg/routing"
 	"github.com/thebtf/awg-mesh/pkg/wg"
 	proto "github.com/thebtf/awg-mesh/proto"
 	"google.golang.org/grpc/codes"
@@ -22,16 +24,18 @@ import (
 // parameter-rotation RPCs backed by injected runtime managers.
 type AgentHandler struct {
 	proto.UnimplementedAwgAgentServer
-	configDir    string
-	logger       zerolog.Logger
-	tunnelMgr    TunnelManager
-	paramApplier ParamApplier
-	captureFunc  CaptureFunc
+	configDir     string
+	logger        zerolog.Logger
+	tunnelMgr     TunnelManager
+	paramApplier  ParamApplier
+	peerMgr       PeerManager
+	stateProvider NodeStateProvider
+	captureFunc   CaptureFunc
 }
 
 // NewAgentHandler creates an AgentHandler that stores received config under configDir.
 func NewAgentHandler(configDir string, logger zerolog.Logger) *AgentHandler {
-	return NewAgentHandlerFull(configDir, logger, nil, nil, nil)
+	return NewAgentHandlerFull(configDir, logger, nil, nil, nil, nil, nil)
 }
 
 // NewAgentHandlerFull creates an AgentHandler with optional runtime managers.
@@ -41,13 +45,17 @@ func NewAgentHandlerFull(
 	tunnelMgr TunnelManager,
 	paramApplier ParamApplier,
 	captureFunc CaptureFunc,
+	peerMgr PeerManager,
+	stateProvider NodeStateProvider,
 ) *AgentHandler {
 	return &AgentHandler{
-		configDir:    configDir,
-		logger:       logger,
-		tunnelMgr:    tunnelMgr,
-		paramApplier: paramApplier,
-		captureFunc:  captureFunc,
+		configDir:     configDir,
+		logger:        logger,
+		tunnelMgr:     tunnelMgr,
+		paramApplier:  paramApplier,
+		peerMgr:       peerMgr,
+		stateProvider: stateProvider,
+		captureFunc:   captureFunc,
 	}
 }
 
@@ -222,6 +230,88 @@ func (h *AgentHandler) RemoveTunnel(_ context.Context, req *proto.RemoveTunnelRe
 	return &proto.RemoveTunnelResponse{Success: true}, nil
 }
 
+func (h *AgentHandler) ListTunnels(_ context.Context, _ *proto.Empty) (*proto.TunnelList, error) {
+	if h.tunnelMgr == nil {
+		return nil, status.Error(codes.Unimplemented, "tunnel management not available in this mode")
+	}
+
+	tunnels := h.tunnelMgr.ListTunnels()
+	protoTunnels := make([]*proto.TunnelStatus, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		protoTunnels = append(protoTunnels, &proto.TunnelStatus{
+			Name:      tunnel.Name,
+			OverlayIp: tunnel.OverlayIP,
+			Healthy:   tunnel.Healthy,
+		})
+	}
+
+	return &proto.TunnelList{Tunnels: protoTunnels}, nil
+}
+
+func (h *AgentHandler) ListPeers(_ context.Context, _ *proto.Empty) (*proto.PeerList, error) {
+	if h.peerMgr == nil {
+		return nil, status.Error(codes.Unimplemented, "peer management not available in this mode")
+	}
+
+	peers := h.peerMgr.ListPeers()
+	protoPeers := make([]*proto.PeerStatus, 0, len(peers))
+	for _, peer := range peers {
+		protoPeers = append(protoPeers, &proto.PeerStatus{
+			PublicKey:     peer.PublicKey,
+			Endpoint:      peer.Endpoint,
+			AllowedIps:    peer.AllowedIPs,
+			LastHandshake: peer.LastHandshake,
+			TxBytes:       peer.TxBytes,
+			RxBytes:       peer.RxBytes,
+		})
+	}
+
+	return &proto.PeerList{Peers: protoPeers}, nil
+}
+
+func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*proto.AddPeerResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if h.peerMgr == nil {
+		return nil, status.Error(codes.Unimplemented, "peer management not available in this mode")
+	}
+	if len(req.GetPublicKey()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "public_key is required")
+	}
+
+	if err := h.peerMgr.AddPeer(
+		req.GetPublicKey(),
+		req.GetPresharedKey(),
+		req.GetAllowedIps(),
+		strings.TrimSpace(req.GetEndpointHost()),
+		req.GetPersistentKeepalive(),
+	); err != nil {
+		h.logger.Error().Err(err).Msg("add peer failed")
+		return nil, status.Errorf(codes.Internal, "add peer: %v", err)
+	}
+
+	return &proto.AddPeerResponse{Success: true}, nil
+}
+
+func (h *AgentHandler) RemovePeer(_ context.Context, req *proto.RemovePeerRequest) (*proto.RemovePeerResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if h.peerMgr == nil {
+		return nil, status.Error(codes.Unimplemented, "peer management not available in this mode")
+	}
+	if len(req.GetPublicKey()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "public_key is required")
+	}
+
+	if err := h.peerMgr.RemovePeer(req.GetPublicKey()); err != nil {
+		h.logger.Error().Err(err).Msg("remove peer failed")
+		return nil, status.Errorf(codes.Internal, "remove peer: %v", err)
+	}
+	return &proto.RemovePeerResponse{Success: true}, nil
+}
+
 // RotateParams applies rotated AWG parameters to a tunnel.
 func (h *AgentHandler) RotateParams(_ context.Context, req *proto.RotateParamsRequest) (*proto.RotateParamsResponse, error) {
 	if req == nil {
@@ -264,10 +354,75 @@ func (h *AgentHandler) RotateParams(_ context.Context, req *proto.RotateParamsRe
 
 // GetStatus returns current node status.
 func (h *AgentHandler) GetStatus(_ context.Context, _ *proto.Empty) (*proto.NodeStatus, error) {
+	if h.stateProvider != nil {
+		state := h.stateProvider.GetNodeState()
+		tunnels := make([]*proto.TunnelStatus, 0, len(state.Tunnels))
+		for _, tunnel := range state.Tunnels {
+			tunnels = append(tunnels, &proto.TunnelStatus{
+				Name:      tunnel.Name,
+				OverlayIp: tunnel.OverlayIP,
+				Healthy:   tunnel.Healthy,
+			})
+		}
+		return &proto.NodeStatus{
+			Name:      state.Name,
+			Mode:      state.Mode,
+			OverlayIp: state.OverlayIP,
+			Tunnels:   tunnels,
+			Uptime:    time.Since(state.StartTime).String(),
+		}, nil
+	}
+
 	return &proto.NodeStatus{
 		Name: "unknown",
 		Mode: "unknown",
 	}, nil
+}
+
+func (h *AgentHandler) GetParams(_ context.Context, req *proto.GetParamsRequest) (*proto.AwgParams, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if h.tunnelMgr == nil {
+		return nil, status.Error(codes.Unimplemented, "param retrieval not available in this mode")
+	}
+
+	tunnelName := strings.TrimSpace(req.GetTunnelName())
+	if tunnelName == "" {
+		return nil, status.Error(codes.InvalidArgument, "tunnel_name is required")
+	}
+
+	cfg, err := h.tunnelMgr.GetParams(tunnelName)
+	if err != nil {
+		h.logger.Error().Err(err).Str("tunnel", tunnelName).Msg("get params failed")
+		return nil, status.Errorf(codes.Internal, "get params: %v", err)
+	}
+
+	params := configToParams(cfg)
+	return params, nil
+}
+
+func (h *AgentHandler) GetRoutes(_ context.Context, _ *proto.Empty) (*proto.RouteTable, error) {
+	if runtime.GOOS != "linux" {
+		return nil, status.Error(codes.Unimplemented, "routes are supported only on linux")
+	}
+
+	routes, err := routing.ListRoutes()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list routes: %v", err)
+	}
+
+	protoRoutes := make([]*proto.RouteEntry, 0, len(routes))
+	for _, route := range routes {
+		protoRoutes = append(protoRoutes, &proto.RouteEntry{
+			Destination:  route.Destination,
+			ViaInterface: route.Device,
+			ViaOverlayIp: route.Via,
+			Active:       true,
+		})
+	}
+
+	return &proto.RouteTable{Routes: protoRoutes}, nil
 }
 
 // GetHealth returns node health information.
@@ -359,4 +514,69 @@ func mapParamsToConfig(params *proto.AwgParams) (wg.Config, bool) {
 	}
 
 	return cfg, hasParams
+}
+
+func configToParams(cfg wg.Config) *proto.AwgParams {
+	params := &proto.AwgParams{}
+
+	if cfg.Jc != nil {
+		params.Jc = int32(*cfg.Jc)
+	}
+	if cfg.Jmin != nil {
+		params.Jmin = int32(*cfg.Jmin)
+	}
+	if cfg.Jmax != nil {
+		params.Jmax = int32(*cfg.Jmax)
+	}
+	if cfg.S1 != nil {
+		params.S1 = int32(*cfg.S1)
+	}
+	if cfg.S2 != nil {
+		params.S2 = int32(*cfg.S2)
+	}
+	if cfg.S3 != nil {
+		params.S3 = int32(*cfg.S3)
+	}
+	if cfg.S4 != nil {
+		params.S4 = int32(*cfg.S4)
+	}
+
+	if cfg.H1 != nil {
+		if parsed, err := strconv.ParseInt(*cfg.H1, 10, 32); err == nil {
+			params.H1 = int32(parsed)
+		}
+	}
+	if cfg.H2 != nil {
+		if parsed, err := strconv.ParseInt(*cfg.H2, 10, 32); err == nil {
+			params.H2 = int32(parsed)
+		}
+	}
+	if cfg.H3 != nil {
+		if parsed, err := strconv.ParseInt(*cfg.H3, 10, 32); err == nil {
+			params.H3 = int32(parsed)
+		}
+	}
+	if cfg.H4 != nil {
+		if parsed, err := strconv.ParseInt(*cfg.H4, 10, 32); err == nil {
+			params.H4 = int32(parsed)
+		}
+	}
+
+	if cfg.I1 != nil {
+		params.I1 = *cfg.I1
+	}
+	if cfg.I2 != nil {
+		params.I2 = *cfg.I2
+	}
+	if cfg.I3 != nil {
+		params.I3 = *cfg.I3
+	}
+	if cfg.I4 != nil {
+		params.I4 = *cfg.I4
+	}
+	if cfg.I5 != nil {
+		params.I5 = *cfg.I5
+	}
+
+	return params
 }

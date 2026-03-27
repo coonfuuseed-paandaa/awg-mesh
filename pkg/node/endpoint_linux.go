@@ -4,8 +4,12 @@ package node
 
 import (
 	"fmt"
+	"net"
+	"strings"
+	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
+	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
 	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
@@ -81,4 +85,89 @@ func (e *EndpointRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
 		Msg("applied AWG parameters to endpoint interface")
 
 	return nil
+}
+
+// ListPeers returns all current peers on the endpoint interface.
+func (e *EndpointRunner) ListPeers() []grpcserver.PeerInfo {
+	if e == nil || e.platformState.iface == nil {
+		return nil
+	}
+	dev, err := e.platformState.iface.GetDevice()
+	if err != nil {
+		return nil
+	}
+	result := make([]grpcserver.PeerInfo, 0, len(dev.Peers))
+	for _, p := range dev.Peers {
+		endpoint := ""
+		if p.Endpoint != nil {
+			endpoint = p.Endpoint.String()
+		}
+		allowedIPs := make([]string, 0, len(p.AllowedIPs))
+		for _, aip := range p.AllowedIPs {
+			allowedIPs = append(allowedIPs, aip.String())
+		}
+		result = append(result, grpcserver.PeerInfo{
+			PublicKey:     append([]byte(nil), p.PublicKey[:]...),
+			Endpoint:      endpoint,
+			AllowedIPs:    allowedIPs,
+			LastHandshake: p.LastHandshakeTime.Unix(),
+			TxBytes:       p.TransmitBytes,
+			RxBytes:       p.ReceiveBytes,
+		})
+	}
+	return result
+}
+
+// AddPeer adds a peer to the endpoint interface.
+func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
+	if e == nil || e.platformState.iface == nil {
+		return fmt.Errorf("endpoint interface is not initialized")
+	}
+	key, err := wg.NewKey(publicKey)
+	if err != nil {
+		return fmt.Errorf("parse peer public key: %w", err)
+	}
+	peerCfg := wg.PeerConfig{
+		PublicKey:         key,
+		ReplaceAllowedIPs: true,
+	}
+	if len(presharedKey) == 32 {
+		psk, err := wg.NewKey(presharedKey)
+		if err == nil {
+			peerCfg.PresharedKey = &psk
+		}
+	}
+	for _, cidr := range allowedIPs {
+		_, ipNet, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil {
+			return fmt.Errorf("parse allowed IP %q: %w", cidr, err)
+		}
+		peerCfg.AllowedIPs = append(peerCfg.AllowedIPs, *ipNet)
+	}
+	if endpointHost != "" {
+		addr, err := net.ResolveUDPAddr("udp", endpointHost)
+		if err != nil {
+			return fmt.Errorf("resolve endpoint %q: %w", endpointHost, err)
+		}
+		peerCfg.Endpoint = addr
+	}
+	if persistentKeepalive > 0 {
+		interval := time.Duration(persistentKeepalive) * time.Second
+		peerCfg.PersistentKeepaliveInterval = &interval
+	}
+	return e.platformState.iface.Configure(wg.Config{Peers: []wg.PeerConfig{peerCfg}})
+}
+
+// RemovePeer removes a peer from the endpoint interface by public key.
+func (e *EndpointRunner) RemovePeer(publicKey []byte) error {
+	if e == nil || e.platformState.iface == nil {
+		return fmt.Errorf("endpoint interface is not initialized")
+	}
+	key, err := wg.NewKey(publicKey)
+	if err != nil {
+		return fmt.Errorf("parse peer public key: %w", err)
+	}
+	return e.platformState.iface.Configure(wg.Config{
+		Peers: []wg.PeerConfig{{PublicKey: key, Remove: true}},
+	})
 }

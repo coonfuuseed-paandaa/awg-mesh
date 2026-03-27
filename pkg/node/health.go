@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"net"
 	"os/exec"
 	"strconv"
 	"time"
@@ -93,6 +94,9 @@ func (h *HealthChecker) Run(
 // PingOverlay sends a single ICMP echo to ip and returns true if it succeeds.
 // timeout controls how long to wait for a reply (minimum 1 second).
 func PingOverlay(ip string, timeout time.Duration) bool {
+	if net.ParseIP(ip) == nil {
+		return false
+	}
 	seconds := int(timeout.Seconds())
 	if seconds < 1 {
 		seconds = 1

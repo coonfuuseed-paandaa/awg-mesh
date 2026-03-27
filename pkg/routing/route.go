@@ -17,6 +17,17 @@ type RouteEntry struct {
 
 // AddRoute adds a unicast route: ip route add dest via via dev dev.
 func AddRoute(dest string, via string, dev string) error {
+	if dest != "default" {
+		if err := validateCIDR(dest); err != nil {
+			return err
+		}
+	}
+	if err := validateIP(via); err != nil {
+		return err
+	}
+	if err := validateInterface(dev); err != nil {
+		return err
+	}
 	out, err := exec.Command("ip", "route", "add", dest, "via", via, "dev", dev).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip route add %s via %s dev %s: %w: %s", dest, via, dev, err, strings.TrimSpace(string(out)))
@@ -26,6 +37,11 @@ func AddRoute(dest string, via string, dev string) error {
 
 // DeleteRoute removes a route by destination prefix.
 func DeleteRoute(dest string) error {
+	if dest != "default" {
+		if err := validateCIDR(dest); err != nil {
+			return err
+		}
+	}
 	out, err := exec.Command("ip", "route", "del", dest).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip route del %s: %w: %s", dest, err, strings.TrimSpace(string(out)))
@@ -35,6 +51,17 @@ func DeleteRoute(dest string) error {
 
 // ReplaceRoute atomically replaces (or adds) a route for dest.
 func ReplaceRoute(dest string, via string, dev string) error {
+	if dest != "default" {
+		if err := validateCIDR(dest); err != nil {
+			return err
+		}
+	}
+	if err := validateIP(via); err != nil {
+		return err
+	}
+	if err := validateInterface(dev); err != nil {
+		return err
+	}
 	out, err := exec.Command("ip", "route", "replace", dest, "via", via, "dev", dev).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip route replace %s via %s dev %s: %w: %s", dest, via, dev, err, strings.TrimSpace(string(out)))
