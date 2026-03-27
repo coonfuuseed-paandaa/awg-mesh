@@ -122,9 +122,7 @@ export PATH=$PATH:$(go env GOPATH)/bin
 ```bash
 git clone git@github.com:thebtf/awg-mesh.git
 cd awg-mesh
-go install -ldflags "-X main.version=$(git describe --tags --always)" ./cmd/mesh-ctl
-# или собрать в конкретное место:
-go build -ldflags "-X main.version=$(git describe --tags --always)" -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
+make install    # устанавливает mesh-ctl + awg-mesh-node в $GOPATH/bin с версией из git tag
 ```
 
 Проверка:
@@ -478,7 +476,7 @@ go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
 ```bash
 cd awg-mesh
 git pull
-go install ./cmd/mesh-ctl
+make install
 ```
 
 Состояние `~/.mesh-ctl/` (CA, токены, ключи узлов) не затрагивается при обновлении.

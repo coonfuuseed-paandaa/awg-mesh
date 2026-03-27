@@ -5,7 +5,14 @@ LDFLAGS := -X main.version=$(VERSION) -s -w
 GOFLAGS := -trimpath
 BIN_DIR := bin
 
-.PHONY: build test lint proto-gen docker clean
+.PHONY: build install install-all test lint proto-gen docker clean
+
+install:
+	go install $(GOFLAGS) -ldflags "$(LDFLAGS)" ./cmd/mesh-ctl
+
+install-all:
+	go install $(GOFLAGS) -ldflags "$(LDFLAGS)" ./cmd/mesh-ctl
+	go install $(GOFLAGS) -ldflags "$(LDFLAGS)" ./cmd/awg-mesh-node
 
 build:
 	@mkdir -p $(BIN_DIR)

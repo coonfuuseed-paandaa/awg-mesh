@@ -122,9 +122,7 @@ export PATH=$PATH:$(go env GOPATH)/bin
 ```bash
 git clone git@github.com:thebtf/awg-mesh.git
 cd awg-mesh
-go install -ldflags "-X main.version=$(git describe --tags --always)" ./cmd/mesh-ctl
-# or build to a specific location:
-go build -ldflags "-X main.version=$(git describe --tags --always)" -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
+make install    # installs mesh-ctl + awg-mesh-node to $GOPATH/bin with version from git tag
 ```
 
 Verify:
@@ -478,7 +476,7 @@ go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
 ```bash
 cd awg-mesh
 git pull
-go install ./cmd/mesh-ctl
+make install
 ```
 
 Your `~/.mesh-ctl/` state (CA, tokens, node keys) is not affected by updates.
