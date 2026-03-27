@@ -69,9 +69,9 @@
 - [x] T041 [P] [US2] Implement TCP MSS clamping (--clamp-mss-to-pmtu) in pkg/routing/mss.go
 - [x] T042 [US4] Implement healthcheck loop: ping overlay IPs, auto-remove/re-add routes in pkg/node/health.go
 - [x] T043 [US2] Implement auto MTU calculation based on hop count in pkg/node/mtu.go
-- [ ] T044 [US1] Implement `mesh-ctl endpoint prepare/init/remove` full lifecycle calling master AddTunnel in cmd/mesh-ctl/cmd/endpoint.go
-- [ ] T045 [US2] Implement `mesh-ctl master prepare/init/remove` full lifecycle with all endpoints in cmd/mesh-ctl/cmd/master.go
-- [ ] T046 [P] Implement docker-compose templates for master and endpoint in deploy/templates/
+- [x] T044 [US1] Implement `mesh-ctl endpoint prepare/init/remove` full lifecycle calling master AddTunnel in cmd/mesh-ctl/cmd/endpoint.go
+- [x] T045 [US2] Implement `mesh-ctl master prepare/init/remove` full lifecycle with all endpoints in cmd/mesh-ctl/cmd/master.go
+- [x] T046 [P] Implement docker-compose templates for master and endpoint in deploy/templates/
 - [ ] T047 Verify: master ↔ endpoint tunnel, overlay route, ping, failover on endpoint kill (integration test)
 
 ## Phase 4: AWG Param Generation + Rotation (FR-6, FR-7, FR-8, FR-14)
@@ -79,20 +79,20 @@
 **Goal:** Port awg_gen.py to Go, implement all rotation tiers.
 **Test criteria:** Tier 1 rotation with zero packet loss, capture from live domains.
 
-- [ ] T048 [US3] Port protocol families (9 types) from awg_gen.py to Go in pkg/awggen/families.go
-- [ ] T049 [P] [US3] Port preset ranges (aggressive/balanced/minimal) in pkg/awggen/presets.go
-- [ ] T050 [P] [US3] Port I-spec tag encoding (<b>, <r>, <rc>, <rd>, <t>) in pkg/awggen/ispec.go
-- [ ] T051 [US3] Port param generator (S1-S4, H1-H4, Jc/Jmin/Jmax, I1-I5 from captures) in pkg/awggen/generator.go
-- [ ] T052 [P] [US3] Port MTU validation + S3/S4 constraint checking in pkg/awggen/mtu.go
+- [x] T048 [US3] Port protocol families (9 types) from awg_gen.py to Go in pkg/awggen/families.go
+- [x] T049 [P] [US3] Port preset ranges (aggressive/balanced/minimal) in pkg/awggen/presets.go
+- [x] T050 [P] [US3] Port I-spec tag encoding (<b>, <r>, <rc>, <rd>, <t>) in pkg/awggen/ispec.go
+- [x] T051 [US3] Port param generator (S1-S4, H1-H4, Jc/Jmin/Jmax, I1-I5 from captures) in pkg/awggen/generator.go
+- [x] T052 [P] [US3] Port MTU validation + S3/S4 constraint checking in pkg/awggen/mtu.go
 - [ ] T053 [US7] Implement TLS/QUIC packet capture via gopacket in pkg/awggen/capture.go
-- [ ] T054 [US3] Implement Tier 1 rotation protocol (UAPI SET on both sides) in pkg/rotation/tier1.go
-- [ ] T055 [US3] Implement Tier 2 rotation protocol (coordinated, preflight check) in pkg/rotation/tier2.go
-- [ ] T056 [US3] Implement Tier 3 rotation protocol (keypair, add-then-swap) in pkg/rotation/tier3.go
-- [ ] T057 [US3] Implement `mesh-ctl rotate` with --tier, --master, --endpoint, --client flags in cmd/mesh-ctl/cmd/rotate.go
-- [ ] T058 [US3] Implement `mesh-ctl rotate --scheduled` — check topology intervals, rotate due in cmd/mesh-ctl/cmd/rotate.go
-- [ ] T059 [US7] Implement `mesh-ctl capture refresh` — call CaptureRefresh gRPC on masters in cmd/mesh-ctl/cmd/capture.go
-- [ ] T060 [P] [US7] Implement `mesh-ctl capture domains --list/--add/--import` in cmd/mesh-ctl/cmd/capture.go
-- [ ] T061 Implement CaptureRefresh gRPC handler in awg-mesh-node master mode in pkg/node/master.go
+- [x] T054 [US3] Implement Tier 1 rotation protocol (UAPI SET on both sides) in pkg/rotation/tier1.go
+- [x] T055 [US3] Implement Tier 2 rotation protocol (coordinated, preflight check) in pkg/rotation/tier2.go
+- [x] T056 [US3] Implement Tier 3 rotation protocol (keypair, add-then-swap) in pkg/rotation/tier3.go
+- [x] T057 [US3] Implement `mesh-ctl rotate` with --tier, --master, --endpoint, --client flags in cmd/mesh-ctl/cmd/rotate.go
+- [x] T058 [US3] Implement `mesh-ctl rotate --scheduled` — check topology intervals, rotate due in cmd/mesh-ctl/cmd/rotate.go
+- [x] T059 [US7] Implement `mesh-ctl capture refresh` — call CaptureRefresh gRPC on masters in cmd/mesh-ctl/cmd/capture.go
+- [x] T060 [P] [US7] Implement `mesh-ctl capture domains --list/--add/--import` in cmd/mesh-ctl/cmd/capture.go
+- [x] T061 Implement CaptureRefresh gRPC handler in awg-mesh-node master mode in pkg/node/master.go
 - [ ] T062 Verify: Tier 1 rotation zero packet loss, Tier 2 coordinated, capture from 10+ domains (integration test)
 
 ## Phase 5: Client + MikroTik + Address Space (FR-3, FR-11, FR-12)
@@ -100,16 +100,16 @@
 **Goal:** MikroTik support, Linux client, address space management CLI.
 **Test criteria:** MikroTik container connects to mesh, address range operations work.
 
-- [ ] T063 [US5] Implement MikroTik RouterOS command generation (/container, /interface/veth, /ip/route) in pkg/mikrotik/commands.go
-- [ ] T064 [P] [US5] Implement .rsc script templates for MikroTik import in pkg/mikrotik/templates.go
-- [ ] T065 [US5] Implement `mesh-ctl client prepare --type mikrotik` with RouterOS output in cmd/mesh-ctl/cmd/client.go
-- [ ] T066 [US5] Implement `mesh-ctl rotate --client` with sequential ECMP rotation for MikroTik in cmd/mesh-ctl/cmd/rotate.go
-- [ ] T067 [US6] Implement `mesh-ctl ip list` — show all ranges and allocations in cmd/mesh-ctl/cmd/ip.go
-- [ ] T068 [P] [US6] Implement `mesh-ctl ip range add/resize/move/rename/delete` in cmd/mesh-ctl/cmd/ip.go
-- [ ] T069 [P] [US6] Implement `mesh-ctl ip range set-balancer` in cmd/mesh-ctl/cmd/ip.go
-- [ ] T070 [US1] Implement `mesh-ctl endpoint remove` in cmd/mesh-ctl/cmd/endpoint.go
-- [ ] T071 [P] [US2] Implement `mesh-ctl master remove` in cmd/mesh-ctl/cmd/master.go
-- [ ] T072 [P] Implement `mesh-ctl client remove` in cmd/mesh-ctl/cmd/client.go
+- [x] T063 [US5] Implement MikroTik RouterOS command generation (/container, /interface/veth, /ip/route) in pkg/mikrotik/commands.go
+- [x] T064 [P] [US5] Implement .rsc script templates for MikroTik import in pkg/mikrotik/templates.go
+- [x] T065 [US5] Implement `mesh-ctl client prepare --type mikrotik` with RouterOS output in cmd/mesh-ctl/cmd/client.go
+- [x] T066 [US5] Implement `mesh-ctl rotate --client` with sequential ECMP rotation for MikroTik in cmd/mesh-ctl/cmd/rotate.go
+- [x] T067 [US6] Implement `mesh-ctl ip list` — show all ranges and allocations in cmd/mesh-ctl/cmd/ip.go
+- [x] T068 [P] [US6] Implement `mesh-ctl ip range add/resize/move/rename/delete` in cmd/mesh-ctl/cmd/ip.go
+- [x] T069 [P] [US6] Implement `mesh-ctl ip range set-balancer` in cmd/mesh-ctl/cmd/ip.go
+- [x] T070 [US1] Implement `mesh-ctl endpoint remove` in cmd/mesh-ctl/cmd/endpoint.go
+- [x] T071 [P] [US2] Implement `mesh-ctl master remove` in cmd/mesh-ctl/cmd/master.go
+- [x] T072 [P] Implement `mesh-ctl client remove` in cmd/mesh-ctl/cmd/client.go
 - [ ] T073 Verify: MikroTik container connects to master, sequential rotation, ip range operations (integration test)
 
 ## Phase 6: Observability + Polish (NFR-4, NFR-6)
@@ -117,10 +117,10 @@
 **Goal:** Production readiness — metrics, logging, docs, migration.
 **Test criteria:** Prometheus scrapes metrics, logs are structured JSON.
 
-- [ ] T074 Implement Prometheus metrics endpoint (:9091/metrics) in pkg/node/metrics.go
-- [ ] T075 [P] Implement structured JSON logging (zerolog) across all packages in pkg/logging/
-- [ ] T076 [P] Implement `mesh-ctl capture schedule` — set up cron on master in cmd/mesh-ctl/cmd/capture.go
-- [ ] T077 Implement graceful shutdown for awg-mesh-node (signal handling, cleanup) in cmd/awg-mesh-node/main.go
+- [x] T074 Implement Prometheus metrics endpoint (:9091/metrics) in pkg/node/metrics.go
+- [x] T075 [P] Implement structured JSON logging (zerolog) across all packages in pkg/logging/
+- [x] T076 [P] Implement `mesh-ctl capture schedule` — set up cron on master in cmd/mesh-ctl/cmd/capture.go
+- [x] T077 Implement graceful shutdown for awg-mesh-node (signal handling, cleanup) in cmd/awg-mesh-node/main.go
 - [ ] T078 [P] Write README.md with architecture overview, quickstart, topology reference
 - [ ] T079 [P] Write migration guide: current MikroTik 5-container → awg-mesh 2-master
 - [ ] T080 Final integration test: full mesh (2 masters, 3 endpoints, 1 MikroTik client), rotation, failover, capture
