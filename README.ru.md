@@ -463,6 +463,64 @@ WantedBy=multi-user.target
 sudo systemctl enable --now infra.service
 ```
 
+## Обновление
+
+### Обновление mesh-ctl
+
+**Публичный репозиторий:**
+
+```bash
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
+```
+
+**Из локального клона:**
+
+```bash
+cd awg-mesh
+git pull
+go install ./cmd/mesh-ctl
+```
+
+Состояние `~/.mesh-ctl/` (CA, токены, ключи узлов) не затрагивается при обновлении.
+
+### Обновление узлов
+
+Загрузите новый образ и перезапустите контейнер. AWG-туннели кратковременно переподключатся (~2-5 сек):
+
+```bash
+# На каждом хосте:
+docker pull ghcr.io/thebtf/awg-mesh:latest
+docker compose restart awg-mesh-node
+```
+
+Для multi-master конфигураций — обновляйте по одному мастеру за раз:
+
+```bash
+# Master 1 (MikroTik ECMP продолжает маршрутизацию через Master 2):
+ssh master-01 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
+# Дождитесь возврата Master 1:
+mesh-ctl status
+# Затем Master 2:
+ssh master-02 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
+```
+
+Конфигурация в `/srv/awg-mesh` сохраняется при перезапусках. TLS-сертификаты, ключи и токены не затрагиваются.
+
+### Фиксация версии
+
+Для привязки к конкретной версии вместо `latest`:
+
+```yaml
+services:
+  awg-mesh-node:
+    image: ghcr.io/thebtf/awg-mesh:v0.1.0   # привязка к тегу релиза
+```
+
+Доступные теги:
+- `latest` — последняя сборка из master
+- `v0.1.0` — тег релиза (рекомендуется для production)
+- `<commit-sha>` — конкретный коммит (для отладки)
+
 ## Конфигурация топологии
 
 `mesh-topology.yml` — единственный источник истины для всей сети. Все команды `mesh-ctl` читают из этого файла.

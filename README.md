@@ -463,6 +463,64 @@ WantedBy=multi-user.target
 sudo systemctl enable --now infra.service
 ```
 
+## Updating
+
+### Updating mesh-ctl
+
+**Public repository:**
+
+```bash
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
+```
+
+**From local clone:**
+
+```bash
+cd awg-mesh
+git pull
+go install ./cmd/mesh-ctl
+```
+
+Your `~/.mesh-ctl/` state (CA, tokens, node keys) is not affected by updates.
+
+### Updating nodes
+
+Pull the new image and restart the container. AWG tunnels will briefly reconnect (~2-5s):
+
+```bash
+# On each node host:
+docker pull ghcr.io/thebtf/awg-mesh:latest
+docker compose restart awg-mesh-node
+```
+
+Or with zero-downtime on multi-master setups — update one master at a time:
+
+```bash
+# Master 1 (MikroTik ECMP keeps traffic flowing through Master 2):
+ssh master-01 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
+# Wait for Master 1 to come back:
+mesh-ctl status
+# Then Master 2:
+ssh master-02 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
+```
+
+Configuration at `/srv/awg-mesh` persists across restarts. TLS certificates, keypairs, and tokens are preserved.
+
+### Version pinning
+
+To pin a specific version instead of `latest`:
+
+```yaml
+services:
+  awg-mesh-node:
+    image: ghcr.io/thebtf/awg-mesh:v0.1.0   # pin to release tag
+```
+
+Available tags:
+- `latest` — most recent build from master
+- `v0.1.0` — release tag (recommended for production)
+- `<commit-sha>` — specific commit (for debugging)
+
 ## Topology Configuration
 
 `mesh-topology.yml` is the single source of truth for the entire mesh. All `mesh-ctl` commands read from this file.
