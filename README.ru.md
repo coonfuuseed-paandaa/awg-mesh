@@ -122,9 +122,9 @@ export PATH=$PATH:$(go env GOPATH)/bin
 ```bash
 git clone git@github.com:thebtf/awg-mesh.git
 cd awg-mesh
-go install ./cmd/mesh-ctl        # устанавливает в $GOPATH/bin
+go install -ldflags "-X main.version=$(git describe --tags --always)" ./cmd/mesh-ctl
 # или собрать в конкретное место:
-go build -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
+go build -ldflags "-X main.version=$(git describe --tags --always)" -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
 ```
 
 Проверка:
