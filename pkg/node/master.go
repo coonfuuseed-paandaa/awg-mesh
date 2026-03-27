@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -14,6 +15,7 @@ type MasterTunnel struct {
 	BalancerIP    string
 	Healthy       bool
 	Weight        int
+	platformState masterTunnelPlatformState
 }
 
 // MasterRunner runs node logic for master mode.
@@ -44,6 +46,12 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
+
+	defer func() {
+		if closeErr := m.closeAllTunnelInterfaces(); closeErr != nil {
+			m.node.logger.Warn().Err(closeErr).Msg("failed to close master tunnel interfaces")
+		}
+	}()
 
 	m.node.logger.Info().
 		Str("overlay_ip", m.node.config.OverlayIP).
@@ -99,21 +107,31 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP strin
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if _, exists := m.tunnels[name]; exists {
+		m.mu.Unlock()
 		return fmt.Errorf("tunnel %q already exists", name)
 	}
 
 	t := &MasterTunnel{
 		Name:          name,
-		InterfaceName: "awg-" + name,
+		InterfaceName: "wg-" + name,
 		OverlayIP:     overlayIP,
 		BalancerIP:    balancerIP,
 		Healthy:       true,
 		Weight:        weight,
 	}
 	m.tunnels[name] = t
+	m.mu.Unlock()
+
+	if err := m.createTunnelInterface(t, endpointHost); err != nil {
+		m.mu.Lock()
+		currentTunnel, exists := m.tunnels[name]
+		if exists && currentTunnel == t {
+			delete(m.tunnels, name)
+		}
+		m.mu.Unlock()
+		return fmt.Errorf("create tunnel interface for %q: %w", name, err)
+	}
 
 	m.node.logger.Info().
 		Str("tunnel", name).
@@ -128,13 +146,17 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP strin
 // RemoveTunnel removes a tunnel by name.
 func (m *MasterRunner) RemoveTunnel(name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.tunnels[name]; !exists {
+	tunnel, exists := m.tunnels[name]
+	if !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("tunnel %q not found", name)
 	}
-
 	delete(m.tunnels, name)
+	m.mu.Unlock()
+
+	if err := m.closeTunnelInterface(tunnel); err != nil {
+		return fmt.Errorf("close tunnel interface for %q: %w", name, err)
+	}
 
 	m.node.logger.Info().
 		Str("tunnel", name).
@@ -153,4 +175,31 @@ func (m *MasterRunner) ListTunnels() []MasterTunnel {
 		result = append(result, *t)
 	}
 	return result
+}
+
+func (m *MasterRunner) closeAllTunnelInterfaces() error {
+	tunnels := m.listTunnelPointers()
+	closeErrors := make([]string, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		if err := m.closeTunnelInterface(tunnel); err != nil {
+			closeErrors = append(closeErrors, fmt.Sprintf("%s: %v", tunnel.Name, err))
+		}
+	}
+
+	if len(closeErrors) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("close tunnel interfaces: %s", strings.Join(closeErrors, "; "))
+}
+
+func (m *MasterRunner) listTunnelPointers() []*MasterTunnel {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	tunnels := make([]*MasterTunnel, 0, len(m.tunnels))
+	for _, tunnel := range m.tunnels {
+		tunnels = append(tunnels, tunnel)
+	}
+	return tunnels
 }

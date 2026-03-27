@@ -7,7 +7,8 @@ import (
 
 // EndpointRunner runs node logic for endpoint mode.
 type EndpointRunner struct {
-	node *Node
+	node          *Node
+	platformState endpointPlatformState
 }
 
 // NewEndpointRunner creates an endpoint mode runner.
@@ -29,11 +30,19 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
 
+	if err := e.createInterface(); err != nil {
+		return fmt.Errorf("create endpoint interface: %w", err)
+	}
+	defer func() {
+		if closeErr := e.closeInterface(); closeErr != nil {
+			e.node.logger.Warn().Err(closeErr).Msg("failed to close endpoint interface")
+		}
+	}()
+
 	e.node.logger.Info().
 		Str("overlay_ip", e.node.config.OverlayIP).
 		Str("public_key", publicKey.String()).
 		Msg("endpoint runner started")
-	e.node.logger.Info().Msg("AWG interface creation deferred to linux build")
 
 	<-ctx.Done()
 

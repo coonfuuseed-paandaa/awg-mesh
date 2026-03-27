@@ -7,7 +7,8 @@ import (
 
 // ClientRunner runs node logic for client mode.
 type ClientRunner struct {
-	node *Node
+	node          *Node
+	platformState clientPlatformState
 }
 
 // NewClientRunner creates a client mode runner.
@@ -29,19 +30,18 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
 
+	if err := c.createInterfaces(ctx); err != nil {
+		return fmt.Errorf("create client interfaces: %w", err)
+	}
+	defer func() {
+		if closeErr := c.closeInterfaces(); closeErr != nil {
+			c.node.logger.Warn().Err(closeErr).Msg("failed to close client interfaces")
+		}
+	}()
+
 	c.node.logger.Info().
 		Str("public_key", publicKey.String()).
 		Msg("client runner started")
-
-	if c.node.topology != nil {
-		for _, master := range c.node.topology.Masters {
-			c.node.logger.Info().
-				Str("master", master.Name).
-				Str("host", master.Host).
-				Str("overlay_ip", master.OverlayIP).
-				Msg("would connect to master")
-		}
-	}
 
 	<-ctx.Done()
 
