@@ -3,6 +3,7 @@ package cmd
 import (
 	"crypto"
 	"crypto/x509"
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,43 +13,17 @@ import (
 	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
 )
 
-const endpointComposeTemplate = `services:
-  awg-mesh-node:
-    image: {{.Image}}
-    network_mode: host
-    restart: always
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    sysctls:
-      net.ipv4.ip_forward: "1"
-    environment:
-      - MESH_TOKEN={{.Token}}
-      - MESH_MODE=endpoint
-      - MESH_OVERLAY_IP={{.OverlayIP}}
-      - MESH_LISTEN_PORT={{.ListenPort}}
-    volumes:
-      - /etc/awg-mesh:/etc/awg-mesh
-      - /var/lib/awg-mesh:/var/lib/awg-mesh`
+//go:embed templates/*.tmpl
+var templateFS embed.FS
 
-const masterComposeTemplate = `services:
-  awg-mesh-node:
-    image: {{.Image}}
-    network_mode: host
-    restart: always
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    sysctls:
-      net.ipv4.ip_forward: "1"
-    environment:
-      - MESH_TOKEN={{.Token}}
-      - MESH_MODE=master
-      - MESH_OVERLAY_IP={{.OverlayIP}}
-      - MESH_LISTEN_PORT={{.ListenPort}}
-    volumes:
-      - /etc/awg-mesh:/etc/awg-mesh
-      - /var/lib/awg-mesh:/var/lib/awg-mesh`
+func loadTemplate(name string) (string, error) {
+	content, err := templateFS.ReadFile("templates/" + name)
+	if err != nil {
+		return "", fmt.Errorf("read template %q: %w", name, err)
+	}
+
+	return string(content), nil
+}
 
 func ensureCA(configDir string) (*x509.Certificate, crypto.PrivateKey, error) {
 	caCert, caKey, err := pkgtls.LoadCA(configDir)
@@ -87,6 +62,15 @@ func loadToken(nodeDir string) (string, error) {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
 	return strings.TrimSpace(string(rawToken)), nil
+}
+
+func containsName(list []string, needle string) bool {
+	for _, value := range list {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func renderDockerCompose(tmplContent string, data any, outputPath string) error {

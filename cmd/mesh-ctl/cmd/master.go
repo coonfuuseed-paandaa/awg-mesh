@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -22,6 +24,7 @@ func newMasterCommand() *cobra.Command {
 
 	cmd.AddCommand(newMasterPrepareCommand())
 	cmd.AddCommand(newMasterInitCommand())
+	cmd.AddCommand(newMasterRemoveCommand())
 
 	return cmd
 }
@@ -85,8 +88,13 @@ func newMasterPrepareCommand() *cobra.Command {
 				Token:      token,
 			}
 
+			masterTemplate, err := loadTemplate("docker-compose.master.yml.tmpl")
+			if err != nil {
+				return fmt.Errorf("load master compose template: %w", err)
+			}
+
 			outputPath := master.Name + "-docker-compose.yml"
-			if err := renderDockerCompose(masterComposeTemplate, data, outputPath); err != nil {
+			if err := renderDockerCompose(masterTemplate, data, outputPath); err != nil {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
@@ -176,7 +184,117 @@ func newMasterInitCommand() *cobra.Command {
 				return fmt.Errorf("init failed: %s", resp.Message)
 			}
 
+			pubkeyPath := filepath.Join(nd, "pubkey")
+			if err := os.WriteFile(pubkeyPath, resp.NodePublicKey, 0644); err != nil {
+				return fmt.Errorf("write pubkey file %q: %w", pubkeyPath, err)
+			}
+
+			for _, epName := range master.Endpoints {
+				ep := topo.FindEndpoint(epName)
+				if ep == nil {
+					fmt.Fprintf(os.Stderr, "warning: endpoint %q not found in topology for master %q\n", epName, master.Name)
+					continue
+				}
+
+				epPubkeyPath := filepath.Join(nodeDir(configDir, ep.Name), "pubkey")
+				peerPublicKey, err := os.ReadFile(epPubkeyPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: endpoint %q pubkey missing for master %q: %v\n", ep.Name, master.Name, err)
+					continue
+				}
+
+				addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				addResp, addErr := client.Agent().AddTunnel(addCtx, &proto.AddTunnelRequest{
+					Name:          ep.Name,
+					EndpointHost:  ep.Host + ":" + strconv.Itoa(ep.ListenPort),
+					OverlayIp:     ep.OverlayIP,
+					BalancerIp:    "",
+					PeerPublicKey: peerPublicKey,
+					Weight:        1,
+				})
+				addCancel()
+				if addErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: add tunnel to endpoint %q failed: %v\n", ep.Name, addErr)
+					continue
+				}
+
+				if !addResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: add tunnel to endpoint %q failed: %s\n", ep.Name, "[RPC failure]")
+					continue
+				}
+
+				fmt.Printf("Added tunnel for endpoint %q on master %q.\n", ep.Name, master.Name)
+			}
+
 			fmt.Printf("Master %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
+			return nil
+		},
+	}
+}
+
+func newMasterRemoveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove [name]",
+		Short: "Remove all tunnels from a master",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology %q: %w", topologyPath, err)
+			}
+
+			master := topo.FindMaster(name)
+			if master == nil {
+				return fmt.Errorf("master %q not found in topology", name)
+			}
+
+			_, _, err = pkgtls.LoadCA(configDir)
+			if err != nil {
+				return fmt.Errorf("load CA: %w", err)
+			}
+
+			nd := nodeDir(configDir, name)
+			token, err := loadToken(nd)
+			if err != nil {
+				return fmt.Errorf("load token: %w", err)
+			}
+
+			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
+				Target:     master.Host + ":9090",
+				CACertPath: caPath(configDir),
+				Token:      token,
+			})
+			if err != nil {
+				return fmt.Errorf("create gRPC client: %w", err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client: %v\n", closeErr)
+				}
+			}()
+
+			for _, epName := range master.Endpoints {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				removeResp, err := client.Agent().RemoveTunnel(ctx, &proto.RemoveTunnelRequest{
+					Name: epName,
+				})
+				cancel()
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: remove tunnel for endpoint %q from master %q failed: %v\n", epName, master.Name, err)
+					continue
+				}
+
+				if !removeResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: remove tunnel for endpoint %q from master %q failed: %s\n", epName, master.Name, "[RPC failure]")
+					continue
+				}
+
+				fmt.Printf("Removed tunnel for endpoint %q from master %q.\n", epName, master.Name)
+			}
+
+			fmt.Printf("Master tunnels removed. Manual cleanup may be needed on host.\n")
 			return nil
 		},
 	}

@@ -88,7 +88,11 @@ func newClientPrepareCommand() *cobra.Command {
 				}
 
 				outputPath := client.Name + "-docker-compose.yml"
-				if err := renderDockerCompose(endpointComposeTemplate, data, outputPath); err != nil {
+				clientTemplate, err := loadTemplate("docker-compose.client.yml.tmpl")
+				if err != nil {
+					return fmt.Errorf("load client compose template: %w", err)
+				}
+				if err := renderDockerCompose(clientTemplate, data, outputPath); err != nil {
 					return fmt.Errorf("render docker-compose: %w", err)
 				}
 
