@@ -565,7 +565,7 @@ rotation:
 --mode          string   Режим работы узла: master|endpoint|client (обязательно)
 --name          string   Имя узла, совпадающее с записью в топологии (обязательно)
 --config-dir    string   Директория для ключей, сертификатов и runtime-состояния (по умолчанию: /config)
---topology      string   Путь к mesh-topology.yml (по умолчанию: /config/mesh-topology.yml)
+--topology      string   Путь к mesh-topology.yml (без значения по умолчанию — указать явно или получить конфиг через gRPC Init)
 --log-level     string   Уровень логирования: debug|info|warn|error (по умолчанию: info)
 --metrics-addr  string   Адрес прослушивания Prometheus-метрик (по умолчанию: :9091)
 ```

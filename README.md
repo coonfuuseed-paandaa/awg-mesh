@@ -565,7 +565,7 @@ All modes run from the same binary: `awg-mesh-node`. The mode is selected with `
 --mode          string   Node operating mode: master|endpoint|client (required)
 --name          string   Node name matching topology entry (required)
 --config-dir    string   Directory for keys, certs, and runtime state (default: /config)
---topology      string   Path to mesh-topology.yml (default: /config/mesh-topology.yml)
+--topology      string   Path to mesh-topology.yml (no default — pass explicitly or omit to receive config via gRPC Init)
 --log-level     string   Logging verbosity: debug|info|warn|error (default: info)
 --metrics-addr  string   Prometheus metrics listen address (default: :9091)
 ```
