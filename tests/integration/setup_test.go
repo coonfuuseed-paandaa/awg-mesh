@@ -105,10 +105,11 @@ func TestKeypairGeneration(t *testing.T) {
 }
 
 // TestTwoNodeTunnel verifies that two nodes establish an AWG tunnel and can
-// communicate over their overlay IPs. Currently skipped pending AWG interface
-// creation in endpoint.go and client.go.
+// communicate over their overlay IPs.
+// AWG interface creation is wired since PR #13. This test requires Docker with
+// --privileged and is designed for local/CI integration testing.
 func TestTwoNodeTunnel(t *testing.T) {
-	t.Skip("AWG interface creation not yet wired — enable when endpoint.go creates TUN device")
+	t.Skip("requires privileged Docker containers — run manually with: go test -tags integration -run TestTwoNodeTunnel -v")
 
 	// When enabled, this test will:
 	// 1. Generate keypairs for server and client via wg.GeneratePrivateKey().

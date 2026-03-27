@@ -2,10 +2,13 @@ package grpcserver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/thebtf/awg-mesh/pkg/wg"
@@ -16,9 +19,13 @@ import (
 
 type testTunnelManager struct {
 	addTunnelCalls []addTunnelCall
+	listTunnels    []TunnelInfo
 	removeCalls    []string
+	getParamsCalls []string
+	getParamsCfg   wg.Config
 	addErr         error
 	removeErr      error
+	getParamsErr   error
 }
 
 type addTunnelCall struct {
@@ -43,11 +50,16 @@ func (m *testTunnelManager) AddTunnel(name, endpointHost, overlayIP, balancerIP 
 }
 
 func (m *testTunnelManager) ListTunnels() []TunnelInfo {
-	return nil
+	result := make([]TunnelInfo, 0, len(m.listTunnels))
+	for _, tunnel := range m.listTunnels {
+		result = append(result, tunnel)
+	}
+	return result
 }
 
 func (m *testTunnelManager) GetParams(tunnelName string) (wg.Config, error) {
-	return wg.Config{}, nil
+	m.getParamsCalls = append(m.getParamsCalls, tunnelName)
+	return m.getParamsCfg, m.getParamsErr
 }
 
 func (m *testTunnelManager) RemoveTunnel(name string) error {
@@ -71,6 +83,61 @@ func (m *testParamApplier) ApplyParams(tunnelName string, cfg wg.Config) error {
 		cfg:        cfg,
 	})
 	return m.err
+}
+
+type testPeerManager struct {
+	listPeers   []PeerInfo
+	addCalls    []addPeerCall
+	removeCalls [][]byte
+	addErr      error
+	removeErr   error
+}
+
+type addPeerCall struct {
+	publicKey           []byte
+	presharedKey        []byte
+	allowedIPs          []string
+	endpointHost        string
+	persistentKeepalive int32
+}
+
+func (m *testPeerManager) ListPeers() []PeerInfo {
+	result := make([]PeerInfo, 0, len(m.listPeers))
+	for _, peer := range m.listPeers {
+		result = append(result, PeerInfo{
+			PublicKey:     append([]byte(nil), peer.PublicKey...),
+			Endpoint:      peer.Endpoint,
+			AllowedIPs:    append([]string(nil), peer.AllowedIPs...),
+			LastHandshake: peer.LastHandshake,
+			TxBytes:       peer.TxBytes,
+			RxBytes:       peer.RxBytes,
+		})
+	}
+	return result
+}
+
+func (m *testPeerManager) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
+	m.addCalls = append(m.addCalls, addPeerCall{
+		publicKey:           append([]byte(nil), publicKey...),
+		presharedKey:        append([]byte(nil), presharedKey...),
+		allowedIPs:          append([]string(nil), allowedIPs...),
+		endpointHost:        endpointHost,
+		persistentKeepalive: persistentKeepalive,
+	})
+	return m.addErr
+}
+
+func (m *testPeerManager) RemovePeer(publicKey []byte) error {
+	m.removeCalls = append(m.removeCalls, append([]byte(nil), publicKey...))
+	return m.removeErr
+}
+
+type testNodeStateProvider struct {
+	state NodeState
+}
+
+func (m *testNodeStateProvider) GetNodeState() NodeState {
+	return m.state
 }
 
 func TestNewAgentHandlerConstructors(t *testing.T) {
@@ -256,6 +323,602 @@ func TestRotateParamsRejectsEmptyNewParams(t *testing.T) {
 	}
 }
 
+func TestRemoveTunnel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		manager     *testTunnelManager
+		req         *proto.RemoveTunnelRequest
+		wantCode    codes.Code
+		wantSuccess bool
+		wantCalls   []string
+	}{
+		{
+			name:     "returns unimplemented when manager missing",
+			manager:  nil,
+			req:      &proto.RemoveTunnelRequest{Name: "tunnel-a"},
+			wantCode: codes.Unimplemented,
+		},
+		{
+			name:     "validates non-empty name",
+			manager:  &testTunnelManager{},
+			req:      &proto.RemoveTunnelRequest{Name: "   "},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:        "removes tunnel with trimmed name",
+			manager:     &testTunnelManager{},
+			req:         &proto.RemoveTunnelRequest{Name: "  tunnel-a  "},
+			wantCode:    codes.OK,
+			wantCalls:   []string{"tunnel-a"},
+			wantSuccess: true,
+		},
+		{
+			name:      "propagates manager errors",
+			manager:   &testTunnelManager{removeErr: errors.New("boom")},
+			req:       &proto.RemoveTunnelRequest{Name: "tunnel-a"},
+			wantCode:  codes.Internal,
+			wantCalls: []string{"tunnel-a"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var tunnelMgr TunnelManager
+			if tt.manager != nil {
+				tunnelMgr = tt.manager
+			}
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil)
+			resp, err := handler.RemoveTunnel(context.Background(), tt.req)
+			if tt.wantCode == codes.OK {
+				if err != nil {
+					t.Fatalf("RemoveTunnel returned error: %v", err)
+				}
+				if resp == nil || resp.GetSuccess() != tt.wantSuccess {
+					t.Fatalf("unexpected success response: %#v", resp)
+				}
+			} else {
+				assertCode(t, err, tt.wantCode)
+			}
+
+			if tt.manager != nil && !reflect.DeepEqual(tt.manager.removeCalls, tt.wantCalls) {
+				t.Fatalf("unexpected RemoveTunnel calls: want %#v got %#v", tt.wantCalls, tt.manager.removeCalls)
+			}
+		})
+	}
+}
+
+func TestListTunnels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		manager       *testTunnelManager
+		wantCode      codes.Code
+		wantTunnelLen int
+	}{
+		{
+			name:     "returns unimplemented when manager missing",
+			manager:  nil,
+			wantCode: codes.Unimplemented,
+		},
+		{
+			name: "maps tunnel fields",
+			manager: &testTunnelManager{
+				listTunnels: []TunnelInfo{
+					{Name: "a", OverlayIP: "10.0.0.2/32", Healthy: true},
+					{Name: "b", OverlayIP: "10.0.0.3/32", Healthy: false},
+				},
+			},
+			wantCode:      codes.OK,
+			wantTunnelLen: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var tunnelMgr TunnelManager
+			if tt.manager != nil {
+				tunnelMgr = tt.manager
+			}
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil)
+			resp, err := handler.ListTunnels(context.Background(), &proto.Empty{})
+			if tt.wantCode != codes.OK {
+				assertCode(t, err, tt.wantCode)
+				return
+			}
+			if err != nil {
+				t.Fatalf("ListTunnels returned error: %v", err)
+			}
+			if len(resp.GetTunnels()) != tt.wantTunnelLen {
+				t.Fatalf("expected %d tunnels, got %d", tt.wantTunnelLen, len(resp.GetTunnels()))
+			}
+			if resp.GetTunnels()[0].GetName() != "a" || resp.GetTunnels()[0].GetOverlayIp() != "10.0.0.2/32" || !resp.GetTunnels()[0].GetHealthy() {
+				t.Fatalf("unexpected first tunnel mapping: %#v", resp.GetTunnels()[0])
+			}
+			if resp.GetTunnels()[1].GetName() != "b" || resp.GetTunnels()[1].GetOverlayIp() != "10.0.0.3/32" || resp.GetTunnels()[1].GetHealthy() {
+				t.Fatalf("unexpected second tunnel mapping: %#v", resp.GetTunnels()[1])
+			}
+		})
+	}
+}
+
+func TestGetStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		provider   NodeStateProvider
+		verifyFunc func(t *testing.T, resp *proto.NodeStatus)
+	}{
+		{
+			name:     "returns unknown without provider",
+			provider: nil,
+			verifyFunc: func(t *testing.T, resp *proto.NodeStatus) {
+				t.Helper()
+				if resp.GetName() != "unknown" || resp.GetMode() != "unknown" {
+					t.Fatalf("unexpected default status: %#v", resp)
+				}
+			},
+		},
+		{
+			name: "maps provider state",
+			provider: &testNodeStateProvider{
+				state: NodeState{
+					Name:      "node-a",
+					Mode:      "master",
+					OverlayIP: "10.0.0.1",
+					StartTime: time.Now().Add(-2 * time.Minute),
+					Tunnels: []TunnelInfo{
+						{Name: "tunnel-a", OverlayIP: "10.0.0.2/32", Healthy: true},
+					},
+				},
+			},
+			verifyFunc: func(t *testing.T, resp *proto.NodeStatus) {
+				t.Helper()
+				if resp.GetName() != "node-a" || resp.GetMode() != "master" || resp.GetOverlayIp() != "10.0.0.1" {
+					t.Fatalf("unexpected provider status mapping: %#v", resp)
+				}
+				if len(resp.GetTunnels()) != 1 {
+					t.Fatalf("expected one tunnel, got %d", len(resp.GetTunnels()))
+				}
+				if resp.GetTunnels()[0].GetName() != "tunnel-a" || !resp.GetTunnels()[0].GetHealthy() {
+					t.Fatalf("unexpected tunnel mapping: %#v", resp.GetTunnels()[0])
+				}
+				if resp.GetUptime() == "" {
+					t.Fatal("expected non-empty uptime")
+				}
+				if _, err := time.ParseDuration(resp.GetUptime()); err != nil {
+					t.Fatalf("expected parseable uptime, got %q (%v)", resp.GetUptime(), err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, tt.provider)
+			resp, err := handler.GetStatus(context.Background(), &proto.Empty{})
+			if err != nil {
+				t.Fatalf("GetStatus returned error: %v", err)
+			}
+			tt.verifyFunc(t, resp)
+		})
+	}
+}
+
+func TestGetHealth(t *testing.T) {
+	t.Parallel()
+
+	handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
+	resp, err := handler.GetHealth(context.Background(), &proto.Empty{})
+	if err != nil {
+		t.Fatalf("GetHealth returned error: %v", err)
+	}
+	if !resp.GetHealthy() {
+		t.Fatalf("expected healthy response, got %#v", resp)
+	}
+}
+
+func TestRotateTokenWritesFile(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	handler := NewAgentHandler(configDir, zerolog.Nop())
+	resp, err := handler.RotateToken(context.Background(), &proto.RotateTokenRequest{
+		NewTokenHash: "hashed-token",
+	})
+	if err != nil {
+		t.Fatalf("RotateToken returned error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("expected success response, got %#v", resp)
+	}
+
+	assertFileContents(t, filepath.Join(configDir, "mesh.token"), "hashed-token")
+}
+
+func TestCaptureRefresh(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		req                *proto.CaptureRequest
+		captureFunc        CaptureFunc
+		wantCode           codes.Code
+		wantCapturedCount  int32
+		wantSanitized      []string
+		wantCountPerDomain int
+	}{
+		{
+			name:              "returns success when capture is not injected",
+			req:               &proto.CaptureRequest{Domains: []string{"example.com"}, CountPerDomain: 2},
+			captureFunc:       nil,
+			wantCode:          codes.OK,
+			wantCapturedCount: 0,
+		},
+		{
+			name: "calls capture function with sanitized arguments",
+			req: &proto.CaptureRequest{
+				Domains:        []string{"  example.com ", "", "api.example.com", "   "},
+				CountPerDomain: 4,
+			},
+			wantCode:           codes.OK,
+			wantCapturedCount:  7,
+			wantSanitized:      []string{"example.com", "api.example.com"},
+			wantCountPerDomain: 4,
+		},
+		{
+			name:     "validates request",
+			req:      nil,
+			wantCode: codes.InvalidArgument,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotDomains []string
+			gotCountPerDomain := -1
+			gotTimeout := time.Duration(0)
+			captureFunc := tt.captureFunc
+			if captureFunc == nil && tt.wantSanitized != nil {
+				captureFunc = func(interfaceName string, domains []string, countPerDomain int, timeout time.Duration) (int, error) {
+					gotDomains = append([]string(nil), domains...)
+					gotCountPerDomain = countPerDomain
+					gotTimeout = timeout
+					return int(tt.wantCapturedCount), nil
+				}
+			}
+
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, captureFunc, nil, nil)
+			resp, err := handler.CaptureRefresh(context.Background(), tt.req)
+			if tt.wantCode != codes.OK {
+				assertCode(t, err, tt.wantCode)
+				return
+			}
+			if err != nil {
+				t.Fatalf("CaptureRefresh returned error: %v", err)
+			}
+			if !resp.GetSuccess() {
+				t.Fatalf("expected success response, got %#v", resp)
+			}
+			if resp.GetCapturedCount() != tt.wantCapturedCount {
+				t.Fatalf("expected captured count %d, got %d", tt.wantCapturedCount, resp.GetCapturedCount())
+			}
+			if tt.wantSanitized != nil {
+				if !reflect.DeepEqual(gotDomains, tt.wantSanitized) {
+					t.Fatalf("unexpected sanitized domains: want %#v got %#v", tt.wantSanitized, gotDomains)
+				}
+				if gotCountPerDomain != tt.wantCountPerDomain {
+					t.Fatalf("unexpected count per domain: want %d got %d", tt.wantCountPerDomain, gotCountPerDomain)
+				}
+				if gotTimeout != 15*time.Second {
+					t.Fatalf("unexpected timeout: want %s got %s", 15*time.Second, gotTimeout)
+				}
+			}
+		})
+	}
+}
+
+func TestListPeers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		peerMgr   *testPeerManager
+		wantCode  codes.Code
+		wantCount int
+	}{
+		{
+			name:     "returns unimplemented when manager missing",
+			peerMgr:  nil,
+			wantCode: codes.Unimplemented,
+		},
+		{
+			name: "maps peer fields",
+			peerMgr: &testPeerManager{
+				listPeers: []PeerInfo{
+					{
+						PublicKey:     []byte{1, 2, 3},
+						Endpoint:      "endpoint-a",
+						AllowedIPs:    []string{"10.0.0.0/24"},
+						LastHandshake: 101,
+						TxBytes:       1111,
+						RxBytes:       2222,
+					},
+				},
+			},
+			wantCode:  codes.OK,
+			wantCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var peerMgr PeerManager
+			if tt.peerMgr != nil {
+				peerMgr = tt.peerMgr
+			}
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil)
+			resp, err := handler.ListPeers(context.Background(), &proto.Empty{})
+			if tt.wantCode != codes.OK {
+				assertCode(t, err, tt.wantCode)
+				return
+			}
+			if err != nil {
+				t.Fatalf("ListPeers returned error: %v", err)
+			}
+			if len(resp.GetPeers()) != tt.wantCount {
+				t.Fatalf("expected %d peers, got %d", tt.wantCount, len(resp.GetPeers()))
+			}
+			peer := resp.GetPeers()[0]
+			if !reflect.DeepEqual(peer.GetPublicKey(), []byte{1, 2, 3}) {
+				t.Fatalf("unexpected public key: %#v", peer.GetPublicKey())
+			}
+			if peer.GetEndpoint() != "endpoint-a" || peer.GetLastHandshake() != 101 || peer.GetTxBytes() != 1111 || peer.GetRxBytes() != 2222 {
+				t.Fatalf("unexpected peer mapping: %#v", peer)
+			}
+			if !reflect.DeepEqual(peer.GetAllowedIps(), []string{"10.0.0.0/24"}) {
+				t.Fatalf("unexpected allowed IPs mapping: %#v", peer.GetAllowedIps())
+			}
+		})
+	}
+}
+
+func TestAddPeer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		peerMgr   *testPeerManager
+		req       *proto.AddPeerRequest
+		wantCode  codes.Code
+		wantCalls int
+	}{
+		{
+			name:     "returns unimplemented when manager missing",
+			peerMgr:  nil,
+			req:      &proto.AddPeerRequest{PublicKey: []byte{1}},
+			wantCode: codes.Unimplemented,
+		},
+		{
+			name:     "validates public key",
+			peerMgr:  &testPeerManager{},
+			req:      &proto.AddPeerRequest{PublicKey: nil},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:    "adds peer with trimmed endpoint host",
+			peerMgr: &testPeerManager{},
+			req: &proto.AddPeerRequest{
+				PublicKey:           []byte{1, 2, 3},
+				PresharedKey:        []byte{9, 9, 9},
+				AllowedIps:          []string{"10.0.0.0/24"},
+				EndpointHost:        "  peer.example  ",
+				PersistentKeepalive: 25,
+			},
+			wantCode:  codes.OK,
+			wantCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var peerMgr PeerManager
+			if tt.peerMgr != nil {
+				peerMgr = tt.peerMgr
+			}
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil)
+			resp, err := handler.AddPeer(context.Background(), tt.req)
+			if tt.wantCode != codes.OK {
+				assertCode(t, err, tt.wantCode)
+				return
+			}
+			if err != nil {
+				t.Fatalf("AddPeer returned error: %v", err)
+			}
+			if !resp.GetSuccess() {
+				t.Fatalf("expected success response, got %#v", resp)
+			}
+			if len(tt.peerMgr.addCalls) != tt.wantCalls {
+				t.Fatalf("expected %d AddPeer calls, got %d", tt.wantCalls, len(tt.peerMgr.addCalls))
+			}
+			call := tt.peerMgr.addCalls[0]
+			if call.endpointHost != "peer.example" {
+				t.Fatalf("expected trimmed endpoint host, got %q", call.endpointHost)
+			}
+			if !reflect.DeepEqual(call.publicKey, []byte{1, 2, 3}) {
+				t.Fatalf("unexpected public key: %#v", call.publicKey)
+			}
+			if !reflect.DeepEqual(call.presharedKey, []byte{9, 9, 9}) {
+				t.Fatalf("unexpected preshared key: %#v", call.presharedKey)
+			}
+			if !reflect.DeepEqual(call.allowedIPs, []string{"10.0.0.0/24"}) || call.persistentKeepalive != 25 {
+				t.Fatalf("unexpected add peer call: %#v", call)
+			}
+		})
+	}
+}
+
+func TestRemovePeer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		peerMgr   *testPeerManager
+		req       *proto.RemovePeerRequest
+		wantCode  codes.Code
+		wantCalls int
+	}{
+		{
+			name:     "returns unimplemented when manager missing",
+			peerMgr:  nil,
+			req:      &proto.RemovePeerRequest{PublicKey: []byte{1}},
+			wantCode: codes.Unimplemented,
+		},
+		{
+			name:     "validates public key",
+			peerMgr:  &testPeerManager{},
+			req:      &proto.RemovePeerRequest{},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:      "removes peer",
+			peerMgr:   &testPeerManager{},
+			req:       &proto.RemovePeerRequest{PublicKey: []byte{9, 8, 7}},
+			wantCode:  codes.OK,
+			wantCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var peerMgr PeerManager
+			if tt.peerMgr != nil {
+				peerMgr = tt.peerMgr
+			}
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil)
+			resp, err := handler.RemovePeer(context.Background(), tt.req)
+			if tt.wantCode != codes.OK {
+				assertCode(t, err, tt.wantCode)
+				return
+			}
+			if err != nil {
+				t.Fatalf("RemovePeer returned error: %v", err)
+			}
+			if !resp.GetSuccess() {
+				t.Fatalf("expected success response, got %#v", resp)
+			}
+			if len(tt.peerMgr.removeCalls) != tt.wantCalls {
+				t.Fatalf("expected %d RemovePeer calls, got %d", tt.wantCalls, len(tt.peerMgr.removeCalls))
+			}
+			if !reflect.DeepEqual(tt.peerMgr.removeCalls[0], []byte{9, 8, 7}) {
+				t.Fatalf("unexpected RemovePeer key: %#v", tt.peerMgr.removeCalls[0])
+			}
+		})
+	}
+}
+
+func TestGetParams(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		manager        *testTunnelManager
+		req            *proto.GetParamsRequest
+		wantCode       codes.Code
+		wantTunnelName string
+		verifyParams   func(t *testing.T, params *proto.AwgParams)
+	}{
+		{
+			name:     "returns unimplemented when manager missing",
+			manager:  nil,
+			req:      &proto.GetParamsRequest{TunnelName: "tunnel-a"},
+			wantCode: codes.Unimplemented,
+		},
+		{
+			name:     "validates tunnel name",
+			manager:  &testTunnelManager{},
+			req:      &proto.GetParamsRequest{TunnelName: " "},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name: "maps config into response params",
+			manager: &testTunnelManager{
+				getParamsCfg: wg.Config{
+					Jc:   wg.IntPtr(11),
+					Jmin: wg.IntPtr(7),
+					H1:   wg.StrPtr("101"),
+					H2:   wg.StrPtr("invalid"),
+					I1:   wg.StrPtr("alpha"),
+				},
+			},
+			req:            &proto.GetParamsRequest{TunnelName: "  tunnel-a  "},
+			wantCode:       codes.OK,
+			wantTunnelName: "tunnel-a",
+			verifyParams: func(t *testing.T, params *proto.AwgParams) {
+				t.Helper()
+				if params.GetJc() != 11 || params.GetJmin() != 7 {
+					t.Fatalf("unexpected integer params: %#v", params)
+				}
+				if params.GetH1() != 101 || params.GetH2() != 0 {
+					t.Fatalf("unexpected H params mapping: %#v", params)
+				}
+				if params.GetI1() != "alpha" {
+					t.Fatalf("unexpected string params mapping: %#v", params)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var tunnelMgr TunnelManager
+			if tt.manager != nil {
+				tunnelMgr = tt.manager
+			}
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil)
+			resp, err := handler.GetParams(context.Background(), tt.req)
+			if tt.wantCode != codes.OK {
+				assertCode(t, err, tt.wantCode)
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetParams returned error: %v", err)
+			}
+			if len(tt.manager.getParamsCalls) != 1 || tt.manager.getParamsCalls[0] != tt.wantTunnelName {
+				t.Fatalf("unexpected GetParams calls: %#v", tt.manager.getParamsCalls)
+			}
+			tt.verifyParams(t, resp)
+		})
+	}
+}
+
 func assertFileContents(t *testing.T, path string, expected string) {
 	t.Helper()
 
@@ -279,5 +942,15 @@ func requireStringField(t *testing.T, actual *string, expected string) {
 	t.Helper()
 	if actual == nil || *actual != expected {
 		t.Fatalf("expected string pointer %q, got %#v", expected, actual)
+	}
+}
+
+func assertCode(t *testing.T, err error, expected codes.Code) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected grpc error code %v, got nil", expected)
+	}
+	if code := status.Code(err); code != expected {
+		t.Fatalf("expected grpc error code %v, got %v (err=%v)", expected, code, err)
 	}
 }
