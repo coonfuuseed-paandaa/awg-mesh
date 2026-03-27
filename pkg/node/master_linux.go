@@ -129,7 +129,6 @@ func (m *MasterRunner) GetParams(tunnelName string) (wg.Config, error) {
 
 func copyConfig(source wg.Config) wg.Config {
 	result := wg.Config{
-		PrivateKey:   copyIntPtr(source.PrivateKey),
 		ListenPort:   copyIntPtr(source.ListenPort),
 		FirewallMark: copyIntPtr(source.FirewallMark),
 		ReplacePeers: source.ReplacePeers,
