@@ -132,6 +132,17 @@ func (h *AgentHandler) CaptureRefresh(_ context.Context, req *proto.CaptureReque
 		}
 	}
 
+	// Persist received domains to /config/domains.txt for future reference.
+	if len(domains) > 0 {
+		domainsPath := filepath.Join(h.configDir, "domains.txt")
+		content := strings.Join(domains, "\n") + "\n"
+		if writeErr := os.WriteFile(domainsPath, []byte(content), 0644); writeErr != nil {
+			h.logger.Warn().Err(writeErr).Str("path", domainsPath).Msg("failed to persist domains file")
+		} else {
+			h.logger.Info().Int("count", len(domains)).Str("path", domainsPath).Msg("domains file updated")
+		}
+	}
+
 	countPerDomain := int(req.GetCountPerDomain())
 	if countPerDomain <= 0 {
 		countPerDomain = 3

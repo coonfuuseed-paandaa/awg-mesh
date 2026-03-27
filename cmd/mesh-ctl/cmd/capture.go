@@ -52,6 +52,27 @@ func newCaptureRefreshCommand() *cobra.Command {
 				}
 			}
 
+			// Read domains from local file and distribute to masters via gRPC.
+			var domains []string
+			domainsFile := topo.Capture.DomainsFile
+			if domainsFile != "" {
+				data, readErr := os.ReadFile(domainsFile)
+				if readErr != nil {
+					return fmt.Errorf("read domains file %q: %w", domainsFile, readErr)
+				}
+				for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+					line = strings.TrimSpace(line)
+					if line != "" && !strings.HasPrefix(line, "#") {
+						domains = append(domains, line)
+					}
+				}
+			}
+			if len(domains) == 0 {
+				return fmt.Errorf("no domains to capture — add domains to %s or use 'mesh-ctl capture domains add'", domainsFile)
+			}
+
+			fmt.Printf("Distributing %d domains to %d master(s)...\n", len(domains), len(targets))
+
 			for _, m := range targets {
 				nd := nodeDir(configDir, m.Name)
 				token, err := loadToken(nd)
@@ -72,6 +93,7 @@ func newCaptureRefreshCommand() *cobra.Command {
 
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				resp, rpcErr := client.Agent().CaptureRefresh(ctx, &proto.CaptureRequest{
+					Domains:        domains,
 					CountPerDomain: int32(countPerDomain),
 				})
 				cancel()

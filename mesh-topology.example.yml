@@ -65,7 +65,7 @@ clients:
       - ru-master-01
 
 capture:
-  domains_file: /config/domains.txt
+  domains_file: domains.txt   # local file on admin PC, distributed to masters via gRPC
   schedule: "0 3 * * *"
   retention_days: 30
 
