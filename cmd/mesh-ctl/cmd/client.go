@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
+	"github.com/thebtf/awg-mesh/pkg/mikrotik"
 	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
 	"github.com/thebtf/awg-mesh/pkg/topology"
 	proto "github.com/thebtf/awg-mesh/proto"
@@ -22,6 +24,7 @@ func newClientCommand() *cobra.Command {
 
 	cmd.AddCommand(newClientPrepareCommand())
 	cmd.AddCommand(newClientInitCommand())
+	cmd.AddCommand(newClientRemoveCommand())
 
 	return cmd
 }
@@ -104,17 +107,73 @@ func newClientPrepareCommand() *cobra.Command {
 					outputPath,
 					name,
 				)
+
 			case "mikrotik":
 				nd := nodeDir(configDir, name)
 				if err := os.MkdirAll(nd, 0755); err != nil {
 					return fmt.Errorf("create node directory: %w", err)
 				}
-				rscPath := name + "-mikrotik.rsc"
-				content := "# RouterOS config stub for " + name + " — to be implemented in Phase 5\n"
-				if err := os.WriteFile(rscPath, []byte(content), 0644); err != nil {
-					return fmt.Errorf("write mikrotik stub: %w", err)
+
+				token, err := pkgtls.GenerateToken()
+				if err != nil {
+					return fmt.Errorf("generate token: %w", err)
 				}
-				fmt.Printf("MikroTik client %q stub written to: %s\n", name, rscPath)
+
+				hash, err := pkgtls.HashToken(token)
+				if err != nil {
+					return fmt.Errorf("hash token: %w", err)
+				}
+
+				if err := pkgtls.SaveTokenHash(nd, hash); err != nil {
+					return fmt.Errorf("save token hash: %w", err)
+				}
+
+				if err := saveToken(nd, token); err != nil {
+					return fmt.Errorf("save token: %w", err)
+				}
+
+				// Collect master hosts for the deploy script.
+				masterHosts := make([]string, 0, len(client.Masters))
+				for _, masterName := range client.Masters {
+					m := topo.FindMaster(masterName)
+					if m == nil {
+						return fmt.Errorf("master %q referenced by client %q not found in topology", masterName, name)
+					}
+					masterHosts = append(masterHosts, m.Host)
+				}
+
+				ds := mikrotik.DeployScript{
+					ContainerName: name,
+					Image:         "ghcr.io/thebtf/awg-mesh-node:latest",
+					Veth:          "veth-" + name,
+					VethGateway:   "192.168.100.1/24",
+					OverlayIP:     client.OverlayIP,
+					OverlayNet:    topo.Overlay.Space,
+					ListenPort:    51820,
+					Masters:       masterHosts,
+					AWGConfig:     strings.Join(masterHosts, ","),
+					Token:         token,
+				}
+
+				rsc, err := mikrotik.GenerateDeployRSC(ds)
+				if err != nil {
+					return fmt.Errorf("generate RouterOS script: %w", err)
+				}
+
+				rscPath := name + "-mikrotik.rsc"
+				if err := os.WriteFile(rscPath, []byte(rsc), 0644); err != nil {
+					return fmt.Errorf("write RouterOS script: %w", err)
+				}
+
+				fmt.Printf("MikroTik client %q prepared.\n\nToken: %s\n\nRouterOS script written to: %s\n\nNext steps:\n  1. Copy %s to the MikroTik router\n  2. /import file-name=%s\n  3. mesh-ctl client init %s\n",
+					name,
+					token,
+					rscPath,
+					rscPath,
+					rscPath,
+					name,
+				)
+
 			default:
 				return fmt.Errorf("unknown client type %q (must be linux or mikrotik)", client.Type)
 			}
@@ -216,6 +275,74 @@ func newClientInitCommand() *cobra.Command {
 			}
 
 			fmt.Printf("Client %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
+			return nil
+		},
+	}
+}
+
+func newClientRemoveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove [name]",
+		Short: "Remove a client from the mesh",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology %q: %w", topologyPath, err)
+			}
+
+			client := topo.FindClient(name)
+			if client == nil {
+				return fmt.Errorf("client %q not found in topology", name)
+			}
+
+			for _, masterName := range client.Masters {
+				master := topo.FindMaster(masterName)
+				if master == nil {
+					fmt.Fprintf(os.Stderr, "warning: master %q not found in topology, skipping\n", masterName)
+					continue
+				}
+
+				masterToken, err := loadToken(nodeDir(configDir, master.Name))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: cannot load token for master %q: %v\n", master.Name, err)
+					continue
+				}
+
+				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
+					Target:     master.Host + ":9090",
+					CACertPath: caPath(configDir),
+					Token:      masterToken,
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)
+					continue
+				}
+
+				masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				removeResp, removeErr := masterClient.Agent().RemoveTunnel(masterCtx, &proto.RemoveTunnelRequest{
+					Name: client.Name,
+				})
+				masterCancel()
+				if closeErr := masterClient.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
+				}
+
+				if removeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: remove tunnel from master %q failed: %v\n", master.Name, removeErr)
+					continue
+				}
+
+				if !removeResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: remove tunnel from master %q failed: %s\n", master.Name, "[RPC failure]")
+					continue
+				}
+
+				fmt.Printf("Removed tunnel for client %q from master %q.\n", client.Name, master.Name)
+			}
+
+			fmt.Printf("Client removed from all masters. Manual cleanup may be needed on client host.\n")
 			return nil
 		},
 	}

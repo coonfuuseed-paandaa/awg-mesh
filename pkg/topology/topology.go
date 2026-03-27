@@ -3,6 +3,7 @@ package topology
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -125,5 +126,56 @@ func (t *Topology) FindClient(name string) *ClientNode {
 			return &t.Clients[i]
 		}
 	}
+	return nil
+}
+
+// SaveTopology marshals t to YAML and writes it to path atomically.
+func SaveTopology(path string, t *Topology) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("topology path is required")
+	}
+	if t == nil {
+		return fmt.Errorf("topology value is required")
+	}
+
+	data, err := yaml.Marshal(t)
+	if err != nil {
+		return fmt.Errorf("marshal topology yaml: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	tempFile, err := os.CreateTemp(dir, base+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary topology file: %w", err)
+	}
+
+	tempPath := tempFile.Name()
+	cleanupTemp := true
+	defer func() {
+		if cleanupTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if _, err := tempFile.Write(data); err != nil {
+		_ = tempFile.Close()
+		return fmt.Errorf("write temporary topology file: %w", err)
+	}
+
+	if err := tempFile.Chmod(0644); err != nil {
+		_ = tempFile.Close()
+		return fmt.Errorf("set temporary topology file permissions: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close temporary topology file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("replace topology file: %w", err)
+	}
+
+	cleanupTemp = false
 	return nil
 }
