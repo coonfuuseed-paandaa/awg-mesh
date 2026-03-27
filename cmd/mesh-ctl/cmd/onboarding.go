@@ -34,6 +34,8 @@ func ensureCA(configDir string) (*x509.Certificate, crypto.PrivateKey, error) {
 		return nil, nil, err
 	}
 
+	fmt.Fprintf(os.Stderr, "First run: creating mesh CA in %s\n", configDir)
+
 	caCert, caKey, err = pkgtls.GenerateCA("awg-mesh-ca")
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate CA: %w", err)
@@ -43,6 +45,7 @@ func ensureCA(configDir string) (*x509.Certificate, crypto.PrivateKey, error) {
 		return nil, nil, fmt.Errorf("save CA: %w", err)
 	}
 
+	fmt.Fprintf(os.Stderr, "CA created: %s/ca.crt, %s/ca.key\n", configDir, configDir)
 	return caCert, caKey, nil
 }
 
