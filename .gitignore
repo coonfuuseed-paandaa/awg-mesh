@@ -17,9 +17,11 @@
 .DS_Store
 Thumbs.db
 
-# Agent state (not for git)
+# Agent/IDE state (not for git)
 .agent/
+.claude/
 TECHNICAL_DEBT.md
+rename-check.tmp
 
 # Secrets
 *.key
