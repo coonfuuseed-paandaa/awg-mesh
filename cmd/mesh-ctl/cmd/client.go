@@ -85,7 +85,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:       client.Name,
 					Host:       "",
 					OverlayIP:  client.OverlayIP,
-					Image:      "ghcr.io/thebtf/awg-mesh-node:latest",
+					Image:      "ghcr.io/thebtf/awg-mesh:latest",
 					ListenPort: 51820,
 					Token:      token,
 				}
@@ -144,7 +144,7 @@ func newClientPrepareCommand() *cobra.Command {
 
 				ds := mikrotik.DeployScript{
 					ContainerName: name,
-					Image:         "ghcr.io/thebtf/awg-mesh-node:latest",
+					Image:         "ghcr.io/thebtf/awg-mesh:latest",
 					Veth:          "veth-" + name,
 					VethGateway:   "192.168.100.1/24",
 					OverlayIP:     client.OverlayIP,
