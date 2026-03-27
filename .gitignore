@@ -30,3 +30,7 @@ Thumbs.db
 # Build
 *.o
 *.a
+
+# Local Go build/module caches (created by sandboxed builds)
+/.gocache/
+/.gomodcache/

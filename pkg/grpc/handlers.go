@@ -76,3 +76,60 @@ func (h *AgentHandler) Init(_ context.Context, req *proto.InitRequest) (*proto.I
 		Message: fmt.Sprintf("initialized: config written to %s", h.configDir),
 	}, nil
 }
+
+// CaptureRefresh triggers TLS/QUIC packet capture on the node.
+// Currently a stub — actual gopacket capture is implemented in T053.
+func (h *AgentHandler) CaptureRefresh(_ context.Context, req *proto.CaptureRequest) (*proto.CaptureResponse, error) {
+	h.logger.Info().
+		Int32("count_per_domain", req.CountPerDomain).
+		Int("domains", len(req.Domains)).
+		Msg("capture refresh requested")
+
+	// TODO(T053): implement actual gopacket TLS/QUIC capture
+	// For now, log the request and return success with zero count.
+	return &proto.CaptureResponse{
+		Success:       true,
+		CapturedCount: 0,
+	}, nil
+}
+
+// RotateParams applies rotated AWG parameters to a tunnel.
+func (h *AgentHandler) RotateParams(_ context.Context, req *proto.RotateParamsRequest) (*proto.RotateParamsResponse, error) {
+	h.logger.Info().
+		Str("tunnel", req.TunnelName).
+		Int32("tier", req.Tier).
+		Msg("rotate params requested")
+
+	// TODO: wire to actual UAPI param set on the tunnel interface
+	return &proto.RotateParamsResponse{
+		Success: true,
+		Message: fmt.Sprintf("tier %d rotation accepted for tunnel %s", req.Tier, req.TunnelName),
+	}, nil
+}
+
+// GetStatus returns current node status.
+func (h *AgentHandler) GetStatus(_ context.Context, _ *proto.Empty) (*proto.NodeStatus, error) {
+	return &proto.NodeStatus{
+		Name: "unknown",
+		Mode: "unknown",
+	}, nil
+}
+
+// GetHealth returns node health information.
+func (h *AgentHandler) GetHealth(_ context.Context, _ *proto.Empty) (*proto.HealthResponse, error) {
+	return &proto.HealthResponse{
+		Healthy: true,
+	}, nil
+}
+
+// RotateToken updates the node's MESH_TOKEN hash.
+func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequest) (*proto.RotateTokenResponse, error) {
+	tokenPath := filepath.Join(h.configDir, "mesh.token")
+	if err := os.WriteFile(tokenPath, []byte(req.NewTokenHash), 0600); err != nil {
+		h.logger.Error().Err(err).Msg("rotate token: write hash")
+		return nil, status.Errorf(codes.Internal, "rotate token: %v", err)
+	}
+
+	h.logger.Info().Msg("token rotated")
+	return &proto.RotateTokenResponse{Success: true}, nil
+}
