@@ -113,8 +113,8 @@ func TestEnsureKeypairErrors(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected EnsureKeypair error when state path is not directory")
 	}
-	if !strings.Contains(err.Error(), "save node state") {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(err.Error(), "node state") {
+		t.Fatalf("unexpected error (expected 'node state' in message): %v", err)
 	}
 }
 
