@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -14,7 +15,19 @@ import (
 	"github.com/thebtf/awg-mesh/pkg/node"
 )
 
+// version is set via ldflags: -X main.version=v0.1.0
+// Falls back to module version from go install, then "dev".
 var version = "dev"
+
+func resolveVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
 
 const (
 	modeMaster   = "master"
@@ -75,7 +88,7 @@ func main() {
 	defer stop()
 
 	logger.Info().
-		Str("version", version).
+		Str("version", resolveVersion()).
 		Str("mode", options.mode).
 		Str("name", options.name).
 		Msg("awg-mesh-node starting")
