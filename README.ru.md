@@ -105,6 +105,8 @@ awg-mesh — это самохостируемая зашифрованная ov
 
 `mesh-ctl` — это CLI, который запускается на рабочей станции администратора для управления сетью. На узлах он не запускается.
 
+**Публичный репозиторий:**
+
 ```bash
 go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
 ```
@@ -112,16 +114,21 @@ go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
 Бинарник устанавливается в `$GOPATH/bin` (обычно `~/go/bin`). Убедитесь, что он в `PATH`:
 
 ```bash
-export PATH=$PATH:$(go env GOPATH)/bin   # добавьте в ~/.bashrc или ~/.zshrc
-mesh-ctl version                          # проверка
+export PATH=$PATH:$(go env GOPATH)/bin
 ```
 
-Или соберите из исходников:
+**Приватный репозиторий** (требуется SSH-доступ к Git):
 
 ```bash
-git clone https://github.com/thebtf/awg-mesh.git
+git clone git@github.com:thebtf/awg-mesh.git
 cd awg-mesh
 go build -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
+```
+
+Проверка:
+
+```bash
+mesh-ctl version
 ```
 
 При первом использовании `mesh-ctl` автоматически создаёт директорию состояния **`~/.mesh-ctl/`**. Там хранятся CA сертификат меша, токены и публичные ключи узлов. Текущее состояние можно проверить:

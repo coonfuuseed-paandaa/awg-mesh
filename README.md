@@ -105,23 +105,30 @@ This section walks through deploying a mesh from scratch: two masters in Russia,
 
 `mesh-ctl` is the CLI you run from your admin workstation to manage the mesh. It does not run on nodes.
 
+**Public repository:**
+
 ```bash
 go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
 ```
 
-This places the `mesh-ctl` binary in `$GOPATH/bin` (usually `~/go/bin`). Make sure it is in your `PATH`:
+The binary is placed in `$GOPATH/bin` (usually `~/go/bin`). Make sure it is in your `PATH`:
 
 ```bash
-export PATH=$PATH:$(go env GOPATH)/bin   # add to ~/.bashrc or ~/.zshrc
-mesh-ctl version                          # verify
+export PATH=$PATH:$(go env GOPATH)/bin
 ```
 
-Alternatively, build from source:
+**Private repository** (requires Git SSH access):
 
 ```bash
-git clone https://github.com/thebtf/awg-mesh.git
+git clone git@github.com:thebtf/awg-mesh.git
 cd awg-mesh
 go build -o /usr/local/bin/mesh-ctl ./cmd/mesh-ctl
+```
+
+Verify:
+
+```bash
+mesh-ctl version
 ```
 
 On first use, `mesh-ctl` creates its state directory at **`~/.mesh-ctl/`** automatically. This directory holds the mesh CA, per-node tokens, and public keys. You can check the current state at any time:
