@@ -1,0 +1,170 @@
+package topology
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestLoadTopology(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	validPath := filepath.Join(tempDir, "topology.yml")
+	invalidPath := filepath.Join(tempDir, "invalid.yml")
+
+	validContent := strings.Join([]string{
+		"overlay:",
+		"  space: 10.0.0.0/16",
+		"  physical_mtu: 1500",
+		"  awg_overhead: 80",
+		"  ranges:",
+		"    - name: core",
+		"      cidr: 10.0.1.0/24",
+		"masters:",
+		"  - name: m1",
+		"    host: m1.example",
+		"    overlay_ip: 10.0.1.10",
+		"    listen_port: 51820",
+		"    endpoints: [e1]",
+		"endpoints:",
+		"  - name: e1",
+		"    host: e1.example",
+		"    overlay_ip: 10.0.1.20",
+		"    listen_port: 51820",
+		"    region: eu",
+		"clients:",
+		"  - name: c1",
+		"    type: desktop",
+		"    overlay_ip: 10.0.1.30",
+		"    masters: [m1]",
+	}, "\n")
+
+	if err := os.WriteFile(validPath, []byte(validContent), 0o600); err != nil {
+		t.Fatalf("WriteFile valid topology returned error: %v", err)
+	}
+	if err := os.WriteFile(invalidPath, []byte("overlay: ["), 0o600); err != nil {
+		t.Fatalf("WriteFile invalid topology returned error: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		path        string
+		expectError string
+	}{
+		{name: "empty path", path: "", expectError: "topology path is required"},
+		{name: "missing file", path: filepath.Join(tempDir, "missing.yml"), expectError: "read topology file"},
+		{name: "invalid yaml", path: invalidPath, expectError: "unmarshal topology yaml"},
+		{name: "success", path: validPath, expectError: ""},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			top, err := LoadTopology(tt.path)
+			if tt.expectError == "" {
+				if err != nil {
+					t.Fatalf("LoadTopology returned error: %v", err)
+				}
+				if top.Overlay.Space != "10.0.0.0/16" {
+					t.Fatalf("unexpected overlay space: %s", top.Overlay.Space)
+				}
+				if len(top.Masters) != 1 || top.Masters[0].Name != "m1" {
+					t.Fatalf("unexpected masters: %#v", top.Masters)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.expectError) {
+				t.Fatalf("expected error containing %q, got %v", tt.expectError, err)
+			}
+		})
+	}
+}
+
+func TestFindNodeHelpers(t *testing.T) {
+	t.Parallel()
+
+	top := &Topology{
+		Masters:   []MasterNode{{Name: "m1"}},
+		Endpoints: []EndpointNode{{Name: "e1"}},
+		Clients:   []ClientNode{{Name: "c1"}},
+	}
+
+	if got := top.FindMaster("m1"); got == nil || got.Name != "m1" {
+		t.Fatalf("FindMaster failed: %#v", got)
+	}
+	if got := top.FindMaster("missing"); got != nil {
+		t.Fatalf("FindMaster expected nil, got %#v", got)
+	}
+
+	if got := top.FindEndpoint("e1"); got == nil || got.Name != "e1" {
+		t.Fatalf("FindEndpoint failed: %#v", got)
+	}
+	if got := top.FindEndpoint("missing"); got != nil {
+		t.Fatalf("FindEndpoint expected nil, got %#v", got)
+	}
+
+	if got := top.FindClient("c1"); got == nil || got.Name != "c1" {
+		t.Fatalf("FindClient failed: %#v", got)
+	}
+	if got := top.FindClient("missing"); got != nil {
+		t.Fatalf("FindClient expected nil, got %#v", got)
+	}
+}
+
+func TestSaveTopologyRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	top := &Topology{
+		Overlay: OverlayConfig{
+			Space:       "10.10.0.0/16",
+			PhysicalMTU: 1500,
+			AWGOverhead: 80,
+			Ranges:      []NamedRange{{Name: "core", CIDR: "10.10.1.0/24", BalancerIP: "10.10.1.1"}},
+		},
+		Masters:   []MasterNode{{Name: "m1", Host: "m1.local", OverlayIP: "10.10.1.10", ListenPort: 51820, Endpoints: []string{"e1"}}},
+		Endpoints: []EndpointNode{{Name: "e1", Host: "e1.local", OverlayIP: "10.10.1.20", ListenPort: 51820, Region: "us"}},
+		Clients:   []ClientNode{{Name: "c1", Type: "desktop", OverlayIP: "10.10.1.30", Masters: []string{"m1"}}},
+	}
+
+	path := filepath.Join(t.TempDir(), "topology.yml")
+	if err := SaveTopology(path, top); err != nil {
+		t.Fatalf("SaveTopology returned error: %v", err)
+	}
+
+	loaded, err := LoadTopology(path)
+	if err != nil {
+		t.Fatalf("LoadTopology returned error: %v", err)
+	}
+
+	if loaded.Overlay.Space != top.Overlay.Space {
+		t.Fatalf("overlay space mismatch: got %s want %s", loaded.Overlay.Space, top.Overlay.Space)
+	}
+	if len(loaded.Masters) != 1 || loaded.Masters[0].Name != "m1" {
+		t.Fatalf("unexpected masters after round-trip: %#v", loaded.Masters)
+	}
+	if len(loaded.Endpoints) != 1 || loaded.Endpoints[0].Name != "e1" {
+		t.Fatalf("unexpected endpoints after round-trip: %#v", loaded.Endpoints)
+	}
+}
+
+func TestSaveTopologyErrors(t *testing.T) {
+	t.Parallel()
+
+	err := SaveTopology("", &Topology{})
+	if err == nil || !strings.Contains(err.Error(), "topology path is required") {
+		t.Fatalf("expected path-required error, got %v", err)
+	}
+
+	err = SaveTopology(filepath.Join(t.TempDir(), "topology.yml"), nil)
+	if err == nil || !strings.Contains(err.Error(), "topology value is required") {
+		t.Fatalf("expected topology-required error, got %v", err)
+	}
+}

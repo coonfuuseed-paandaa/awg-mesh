@@ -62,3 +62,23 @@ func (e *EndpointRunner) closeInterface() error {
 	e.platformState.iface = nil
 	return iface.Close()
 }
+
+func (e *EndpointRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
+	if e == nil || e.node == nil {
+		return fmt.Errorf("endpoint runner node is required")
+	}
+	if e.platformState.iface == nil {
+		return fmt.Errorf("endpoint interface is not initialized")
+	}
+
+	if err := e.platformState.iface.Configure(cfg); err != nil {
+		return fmt.Errorf("configure endpoint interface %q: %w", endpointInterfaceName, err)
+	}
+
+	e.node.logger.Info().
+		Str("tunnel", tunnelName).
+		Str("interface", endpointInterfaceName).
+		Msg("applied AWG parameters to endpoint interface")
+
+	return nil
+}

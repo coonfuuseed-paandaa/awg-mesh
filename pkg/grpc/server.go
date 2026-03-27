@@ -72,6 +72,27 @@ func NewServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Lo
 	}, nil
 }
 
+// NewInsecureServer constructs a Server without transport TLS. Authentication
+// is performed by bearer token via the unary interceptor.
+func NewInsecureServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Logger) (*Server, error) {
+	tokenHash, err := pkgtls.LoadTokenHash(cfg.TokenHashPath)
+	if err != nil {
+		return nil, fmt.Errorf("grpc server: load token hash: %w", err)
+	}
+
+	gs := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(tokenHash, logger)),
+	)
+
+	proto.RegisterAwgAgentServer(gs, handler)
+
+	return &Server{
+		grpcServer: gs,
+		config:     cfg,
+		logger:     logger,
+	}, nil
+}
+
 // Start begins listening on ListenAddr and serves gRPC requests (blocking).
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.config.ListenAddr)

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
 // MasterTunnel represents a single tunnel managed by master mode.
@@ -13,6 +15,7 @@ type MasterTunnel struct {
 	InterfaceName string
 	OverlayIP     string
 	BalancerIP    string
+	PeerPublicKey wg.Key
 	Healthy       bool
 	Weight        int
 	platformState masterTunnelPlatformState
@@ -46,6 +49,9 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
+	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m); err != nil {
+		return fmt.Errorf("start gRPC server: %w", err)
+	}
 
 	defer func() {
 		if closeErr := m.closeAllTunnelInterfaces(); closeErr != nil {
@@ -60,7 +66,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 
 	if m.node.topology != nil {
 		for _, ep := range m.node.topology.Endpoints {
-			if addErr := m.AddTunnel(ep.Name, ep.Host, ep.OverlayIP, "", 1); addErr != nil {
+			if addErr := m.AddTunnel(ep.Name, ep.Host, ep.OverlayIP, "", 1, wg.Key{}); addErr != nil {
 				m.node.logger.Warn().
 					Str("endpoint", ep.Name).
 					Err(addErr).
@@ -101,7 +107,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 }
 
 // AddTunnel adds a new tunnel to the managed set.
-func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP string, weight int) error {
+func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP string, weight int, peerPublicKey wg.Key) error {
 	if name == "" {
 		return fmt.Errorf("tunnel name is required")
 	}
@@ -117,6 +123,7 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP strin
 		InterfaceName: "wg-" + name,
 		OverlayIP:     overlayIP,
 		BalancerIP:    balancerIP,
+		PeerPublicKey: peerPublicKey,
 		Healthy:       true,
 		Weight:        weight,
 	}

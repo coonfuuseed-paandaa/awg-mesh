@@ -2,7 +2,11 @@
 
 package node
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/thebtf/awg-mesh/pkg/wg"
+)
 
 type masterTunnelPlatformState struct{}
 
@@ -23,4 +27,8 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 
 func (m *MasterRunner) closeTunnelInterface(tunnel *MasterTunnel) error {
 	return nil
+}
+
+func (m *MasterRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
+	return fmt.Errorf("UAPI not supported on this platform")
 }

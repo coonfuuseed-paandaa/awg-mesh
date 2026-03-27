@@ -29,6 +29,9 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
+	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e); err != nil {
+		return fmt.Errorf("start gRPC server: %w", err)
+	}
 
 	if err := e.createInterface(); err != nil {
 		return fmt.Errorf("create endpoint interface: %w", err)
