@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/thebtf/awg-mesh/pkg/wg"
@@ -25,11 +26,12 @@ type AgentHandler struct {
 	logger       zerolog.Logger
 	tunnelMgr    TunnelManager
 	paramApplier ParamApplier
+	captureFunc  CaptureFunc
 }
 
 // NewAgentHandler creates an AgentHandler that stores received config under configDir.
 func NewAgentHandler(configDir string, logger zerolog.Logger) *AgentHandler {
-	return NewAgentHandlerFull(configDir, logger, nil, nil)
+	return NewAgentHandlerFull(configDir, logger, nil, nil, nil)
 }
 
 // NewAgentHandlerFull creates an AgentHandler with optional runtime managers.
@@ -38,12 +40,14 @@ func NewAgentHandlerFull(
 	logger zerolog.Logger,
 	tunnelMgr TunnelManager,
 	paramApplier ParamApplier,
+	captureFunc CaptureFunc,
 ) *AgentHandler {
 	return &AgentHandler{
 		configDir:    configDir,
 		logger:       logger,
 		tunnelMgr:    tunnelMgr,
 		paramApplier: paramApplier,
+		captureFunc:  captureFunc,
 	}
 }
 
@@ -97,14 +101,49 @@ func (h *AgentHandler) Init(_ context.Context, req *proto.InitRequest) (*proto.I
 // CaptureRefresh triggers TLS/QUIC packet capture on the node.
 // Current implementation only acknowledges the request.
 func (h *AgentHandler) CaptureRefresh(_ context.Context, req *proto.CaptureRequest) (*proto.CaptureResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+
+	if h.captureFunc == nil {
+		h.logger.Info().
+			Int("domains", len(req.GetDomains())).
+			Int32("count_per_domain", req.GetCountPerDomain()).
+			Msg("capture unavailable: capture function not injected")
+
+		return &proto.CaptureResponse{
+			Success:       true,
+			CapturedCount: 0,
+		}, nil
+	}
+
+	domains := make([]string, 0, len(req.GetDomains()))
+	for _, domain := range req.GetDomains() {
+		if trimmed := strings.TrimSpace(domain); trimmed != "" {
+			domains = append(domains, trimmed)
+		}
+	}
+
+	countPerDomain := int(req.GetCountPerDomain())
+	if countPerDomain <= 0 {
+		countPerDomain = 3
+	}
+
+	capturedCount, err := h.captureFunc("", domains, countPerDomain, 15*time.Second)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("capture failed")
+		return nil, status.Errorf(codes.Internal, "capture failed: %v", err)
+	}
+
 	h.logger.Info().
 		Int32("count_per_domain", req.CountPerDomain).
 		Int("domains", len(req.Domains)).
-		Msg("capture refresh requested")
+		Int("captured", capturedCount).
+		Msg("capture refresh completed")
 
 	return &proto.CaptureResponse{
 		Success:       true,
-		CapturedCount: 0,
+		CapturedCount: int32(capturedCount),
 	}, nil
 }
 

@@ -2,10 +2,19 @@ package grpcserver
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
@@ -91,6 +100,155 @@ func NewInsecureServer(cfg ServerConfig, handler proto.AwgAgentServer, logger ze
 		config:     cfg,
 		logger:     logger,
 	}, nil
+}
+
+// NewDynamicServer constructs a Server that refreshes TLS materials on each
+// connection. It starts with ephemeral certificate fallback until real certs are
+// written to disk and rotates by reading files from disk on demand.
+func NewDynamicServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Logger) (*Server, error) {
+	tokenHash, err := pkgtls.LoadTokenHash(cfg.TokenHashPath)
+	if err != nil {
+		return nil, fmt.Errorf("grpc server: load token hash: %w", err)
+	}
+
+	provider := newDynamicCertificateProvider(cfg.CertPath, cfg.CACertPath, logger)
+	certificate := provider.getServerCertificate
+	clientConfig := provider.getClientConfig
+
+	tlsConfig := &tls.Config{
+		GetCertificate:     certificate,
+		GetConfigForClient: clientConfig,
+		MinVersion:         tls.VersionTLS13,
+	}
+
+	gs := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(tlsConfig)),
+		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(tokenHash, logger)),
+	)
+	proto.RegisterAwgAgentServer(gs, handler)
+
+	return &Server{
+		grpcServer: gs,
+		config:     cfg,
+		logger:     logger,
+	}, nil
+}
+
+type dynamicCertificateProvider struct {
+	certPath     string
+	caPath       string
+	logger       zerolog.Logger
+	fallback     *tls.Certificate
+	fallbackLock sync.Mutex
+}
+
+func newDynamicCertificateProvider(certPath, caPath string, logger zerolog.Logger) *dynamicCertificateProvider {
+	return &dynamicCertificateProvider{
+		certPath: certPath,
+		caPath:   caPath,
+		logger:   logger,
+	}
+}
+
+func (p *dynamicCertificateProvider) getServerCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	cert, err := pkgtls.LoadCertKey(p.certPath)
+	if err == nil {
+		return &cert, nil
+	}
+	p.logger.Warn().Err(err).Str("cert_path", p.certPath).Msg("using fallback ephemeral certificate")
+
+	fallbackCert, fallbackErr := p.getFallbackCertificate()
+	if fallbackErr != nil {
+		return nil, fmt.Errorf("grpc server: generate fallback certificate: %w", fallbackErr)
+	}
+	return fallbackCert, nil
+}
+
+func (p *dynamicCertificateProvider) getClientConfig(_ *tls.ClientHelloInfo) (*tls.Config, error) {
+	pool, err := pkgtls.LoadCACert(p.caPath)
+	if err != nil {
+		return &tls.Config{
+			ClientAuth: tls.NoClientCert,
+			MinVersion: tls.VersionTLS13,
+		}, nil
+	}
+
+	return &tls.Config{
+		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs:  pool,
+		MinVersion: tls.VersionTLS13,
+	}, nil
+}
+
+func (p *dynamicCertificateProvider) getFallbackCertificate() (*tls.Certificate, error) {
+	p.fallbackLock.Lock()
+	defer p.fallbackLock.Unlock()
+	if p.fallback != nil {
+		return p.fallback, nil
+	}
+
+	fallback, err := generateSelfSignedServerCert()
+	if err != nil {
+		return nil, err
+	}
+	p.fallback = fallback
+	return p.fallback, nil
+}
+
+func generateSelfSignedServerCert() (*tls.Certificate, error) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate private key: %w", err)
+	}
+
+	now := time.Now()
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 62)
+	serialNumber, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, fmt.Errorf("generate serial number: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName: "awg-mesh-node",
+		},
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(12 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(
+		rand.Reader,
+		&template,
+		&template,
+		&privateKey.PublicKey,
+		privateKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create certificate: %w", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: derBytes,
+	})
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("marshal private key: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: keyBytes,
+	})
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("pair cert and key: %w", err)
+	}
+	return &cert, nil
 }
 
 // Start begins listening on ListenAddr and serves gRPC requests (blocking).

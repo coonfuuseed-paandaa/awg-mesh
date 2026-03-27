@@ -1,5 +1,8 @@
 FROM golang:1.25-alpine AS builder
 
+# libpcap-dev required for gopacket/pcap live capture (CGO).
+RUN apk add --no-cache libpcap-dev gcc musl-dev
+
 WORKDIR /build
 
 COPY go.mod go.sum ./
@@ -8,11 +11,12 @@ RUN go mod download
 COPY . .
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-X main.version=${VERSION} -s -w" -o /build/bin/awg-mesh-node ./cmd/awg-mesh-node
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags "-X main.version=${VERSION} -s -w" -o /build/bin/awg-mesh-node ./cmd/awg-mesh-node
 
 FROM alpine:3.21
 
-RUN apk add --no-cache iptables ip6tables iproute2
+# libpcap runtime library required for live packet capture.
+RUN apk add --no-cache iptables ip6tables iproute2 libpcap
 
 COPY --from=builder /build/bin/awg-mesh-node /usr/local/bin/awg-mesh-node
 

@@ -1,6 +1,10 @@
 package grpcserver
 
-import "github.com/thebtf/awg-mesh/pkg/wg"
+import (
+	"time"
+
+	"github.com/thebtf/awg-mesh/pkg/wg"
+)
 
 // TunnelManager handles tunnel lifecycle operations.
 type TunnelManager interface {
@@ -12,3 +16,7 @@ type TunnelManager interface {
 type ParamApplier interface {
 	ApplyParams(tunnelName string, cfg wg.Config) error
 }
+
+// CaptureFunc performs capture using a network interface and returns how many
+// packets were captured.
+type CaptureFunc func(interfaceName string, domains []string, countPerDomain int, timeout time.Duration) (int, error)

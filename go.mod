@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/amnezia-vpn/amneziawg-go v1.0.4
+	github.com/google/gopacket v1.1.19
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.10.2

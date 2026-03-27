@@ -2,9 +2,7 @@ package node
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,8 +14,8 @@ import (
 const defaultGRPCListenAddr = ":9090"
 const grpcStartupGracePeriod = 200 * time.Millisecond
 
-// startGRPCServer starts a background gRPC server using either mTLS+token auth
-// or token-only auth if TLS materials are not available yet.
+// startGRPCServer starts a background gRPC server with token fallback auth and
+// dynamic TLS certificate reloading.
 func startGRPCServer(
 	ctx context.Context,
 	configDir string,
@@ -33,41 +31,29 @@ func startGRPCServer(
 	if trimmedConfigDir == "" {
 		return fmt.Errorf("config dir is required")
 	}
+	tlsDir := filepath.Join(trimmedConfigDir, "tls")
 
-	handler := grpcserver.NewAgentHandlerFull(trimmedConfigDir, logger, tunnelMgr, paramApplier)
+	handler := grpcserver.NewAgentHandlerFull(
+		trimmedConfigDir,
+		logger,
+		tunnelMgr,
+		paramApplier,
+		newCaptureFunc(),
+	)
 	serverConfig := grpcserver.ServerConfig{
 		ListenAddr:    defaultGRPCListenAddr,
 		TokenHashPath: trimmedConfigDir,
+		CACertPath:    filepath.Join(tlsDir, "ca.crt"),
+		CertPath:      tlsDir,
 	}
 
-	tlsDir := filepath.Join(trimmedConfigDir, "tls")
-	hasTLSMaterials, err := hasTLSCredentials(tlsDir)
+	logger.Info().
+		Str("addr", defaultGRPCListenAddr).
+		Msg("starting gRPC with dynamic TLS (hot-reload enabled)")
+
+	server, err := grpcserver.NewDynamicServer(serverConfig, handler, logger)
 	if err != nil {
-		return err
-	}
-
-	var server *grpcserver.Server
-	if hasTLSMaterials {
-		logger.Info().
-			Str("addr", defaultGRPCListenAddr).
-			Msg("starting gRPC with mTLS")
-
-		serverConfig.CACertPath = filepath.Join(tlsDir, "ca.crt")
-		serverConfig.CertPath = tlsDir
-
-		server, err = grpcserver.NewServer(serverConfig, handler, logger)
-		if err != nil {
-			return fmt.Errorf("create mTLS gRPC server: %w", err)
-		}
-	} else {
-		logger.Info().
-			Str("addr", defaultGRPCListenAddr).
-			Msg("starting gRPC with token-only auth (no TLS certs yet)")
-
-		server, err = grpcserver.NewInsecureServer(serverConfig, handler, logger)
-		if err != nil {
-			return fmt.Errorf("create token-only gRPC server: %w", err)
-		}
+		return fmt.Errorf("create gRPC server: %w", err)
 	}
 
 	serveErrCh := make(chan error, 1)
@@ -96,19 +82,4 @@ func startGRPCServer(
 	}()
 
 	return nil
-}
-
-func hasTLSCredentials(tlsDir string) (bool, error) {
-	requiredFiles := []string{"ca.crt", "node.crt", "node.key"}
-	for _, filename := range requiredFiles {
-		path := filepath.Join(tlsDir, filename)
-		if _, err := os.Stat(path); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return false, nil
-			}
-			return false, fmt.Errorf("stat tls file %q: %w", path, err)
-		}
-	}
-
-	return true, nil
 }
