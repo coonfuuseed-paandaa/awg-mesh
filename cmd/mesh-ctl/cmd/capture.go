@@ -95,6 +95,8 @@ func newCaptureRefreshCommand() *cobra.Command {
 				resp, rpcErr := client.Agent().CaptureRefresh(ctx, &proto.CaptureRequest{
 					Domains:        domains,
 					CountPerDomain: int32(countPerDomain),
+					Schedule:       topo.Capture.Schedule,
+					RetentionDays:  int32(topo.Capture.RetentionDays),
 				})
 				cancel()
 

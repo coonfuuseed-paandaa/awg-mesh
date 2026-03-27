@@ -172,7 +172,7 @@ func TestNewAgentHandlerConstructors(t *testing.T) {
 
 		tunnelMgr := &testTunnelManager{}
 		paramApplier := &testParamApplier{}
-		handler := NewAgentHandlerFull(configDir, logger, tunnelMgr, paramApplier, nil, nil, nil)
+		handler := NewAgentHandlerFull(configDir, logger, tunnelMgr, paramApplier, nil, nil, nil, nil)
 
 		peerKey := make([]byte, 32)
 		for i := range peerKey {
@@ -265,7 +265,7 @@ func TestRotateParamsMapsProtoValuesToConfig(t *testing.T) {
 	t.Parallel()
 
 	paramApplier := &testParamApplier{}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil)
 	resp, err := handler.RotateParams(context.Background(), &proto.RotateParamsRequest{
 		TunnelName: "rotate-tunnel",
 		Tier:       1,
@@ -307,7 +307,7 @@ func TestRotateParamsRejectsEmptyNewParams(t *testing.T) {
 	t.Parallel()
 
 	paramApplier := &testParamApplier{}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil)
 	_, err := handler.RotateParams(context.Background(), &proto.RotateParamsRequest{
 		TunnelName: "rotate-tunnel",
 		NewParams:  &proto.AwgParams{},
@@ -372,7 +372,7 @@ func TestRemoveTunnel(t *testing.T) {
 			if tt.manager != nil {
 				tunnelMgr = tt.manager
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil)
 			resp, err := handler.RemoveTunnel(context.Background(), tt.req)
 			if tt.wantCode == codes.OK {
 				if err != nil {
@@ -428,7 +428,7 @@ func TestListTunnels(t *testing.T) {
 			if tt.manager != nil {
 				tunnelMgr = tt.manager
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil)
 			resp, err := handler.ListTunnels(context.Background(), &proto.Empty{})
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -507,7 +507,7 @@ func TestGetStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, tt.provider)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, tt.provider, nil)
 			resp, err := handler.GetStatus(context.Background(), &proto.Empty{})
 			if err != nil {
 				t.Fatalf("GetStatus returned error: %v", err)
@@ -603,7 +603,7 @@ func TestCaptureRefresh(t *testing.T) {
 				}
 			}
 
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, captureFunc, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, captureFunc, nil, nil, nil)
 			resp, err := handler.CaptureRefresh(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -675,7 +675,7 @@ func TestListPeers(t *testing.T) {
 			if tt.peerMgr != nil {
 				peerMgr = tt.peerMgr
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil)
 			resp, err := handler.ListPeers(context.Background(), &proto.Empty{})
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -747,7 +747,7 @@ func TestAddPeer(t *testing.T) {
 			if tt.peerMgr != nil {
 				peerMgr = tt.peerMgr
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil)
 			resp, err := handler.AddPeer(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -819,7 +819,7 @@ func TestRemovePeer(t *testing.T) {
 			if tt.peerMgr != nil {
 				peerMgr = tt.peerMgr
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil)
 			resp, err := handler.RemovePeer(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -902,7 +902,7 @@ func TestGetParams(t *testing.T) {
 			if tt.manager != nil {
 				tunnelMgr = tt.manager
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil)
 			resp, err := handler.GetParams(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)

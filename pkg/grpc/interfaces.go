@@ -35,6 +35,14 @@ type NodeStateProvider interface {
 // packets were captured.
 type CaptureFunc func(interfaceName string, domains []string, countPerDomain int, timeout time.Duration) (int, error)
 
+// CaptureScheduler manages autonomous capture scheduling on a node.
+// SetSchedule configures domains, interval, and retention. The node runs capture
+// autonomously — admin PC is not needed after configuration.
+type CaptureScheduler interface {
+	SetSchedule(domains []string, countPerDomain int, schedule string, retentionDays int) error
+	StopSchedule()
+}
+
 type TunnelInfo struct {
 	Name          string
 	OverlayIP     string

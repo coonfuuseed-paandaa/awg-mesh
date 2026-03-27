@@ -30,12 +30,13 @@ type AgentHandler struct {
 	paramApplier  ParamApplier
 	peerMgr       PeerManager
 	stateProvider NodeStateProvider
-	captureFunc   CaptureFunc
+	captureFunc      CaptureFunc
+	captureScheduler CaptureScheduler
 }
 
 // NewAgentHandler creates an AgentHandler that stores received config under configDir.
 func NewAgentHandler(configDir string, logger zerolog.Logger) *AgentHandler {
-	return NewAgentHandlerFull(configDir, logger, nil, nil, nil, nil, nil)
+	return NewAgentHandlerFull(configDir, logger, nil, nil, nil, nil, nil, nil)
 }
 
 // NewAgentHandlerFull creates an AgentHandler with optional runtime managers.
@@ -47,15 +48,17 @@ func NewAgentHandlerFull(
 	captureFunc CaptureFunc,
 	peerMgr PeerManager,
 	stateProvider NodeStateProvider,
+	captureScheduler CaptureScheduler,
 ) *AgentHandler {
 	return &AgentHandler{
-		configDir:     configDir,
-		logger:        logger,
-		tunnelMgr:     tunnelMgr,
-		paramApplier:  paramApplier,
-		peerMgr:       peerMgr,
-		stateProvider: stateProvider,
-		captureFunc:   captureFunc,
+		configDir:        configDir,
+		logger:           logger,
+		tunnelMgr:        tunnelMgr,
+		paramApplier:     paramApplier,
+		peerMgr:          peerMgr,
+		stateProvider:    stateProvider,
+		captureFunc:      captureFunc,
+		captureScheduler: captureScheduler,
 	}
 }
 
@@ -146,6 +149,15 @@ func (h *AgentHandler) CaptureRefresh(_ context.Context, req *proto.CaptureReque
 	countPerDomain := int(req.GetCountPerDomain())
 	if countPerDomain <= 0 {
 		countPerDomain = 3
+	}
+
+	// Configure autonomous capture schedule if provided.
+	if schedule := strings.TrimSpace(req.GetSchedule()); schedule != "" && h.captureScheduler != nil {
+		if err := h.captureScheduler.SetSchedule(domains, countPerDomain, schedule, int(req.GetRetentionDays())); err != nil {
+			h.logger.Warn().Err(err).Str("schedule", schedule).Msg("failed to set capture schedule")
+		} else {
+			h.logger.Info().Str("schedule", schedule).Int32("retention_days", req.GetRetentionDays()).Msg("capture schedule configured")
+		}
 	}
 
 	capturedCount, err := h.captureFunc("", domains, countPerDomain, 15*time.Second)

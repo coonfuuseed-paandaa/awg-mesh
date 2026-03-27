@@ -1418,6 +1418,8 @@ type CaptureRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Domains        []string               `protobuf:"bytes,1,rep,name=domains,proto3" json:"domains,omitempty"`
 	CountPerDomain int32                  `protobuf:"varint,2,opt,name=count_per_domain,json=countPerDomain,proto3" json:"count_per_domain,omitempty"`
+	Schedule       string                 `protobuf:"bytes,3,opt,name=schedule,proto3" json:"schedule,omitempty"`                                 // cron expression or duration (e.g. "0 3 * * *" or "24h")
+	RetentionDays  int32                  `protobuf:"varint,4,opt,name=retention_days,json=retentionDays,proto3" json:"retention_days,omitempty"` // how long to keep capture data (0 = no cleanup)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1462,6 +1464,20 @@ func (x *CaptureRequest) GetDomains() []string {
 func (x *CaptureRequest) GetCountPerDomain() int32 {
 	if x != nil {
 		return x.CountPerDomain
+	}
+	return 0
+}
+
+func (x *CaptureRequest) GetSchedule() string {
+	if x != nil {
+		return x.Schedule
+	}
+	return ""
+}
+
+func (x *CaptureRequest) GetRetentionDays() int32 {
+	if x != nil {
+		return x.RetentionDays
 	}
 	return 0
 }
@@ -2046,10 +2062,12 @@ const file_types_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"3\n" +
 	"\x10GetParamsRequest\x12\x1f\n" +
 	"\vtunnel_name\x18\x01 \x01(\tR\n" +
-	"tunnelName\"T\n" +
+	"tunnelName\"\x97\x01\n" +
 	"\x0eCaptureRequest\x12\x18\n" +
 	"\adomains\x18\x01 \x03(\tR\adomains\x12(\n" +
-	"\x10count_per_domain\x18\x02 \x01(\x05R\x0ecountPerDomain\"R\n" +
+	"\x10count_per_domain\x18\x02 \x01(\x05R\x0ecountPerDomain\x12\x1a\n" +
+	"\bschedule\x18\x03 \x01(\tR\bschedule\x12%\n" +
+	"\x0eretention_days\x18\x04 \x01(\x05R\rretentionDays\"R\n" +
 	"\x0fCaptureResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12%\n" +
 	"\x0ecaptured_count\x18\x02 \x01(\x05R\rcapturedCount\"\x9c\x01\n" +

@@ -158,6 +158,8 @@ message GetParamsRequest {
 message CaptureRequest {
   repeated string domains = 1;
   int32 count_per_domain = 2;
+  string schedule = 3;           // cron expression or duration (e.g. "0 3 * * *" or "24h")
+  int32 retention_days = 4;      // how long to keep capture data (0 = no cleanup)
 }
 
 message CaptureResponse {

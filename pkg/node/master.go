@@ -53,7 +53,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
-	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m); err != nil {
+	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, newCaptureScheduler(m.node.logger, newCaptureFunc())); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	m.startTime = time.Now()
