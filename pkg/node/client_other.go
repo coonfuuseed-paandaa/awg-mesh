@@ -42,7 +42,7 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 	if len(publicKey) == 0 {
 		return fmt.Errorf("public key is required")
 	}
-	return nil
+	return fmt.Errorf("client peer management is not available on this platform")
 }
 
 func (c *ClientRunner) ConfigureTransport(_ string, _ string, _ string) error {
