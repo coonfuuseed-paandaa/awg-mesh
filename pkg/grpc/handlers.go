@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,12 +27,12 @@ import (
 // parameter-rotation RPCs backed by injected runtime managers.
 type AgentHandler struct {
 	proto.UnimplementedAwgAgentServer
-	configDir     string
-	logger        zerolog.Logger
-	tunnelMgr     TunnelManager
-	paramApplier  ParamApplier
-	peerMgr       PeerManager
-	stateProvider NodeStateProvider
+	configDir        string
+	logger           zerolog.Logger
+	tunnelMgr        TunnelManager
+	paramApplier     ParamApplier
+	peerMgr          PeerManager
+	stateProvider    NodeStateProvider
 	captureFunc      CaptureFunc
 	captureScheduler CaptureScheduler
 }
@@ -195,9 +196,6 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 	}
 
 	endpointHost := strings.TrimSpace(req.GetEndpointHost())
-	if endpointHost == "" {
-		return nil, status.Error(codes.InvalidArgument, "endpoint_host is required")
-	}
 
 	weight := int(req.GetWeight())
 	if weight <= 0 {
@@ -323,11 +321,22 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 		return nil, status.Errorf(codes.Internal, "save node transport state: %v", err)
 	}
 
+	if tc, ok := h.peerMgr.(TransportConfigurator); ok {
+		localIP := strings.TrimSpace(req.GetLocalTransportIp())
+		peerIP := strings.TrimSpace(req.GetPeerTransportIp())
+		if localIP != "" && peerIP != "" {
+			pubkeyHex := hex.EncodeToString(req.GetPublicKey())
+			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP); err != nil {
+				h.logger.Warn().Err(err).Msg("configure transport after AddPeer failed")
+			}
+		}
+	}
+
 	return &proto.AddPeerResponse{Success: true}, nil
 }
 
 type nodeTransportState struct {
-	OverlayIP string           `yaml:"overlay_ip"`
+	OverlayIP string            `yaml:"overlay_ip"`
 	Tunnels   []tunnelTransport `yaml:"tunnels"`
 }
 
@@ -350,17 +359,22 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 	}
 
 	peerPublicKey := hex.EncodeToString(req.GetPublicKey())
+	tunnelName, peerEndpoint := splitEndpointMetadata(strings.TrimSpace(req.GetEndpointHost()))
 	entry := tunnelTransport{
+		Name:            tunnelName,
 		TransportIP:     req.GetLocalTransportIp(),
 		PeerTransportIP: req.GetPeerTransportIp(),
 		PeerPublicKey:   peerPublicKey,
-		PeerEndpoint:    strings.TrimSpace(req.GetEndpointHost()),
+		PeerEndpoint:    peerEndpoint,
 	}
 
 	nextTunnels := append([]tunnelTransport(nil), state.Tunnels...)
 	found := false
 	for idx, existing := range nextTunnels {
 		if existing.PeerPublicKey == peerPublicKey {
+			if strings.TrimSpace(existing.Name) != "" {
+				entry.Name = existing.Name
+			}
 			nextTunnels[idx] = entry
 			found = true
 			break
@@ -374,6 +388,33 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 		OverlayIP: strings.TrimSpace(state.OverlayIP),
 		Tunnels:   nextTunnels,
 	})
+}
+
+func splitEndpointMetadata(endpointHost string) (string, string) {
+	trimmedEndpointHost := strings.TrimSpace(endpointHost)
+	if trimmedEndpointHost == "" {
+		return "", ""
+	}
+
+	if strings.Contains(trimmedEndpointHost, "|") {
+		parts := strings.SplitN(trimmedEndpointHost, "|", 2)
+		namePart := strings.TrimSpace(parts[0])
+		if len(parts) < 2 {
+			return namePart, ""
+		}
+		endpointPart := strings.TrimSpace(parts[1])
+		if endpointPart == "" {
+			return namePart, ""
+		}
+		return namePart, endpointPart
+	}
+
+	host, _, err := net.SplitHostPort(trimmedEndpointHost)
+	if err == nil {
+		return strings.TrimSpace(host), trimmedEndpointHost
+	}
+
+	return trimmedEndpointHost, trimmedEndpointHost
 }
 
 func loadNodeTransportState(configDir string) (nodeTransportState, error) {

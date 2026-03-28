@@ -26,6 +26,13 @@ type PeerManager interface {
 	RemovePeer(publicKey []byte) error
 }
 
+// TransportConfigurator is an optional extension of PeerManager for modes that
+// require per-peer transport IP assignment and routing (client mode).
+// It is called by the AddPeer handler after saving transport state.
+type TransportConfigurator interface {
+	ConfigureTransport(pubkeyHex, localIP, peerIP string) error
+}
+
 // NodeStateProvider exposes live node status metadata.
 type NodeStateProvider interface {
 	GetNodeState() NodeState
@@ -61,9 +68,9 @@ type PeerInfo struct {
 }
 
 type NodeState struct {
-	Name       string
-	Mode       string
-	OverlayIP  string
-	Tunnels    []TunnelInfo
-	StartTime  time.Time
+	Name      string
+	Mode      string
+	OverlayIP string
+	Tunnels   []TunnelInfo
+	StartTime time.Time
 }

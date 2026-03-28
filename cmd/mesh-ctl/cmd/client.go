@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -272,6 +274,123 @@ func newClientInitCommand() *cobra.Command {
 			}
 			if !resp.Success {
 				return fmt.Errorf("init failed: %s", resp.Message)
+			}
+
+			pubkeyPath := filepath.Join(nd, "pubkey")
+			if err := os.WriteFile(pubkeyPath, resp.NodePublicKey, 0644); err != nil {
+				return fmt.Errorf("write client pubkey file %q: %w", pubkeyPath, err)
+			}
+
+			alloc, err := loadOrCreateAllocator(configDir, topo)
+			if err != nil {
+				return fmt.Errorf("load transport allocator: %w", err)
+			}
+
+			for _, masterName := range client.Masters {
+				master := topo.FindMaster(masterName)
+				if master == nil {
+					fmt.Fprintf(os.Stderr, "warning: master %q not found in topology, skipping\n", masterName)
+					continue
+				}
+
+				allocation, err := alloc.Allocate(master.Name, client.Name)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: allocate transport for master %q and client %q failed: %v\n", master.Name, name, err)
+					continue
+				}
+
+				masterPubkeyPath := filepath.Join(nodeDir(configDir, master.Name), "pubkey")
+				masterPubkey, err := os.ReadFile(masterPubkeyPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: read master %q pubkey: %v\n", master.Name, err)
+					continue
+				}
+				if len(masterPubkey) == 0 {
+					fmt.Fprintf(os.Stderr, "warning: master %q pubkey is empty\n", master.Name)
+					continue
+				}
+
+				masterToken, err := loadToken(nodeDir(configDir, master.Name))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: load token for master %q: %v\n", master.Name, err)
+					continue
+				}
+
+				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
+					Target:     master.Host + ":9090",
+					CACertPath: caPath(configDir),
+					Token:      masterToken,
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: connect to master %q: %v\n", master.Name, err)
+					continue
+				}
+
+				masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
+					Name:                client.Name,
+					EndpointHost:        "",
+					OverlayIp:           client.OverlayIP,
+					BalancerIp:          "",
+					PeerPublicKey:       resp.NodePublicKey,
+					Weight:              1,
+					TransportSubnet:     allocation.Subnet.String(),
+					MasterTransportIp:   allocation.MasterIP.String(),
+					EndpointTransportIp: allocation.EndpointIP.String(),
+				})
+				masterCancel()
+				if closeErr := masterClient.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
+				}
+
+				if addErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: add tunnel on master %q failed: %v\n", master.Name, addErr)
+					continue
+				}
+				if addResp == nil || !addResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: add tunnel on master %q failed: [RPC failure]\n", master.Name)
+					continue
+				}
+
+				clientPeerClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
+					Target:     targetHost + ":9090",
+					CACertPath: caPath(configDir),
+					Token:      token,
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: connect to client %q for add peer: %v\n", name, err)
+					continue
+				}
+
+				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				peerResp, peerErr := clientPeerClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
+					PublicKey:           masterPubkey,
+					AllowedIps:          []string{"0.0.0.0/0"},
+					EndpointHost:        master.Name + "|" + master.Host + ":" + strconv.Itoa(master.ListenPort),
+					PersistentKeepalive: 25,
+					TransportSubnet:     allocation.Subnet.String(),
+					LocalTransportIp:    allocation.EndpointIP.String(),
+					PeerTransportIp:     allocation.MasterIP.String(),
+				})
+				peerCancel()
+				if closeErr := clientPeerClient.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client for client %q: %v\n", name, closeErr)
+				}
+
+				if peerErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: add peer on client %q for master %q failed: %v\n", name, master.Name, peerErr)
+					continue
+				}
+				if peerResp == nil || !peerResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: add peer on client %q for master %q failed: [RPC failure]\n", name, master.Name)
+					continue
+				}
+
+				fmt.Printf("Added peer on client %q for master %q.\n", name, master.Name)
+			}
+
+			if err := saveTransportState(alloc, configDir); err != nil {
+				return fmt.Errorf("save transport state: %w", err)
 			}
 
 			fmt.Printf("Client %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))

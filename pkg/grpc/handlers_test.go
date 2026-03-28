@@ -29,15 +29,15 @@ type testTunnelManager struct {
 }
 
 type addTunnelCall struct {
-	name               string
-	host               string
-	overlayIP          string
-	balancerIP         string
-	transportSubnet    string
-	masterTransportIP  string
+	name                string
+	host                string
+	overlayIP           string
+	balancerIP          string
+	transportSubnet     string
+	masterTransportIP   string
 	endpointTransportIP string
-	weight             int
-	peerKey            wg.Key
+	weight              int
+	peerKey             wg.Key
 }
 
 func (m *testTunnelManager) AddTunnel(
@@ -52,15 +52,15 @@ func (m *testTunnelManager) AddTunnel(
 	peerPublicKey wg.Key,
 ) error {
 	m.addTunnelCalls = append(m.addTunnelCalls, addTunnelCall{
-		name:               name,
-		host:               endpointHost,
-		overlayIP:          overlayIP,
-		balancerIP:         balancerIP,
-		transportSubnet:    transportSubnet,
-		masterTransportIP:  masterTransportIP,
+		name:                name,
+		host:                endpointHost,
+		overlayIP:           overlayIP,
+		balancerIP:          balancerIP,
+		transportSubnet:     transportSubnet,
+		masterTransportIP:   masterTransportIP,
 		endpointTransportIP: endpointTransportIP,
-		weight:             weight,
-		peerKey:            peerPublicKey,
+		weight:              weight,
+		peerKey:             peerPublicKey,
 	})
 	return m.addErr
 }
@@ -109,6 +109,20 @@ type testPeerManager struct {
 	removeErr   error
 }
 
+type testTransportPeerManager struct {
+	testPeerManager
+	configDir      string
+	configureCalls []configureTransportCall
+	configureErr   error
+	stateSeen      bool
+}
+
+type configureTransportCall struct {
+	pubkeyHex string
+	localIP   string
+	peerIP    string
+}
+
 type addPeerCall struct {
 	publicKey           []byte
 	presharedKey        []byte
@@ -146,6 +160,23 @@ func (m *testPeerManager) AddPeer(publicKey []byte, presharedKey []byte, allowed
 func (m *testPeerManager) RemovePeer(publicKey []byte) error {
 	m.removeCalls = append(m.removeCalls, append([]byte(nil), publicKey...))
 	return m.removeErr
+}
+
+func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string) error {
+	m.configureCalls = append(m.configureCalls, configureTransportCall{
+		pubkeyHex: pubkeyHex,
+		localIP:   localIP,
+		peerIP:    peerIP,
+	})
+
+	if strings.TrimSpace(m.configDir) != "" {
+		state, err := loadNodeTransportState(m.configDir)
+		if err == nil && len(state.Tunnels) > 0 {
+			m.stateSeen = true
+		}
+	}
+
+	return m.configureErr
 }
 
 type testNodeStateProvider struct {
@@ -197,12 +228,12 @@ func TestNewAgentHandlerConstructors(t *testing.T) {
 
 		addResp, err := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
 			Name:          "  test-tunnel ",
-				EndpointHost:  "  host.example ",
-				OverlayIp:     "  10.0.0.1/32 ",
-				BalancerIp:    "  ",
-				PeerPublicKey: peerKey,
-				Weight:        0,
-			})
+			EndpointHost:  "  host.example ",
+			OverlayIp:     "  10.0.0.1/32 ",
+			BalancerIp:    "  ",
+			PeerPublicKey: peerKey,
+			Weight:        0,
+		})
 		if err != nil {
 			t.Fatalf("AddTunnel returned error: %v", err)
 		}
@@ -801,6 +832,139 @@ func TestAddPeer(t *testing.T) {
 				t.Fatalf("unexpected add peer call: %#v", call)
 			}
 		})
+	}
+}
+
+func TestAddTunnelAllowsEmptyEndpointHost(t *testing.T) {
+	t.Parallel()
+
+	tunnelMgr := &testTunnelManager{}
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil)
+
+	peerKey := make([]byte, 32)
+	for idx := range peerKey {
+		peerKey[idx] = byte(idx + 1)
+	}
+
+	resp, err := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
+		Name:                "client-a",
+		EndpointHost:        "",
+		OverlayIp:           "10.77.0.10",
+		PeerPublicKey:       peerKey,
+		TransportSubnet:     "10.250.0.0/30",
+		MasterTransportIp:   "10.250.0.1",
+		EndpointTransportIp: "10.250.0.2",
+		Weight:              1,
+	})
+	if err != nil {
+		t.Fatalf("AddTunnel returned error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("expected success response, got %#v", resp)
+	}
+	if len(tunnelMgr.addTunnelCalls) != 1 {
+		t.Fatalf("expected one AddTunnel call, got %d", len(tunnelMgr.addTunnelCalls))
+	}
+	if tunnelMgr.addTunnelCalls[0].host != "" {
+		t.Fatalf("expected empty endpoint host, got %q", tunnelMgr.addTunnelCalls[0].host)
+	}
+}
+
+func TestAddPeerConfiguresTransportAfterStatePersisted(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	peerMgr := &testTransportPeerManager{configDir: configDir}
+	handler := NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil)
+
+	pubkey := []byte{1, 2, 3, 4}
+	resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
+		PublicKey:        pubkey,
+		AllowedIps:       []string{"0.0.0.0/0"},
+		EndpointHost:     "master-a.example:51820",
+		TransportSubnet:  "10.250.0.0/30",
+		LocalTransportIp: "10.250.0.2",
+		PeerTransportIp:  "10.250.0.1",
+	})
+	if err != nil {
+		t.Fatalf("AddPeer returned error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("expected success response, got %#v", resp)
+	}
+
+	if len(peerMgr.configureCalls) != 1 {
+		t.Fatalf("expected one transport configure call, got %d", len(peerMgr.configureCalls))
+	}
+	call := peerMgr.configureCalls[0]
+	if call.pubkeyHex != "01020304" {
+		t.Fatalf("unexpected pubkey hex: %q", call.pubkeyHex)
+	}
+	if call.localIP != "10.250.0.2" || call.peerIP != "10.250.0.1" {
+		t.Fatalf("unexpected transport call: %#v", call)
+	}
+	if !peerMgr.stateSeen {
+		t.Fatal("expected transport state to be persisted before ConfigureTransport")
+	}
+}
+
+func TestAddPeerSkipsTransportConfiguratorWhenIPsMissing(t *testing.T) {
+	t.Parallel()
+
+	peerMgr := &testTransportPeerManager{}
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil)
+
+	resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
+		PublicKey:       []byte{9, 8, 7, 6},
+		AllowedIps:      []string{"0.0.0.0/0"},
+		TransportSubnet: "10.250.0.4/30",
+	})
+	if err != nil {
+		t.Fatalf("AddPeer returned error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("expected success response, got %#v", resp)
+	}
+	if len(peerMgr.configureCalls) != 0 {
+		t.Fatalf("expected no transport configure calls, got %d", len(peerMgr.configureCalls))
+	}
+}
+
+func TestAddPeerStoresMasterNameFromEndpointMetadata(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	peerMgr := &testPeerManager{}
+	handler := NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil)
+
+	resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
+		PublicKey:        []byte{1, 2, 3, 4},
+		AllowedIps:       []string{"0.0.0.0/0"},
+		EndpointHost:     "master-a|master-a.example:51820",
+		TransportSubnet:  "10.250.0.0/30",
+		LocalTransportIp: "10.250.0.2",
+		PeerTransportIp:  "10.250.0.1",
+	})
+	if err != nil {
+		t.Fatalf("AddPeer returned error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("expected success response, got %#v", resp)
+	}
+
+	state, err := loadNodeTransportState(configDir)
+	if err != nil {
+		t.Fatalf("loadNodeTransportState returned error: %v", err)
+	}
+	if len(state.Tunnels) != 1 {
+		t.Fatalf("expected one tunnel entry, got %d", len(state.Tunnels))
+	}
+	entry := state.Tunnels[0]
+	if entry.Name != "master-a" {
+		t.Fatalf("expected tunnel name master-a, got %q", entry.Name)
+	}
+	if entry.PeerEndpoint != "master-a.example:51820" {
+		t.Fatalf("expected peer endpoint master-a.example:51820, got %q", entry.PeerEndpoint)
 	}
 }
 

@@ -5,6 +5,8 @@ package node
 import (
 	"context"
 	"fmt"
+
+	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
 )
 
 type clientPlatformState struct{}
@@ -22,5 +24,31 @@ func (c *ClientRunner) createInterfaces(ctx context.Context) error {
 }
 
 func (c *ClientRunner) closeInterfaces() error {
+	return nil
+}
+
+func (c *ClientRunner) AddPeer(publicKey []byte, _ []byte, _ []string, _ string, _ int32) error {
+	if len(publicKey) == 0 {
+		return fmt.Errorf("public key is required")
+	}
+	return fmt.Errorf("client peer management is not available on this platform")
+}
+
+func (c *ClientRunner) ListPeers() []grpcserver.PeerInfo {
+	return nil
+}
+
+func (c *ClientRunner) RemovePeer(publicKey []byte) error {
+	if len(publicKey) == 0 {
+		return fmt.Errorf("public key is required")
+	}
+	return nil
+}
+
+func (c *ClientRunner) ConfigureTransport(_ string, _ string, _ string) error {
+	return fmt.Errorf("client transport configuration is not available on this platform")
+}
+
+func (c *ClientRunner) reconcileFromTransportState() error {
 	return nil
 }

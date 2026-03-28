@@ -38,7 +38,7 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
-	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, nil, c, nil); err != nil {
+	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, c, c, nil); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	c.startTime = time.Now()
@@ -51,6 +51,10 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 			c.node.logger.Warn().Err(closeErr).Msg("failed to close client interfaces")
 		}
 	}()
+
+	if err := c.reconcileFromTransportState(); err != nil {
+		return fmt.Errorf("reconcile client transport state: %w", err)
+	}
 
 	c.node.logger.Info().
 		Str("public_key", publicKey.String()).
