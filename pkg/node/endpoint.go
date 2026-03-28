@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"github.com/thebtf/awg-mesh/pkg/wg"
 	"time"
 
 	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
@@ -33,6 +34,11 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
+	if e.node.config.OverlayIP != "" {
+		if err := AssignOverlayIP(e.node.config.OverlayIP); err != nil {
+			return fmt.Errorf("assign overlay IP: %w", err)
+		}
+	}
 	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e, e, e, nil); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
@@ -51,6 +57,42 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 		Str("overlay_ip", e.node.config.OverlayIP).
 		Str("public_key", publicKey.String()).
 		Msg("endpoint runner started")
+
+	if state, err := loadNodeTransportState(e.node.config.ConfigDir); err == nil && len(state.Tunnels) > 0 {
+		reconciled := 0
+		for _, tt := range state.Tunnels {
+			if tt.PeerPublicKey == "" {
+				continue
+			}
+
+			allowedIPs := make([]string, 0, 1)
+			if tt.PeerTransportIP != "" {
+				allowedIPs = append(allowedIPs, tt.PeerTransportIP+"/32")
+			}
+
+			peerKey, err := wg.ParseKey(tt.PeerPublicKey)
+			if err != nil {
+				e.node.logger.Warn().
+					Str("tunnel", tt.Name).
+					Err(err).
+					Msg("reconcile peer: parse key failed")
+				continue
+			}
+
+			if err := e.AddPeer(peerKey[:], nil, allowedIPs, tt.PeerEndpoint, 25); err != nil {
+				e.node.logger.Warn().
+					Str("tunnel", tt.Name).
+					Err(err).
+					Msg("reconcile peer failed")
+			} else {
+				reconciled++
+			}
+		}
+
+		e.node.logger.Info().
+			Int("peers", reconciled).
+			Msg("reconciled peers from saved state")
+	}
 
 	<-ctx.Done()
 

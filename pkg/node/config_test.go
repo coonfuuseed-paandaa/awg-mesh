@@ -241,17 +241,17 @@ func TestMasterRunnerTunnelLifecycle(t *testing.T) {
 
 	runner := NewMasterRunner(nodeValue)
 
-	err = runner.AddTunnel("", "endpoint-a", "10.4.0.2", "", 1, wg.Key{})
+	err = runner.AddTunnel("", "endpoint-a", "10.4.0.2", "", "", "", "", 1, wg.Key{})
 	if err == nil || !strings.Contains(err.Error(), "tunnel name is required") {
 		t.Fatalf("expected tunnel-name error, got %v", err)
 	}
 
-	err = runner.AddTunnel("endpoint-a", "endpoint-a.local", "10.4.0.2", "10.4.0.1", 2, wg.Key{})
+	err = runner.AddTunnel("endpoint-a", "endpoint-a.local", "10.4.0.2", "10.4.0.1", "", "", "", 2, wg.Key{})
 	if err != nil {
 		t.Fatalf("AddTunnel returned error: %v", err)
 	}
 
-	err = runner.AddTunnel("endpoint-a", "endpoint-a.local", "10.4.0.2", "10.4.0.1", 2, wg.Key{})
+	err = runner.AddTunnel("endpoint-a", "endpoint-a.local", "10.4.0.2", "10.4.0.1", "", "", "", 2, wg.Key{})
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected duplicate tunnel error, got %v", err)
 	}

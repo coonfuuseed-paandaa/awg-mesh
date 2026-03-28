@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func newConfigCommand() *cobra.Command {
@@ -76,6 +77,31 @@ func newConfigShowCommand() *cobra.Command {
 				fmt.Printf("Topology:         %s (exists)\n", topologyPath)
 			} else {
 				fmt.Printf("Topology:         %s (not found)\n", topologyPath)
+			}
+
+			transportFile := filepath.Join(configDir, "transport.yml")
+			if _, err := os.Stat(transportFile); err == nil {
+				if data, err := os.ReadFile(transportFile); err == nil {
+					var ts struct {
+						Pool         string `yaml:"pool"`
+						PrefixLength int    `yaml:"prefix_length"`
+						Allocations  []struct {
+							Tunnel     string `yaml:"tunnel"`
+							Subnet     string `yaml:"subnet"`
+							MasterIP   string `yaml:"master_ip"`
+							EndpointIP string `yaml:"endpoint_ip"`
+						} `yaml:"allocations"`
+					}
+					if yaml.Unmarshal(data, &ts) == nil {
+						fmt.Printf("Transport pool:   %s/%d\n", ts.Pool, ts.PrefixLength)
+						fmt.Printf("Transport allocs: %d\n", len(ts.Allocations))
+						for _, a := range ts.Allocations {
+							fmt.Printf("  %-20s %s  master:%s  endpoint:%s\n", a.Tunnel, a.Subnet, a.MasterIP, a.EndpointIP)
+						}
+					}
+				}
+			} else {
+				fmt.Printf("Transport:        not initialized\n")
 			}
 
 			return nil

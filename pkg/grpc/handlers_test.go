@@ -29,22 +29,38 @@ type testTunnelManager struct {
 }
 
 type addTunnelCall struct {
-	name       string
-	host       string
-	overlayIP  string
-	balancerIP string
-	weight     int
-	peerKey    wg.Key
+	name               string
+	host               string
+	overlayIP          string
+	balancerIP         string
+	transportSubnet    string
+	masterTransportIP  string
+	endpointTransportIP string
+	weight             int
+	peerKey            wg.Key
 }
 
-func (m *testTunnelManager) AddTunnel(name, endpointHost, overlayIP, balancerIP string, weight int, peerPublicKey wg.Key) error {
+func (m *testTunnelManager) AddTunnel(
+	name,
+	endpointHost,
+	overlayIP,
+	balancerIP,
+	transportSubnet,
+	masterTransportIP,
+	endpointTransportIP string,
+	weight int,
+	peerPublicKey wg.Key,
+) error {
 	m.addTunnelCalls = append(m.addTunnelCalls, addTunnelCall{
-		name:       name,
-		host:       endpointHost,
-		overlayIP:  overlayIP,
-		balancerIP: balancerIP,
-		weight:     weight,
-		peerKey:    peerPublicKey,
+		name:               name,
+		host:               endpointHost,
+		overlayIP:          overlayIP,
+		balancerIP:         balancerIP,
+		transportSubnet:    transportSubnet,
+		masterTransportIP:  masterTransportIP,
+		endpointTransportIP: endpointTransportIP,
+		weight:             weight,
+		peerKey:            peerPublicKey,
 	})
 	return m.addErr
 }
@@ -181,12 +197,12 @@ func TestNewAgentHandlerConstructors(t *testing.T) {
 
 		addResp, err := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
 			Name:          "  test-tunnel ",
-			EndpointHost:  "  host.example ",
-			OverlayIp:     "  10.0.0.1/32 ",
-			BalancerIp:    "  ",
-			PeerPublicKey: peerKey,
-			Weight:        0,
-		})
+				EndpointHost:  "  host.example ",
+				OverlayIp:     "  10.0.0.1/32 ",
+				BalancerIp:    "  ",
+				PeerPublicKey: peerKey,
+				Weight:        0,
+			})
 		if err != nil {
 			t.Fatalf("AddTunnel returned error: %v", err)
 		}
@@ -212,6 +228,15 @@ func TestNewAgentHandlerConstructors(t *testing.T) {
 		}
 		if call.balancerIP != "" {
 			t.Fatalf("expected empty balancer IP, got %q", call.balancerIP)
+		}
+		if call.transportSubnet != "" {
+			t.Fatalf("expected empty transport subnet, got %q", call.transportSubnet)
+		}
+		if call.masterTransportIP != "" {
+			t.Fatalf("expected empty master transport IP, got %q", call.masterTransportIP)
+		}
+		if call.endpointTransportIP != "" {
+			t.Fatalf("expected empty endpoint transport IP, got %q", call.endpointTransportIP)
 		}
 		if call.weight != 1 {
 			t.Fatalf("expected default weight 1, got %d", call.weight)

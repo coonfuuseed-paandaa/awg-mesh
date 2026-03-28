@@ -5,11 +5,14 @@ import (
 	"crypto/x509"
 	"embed"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
+	"github.com/thebtf/awg-mesh/pkg/topology"
+	"github.com/thebtf/awg-mesh/pkg/transport"
 	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
 )
 
@@ -65,6 +68,44 @@ func loadToken(nodeDir string) (string, error) {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
 	return strings.TrimSpace(string(rawToken)), nil
+}
+
+func loadOrCreateAllocator(configDir string, topo *topology.Topology) (*transport.Allocator, error) {
+	cleanConfigDir := strings.TrimSpace(configDir)
+	if cleanConfigDir == "" {
+		return nil, fmt.Errorf("config directory is required")
+	}
+	if topo == nil {
+		return nil, fmt.Errorf("topology is required")
+	}
+
+	parsedPrefix, err := netip.ParsePrefix(strings.TrimSpace(topo.Transport.Pool))
+	if err != nil {
+		return nil, fmt.Errorf("parse transport pool %q: %w", topo.Transport.Pool, err)
+	}
+	if topo.Transport.PrefixLength <= 0 {
+		return nil, fmt.Errorf("transport prefix length must be greater than zero")
+	}
+
+	alloc := transport.NewAllocator(parsedPrefix, topo.Transport.PrefixLength)
+	statePath := filepath.Join(cleanConfigDir, "transport.yml")
+	if err := alloc.LoadState(statePath); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	return alloc, nil
+}
+
+func saveTransportState(alloc *transport.Allocator, configDir string) error {
+	cleanConfigDir := strings.TrimSpace(configDir)
+	if cleanConfigDir == "" {
+		return fmt.Errorf("config directory is required")
+	}
+	if alloc == nil {
+		return fmt.Errorf("allocator is required")
+	}
+
+	return alloc.SaveState(filepath.Join(cleanConfigDir, "transport.yml"))
 }
 
 func containsName(list []string, needle string) bool {

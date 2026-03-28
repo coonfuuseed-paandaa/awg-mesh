@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	"gopkg.in/yaml.v3"
 )
 
 // AgentHandler implements proto.AwgAgentServer for the awg-mesh-node.
@@ -217,6 +219,9 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 		endpointHost,
 		strings.TrimSpace(req.GetOverlayIp()),
 		strings.TrimSpace(req.GetBalancerIp()),
+		strings.TrimSpace(req.GetTransportSubnet()),
+		strings.TrimSpace(req.GetMasterTransportIp()),
+		strings.TrimSpace(req.GetEndpointTransportIp()),
 		weight,
 		peerPublicKey,
 	)
@@ -314,7 +319,102 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 		return nil, status.Errorf(codes.Internal, "add peer: %v", err)
 	}
 
+	if err := h.saveNodeTransportStateAfterPeerAdded(req); err != nil {
+		return nil, status.Errorf(codes.Internal, "save node transport state: %v", err)
+	}
+
 	return &proto.AddPeerResponse{Success: true}, nil
+}
+
+type nodeTransportState struct {
+	OverlayIP string           `yaml:"overlay_ip"`
+	Tunnels   []tunnelTransport `yaml:"tunnels"`
+}
+
+type tunnelTransport struct {
+	Name            string `yaml:"name"`
+	TransportIP     string `yaml:"transport_ip"`
+	PeerTransportIP string `yaml:"peer_transport_ip"`
+	PeerPublicKey   string `yaml:"peer_public_key"`
+	PeerEndpoint    string `yaml:"peer_endpoint"`
+}
+
+func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRequest) error {
+	if req == nil || strings.TrimSpace(req.GetTransportSubnet()) == "" {
+		return nil
+	}
+
+	state, err := loadNodeTransportState(h.configDir)
+	if err != nil {
+		return err
+	}
+
+	peerPublicKey := hex.EncodeToString(req.GetPublicKey())
+	entry := tunnelTransport{
+		TransportIP:     req.GetLocalTransportIp(),
+		PeerTransportIP: req.GetPeerTransportIp(),
+		PeerPublicKey:   peerPublicKey,
+		PeerEndpoint:    strings.TrimSpace(req.GetEndpointHost()),
+	}
+
+	nextTunnels := append([]tunnelTransport(nil), state.Tunnels...)
+	found := false
+	for idx, existing := range nextTunnels {
+		if existing.PeerPublicKey == peerPublicKey {
+			nextTunnels[idx] = entry
+			found = true
+			break
+		}
+	}
+	if !found {
+		nextTunnels = append(nextTunnels, entry)
+	}
+
+	return saveNodeTransportState(filepath.Join(h.configDir, "transport.yml"), nodeTransportState{
+		OverlayIP: strings.TrimSpace(state.OverlayIP),
+		Tunnels:   nextTunnels,
+	})
+}
+
+func loadNodeTransportState(configDir string) (nodeTransportState, error) {
+	configDir = strings.TrimSpace(configDir)
+	if configDir == "" {
+		return nodeTransportState{}, fmt.Errorf("config directory is required")
+	}
+
+	path := filepath.Join(configDir, "transport.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nodeTransportState{}, nil
+		}
+		return nodeTransportState{}, fmt.Errorf("read node transport state %q: %w", path, err)
+	}
+
+	var state nodeTransportState
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return nodeTransportState{}, fmt.Errorf("unmarshal node transport state %q: %w", path, err)
+	}
+	return state, nil
+}
+
+func saveNodeTransportState(path string, state nodeTransportState) error {
+	data, err := yaml.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal node transport state %q: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create transport state directory for %q: %w", path, err)
+	}
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("write temporary node transport state %q: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace node transport state %q: %w", path, err)
+	}
+	return nil
 }
 
 func (h *AgentHandler) RemovePeer(_ context.Context, req *proto.RemovePeerRequest) (*proto.RemovePeerResponse, error) {

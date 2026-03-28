@@ -10,6 +10,7 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+	"github.com/thebtf/awg-mesh/pkg/routing"
 	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
@@ -53,6 +54,12 @@ func (e *EndpointRunner) createInterface() error {
 		Str("interface", iface.Name()).
 		Int("mtu", mtu).
 		Msg("endpoint interface created")
+	if err := routing.EnableForwarding(); err != nil {
+		e.node.logger.Warn().Err(err).Msg("failed to enable IP forwarding")
+	}
+	if err := routing.EnableMasquerade("eth0"); err != nil {
+		e.node.logger.Warn().Err(err).Msg("failed to enable masquerade on eth0")
+	}
 
 	return nil
 }

@@ -187,8 +187,33 @@ func newEndpointInitCommand() *cobra.Command {
 				return fmt.Errorf("write pubkey file %q: %w", pubkeyPath, err)
 			}
 
+			alloc, err := loadOrCreateAllocator(configDir, topo)
+			if err != nil {
+				return fmt.Errorf("load transport allocator: %w", err)
+			}
+
+			selfClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
+				Target:     ep.Host + ":9090",
+				CACertPath: caPath(configDir),
+				Token:      token,
+			})
+			if err != nil {
+				return fmt.Errorf("create self gRPC client: %w", err)
+			}
+			defer func() {
+				if closeErr := selfClient.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close self gRPC client: %v\n", closeErr)
+				}
+			}()
+
 			for _, master := range topo.Masters {
 				if !containsName(master.Endpoints, ep.Name) {
+					continue
+				}
+
+				allocation, err := alloc.Allocate(master.Name, ep.Name)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: allocate transport for master %q and endpoint %q failed: %v\n", master.Name, ep.Name, err)
 					continue
 				}
 
@@ -216,6 +241,9 @@ func newEndpointInitCommand() *cobra.Command {
 					BalancerIp:    "",
 					PeerPublicKey: resp.NodePublicKey,
 					Weight:        1,
+					TransportSubnet:     allocation.Subnet.String(),
+					MasterTransportIp:   allocation.MasterIP.String(),
+					EndpointTransportIp: allocation.EndpointIP.String(),
 				})
 				masterCancel()
 				if closeErr := masterClient.Close(); closeErr != nil {
@@ -233,6 +261,32 @@ func newEndpointInitCommand() *cobra.Command {
 				}
 
 				fmt.Printf("Added tunnel for endpoint %q on master %q.\n", ep.Name, master.Name)
+
+				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				peerResp, peerErr := selfClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
+					PublicKey:           resp.NodePublicKey,
+					AllowedIps:          []string{allocation.Subnet.String()},
+					EndpointHost:        master.Host + ":" + strconv.Itoa(master.ListenPort),
+					PersistentKeepalive: 25,
+					TransportSubnet:     allocation.Subnet.String(),
+					LocalTransportIp:    allocation.EndpointIP.String(),
+					PeerTransportIp:     allocation.MasterIP.String(),
+				})
+				peerCancel()
+				if peerErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %v\n", master.Name, peerErr)
+					continue
+				}
+				if !peerResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %s\n", master.Name, "[RPC failure]")
+					continue
+				}
+
+				fmt.Printf("Added peer on endpoint %q for master %q.\n", ep.Name, master.Name)
+			}
+
+			if err := saveTransportState(alloc, configDir); err != nil {
+				return fmt.Errorf("save transport state: %w", err)
 			}
 
 			fmt.Printf("Endpoint %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))

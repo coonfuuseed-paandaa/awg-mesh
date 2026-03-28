@@ -55,17 +55,21 @@ func (h *HealthChecker) Run(
 			return
 		case <-ticker.C:
 			for _, t := range tunnels() {
-				if t.OverlayIP == "" {
+				pingTarget := t.EndpointTransportIP
+				if pingTarget == "" {
+					pingTarget = t.OverlayIP
+				}
+				if pingTarget == "" {
 					continue
 				}
 
-				alive := PingOverlay(t.OverlayIP, h.cfg.Timeout)
+				alive := PingOverlay(pingTarget, h.cfg.Timeout)
 
 				if alive {
 					if failures[t.Name] > 0 {
 						h.logger.Info().
 							Str("tunnel", t.Name).
-							Str("overlay_ip", t.OverlayIP).
+							Str("ping_target", pingTarget).
 							Msg("tunnel recovered")
 						onUp(t.Name)
 					}
@@ -74,14 +78,14 @@ func (h *HealthChecker) Run(
 					failures[t.Name]++
 					h.logger.Warn().
 						Str("tunnel", t.Name).
-						Str("overlay_ip", t.OverlayIP).
+						Str("ping_target", pingTarget).
 						Int("consecutive_failures", failures[t.Name]).
 						Msg("tunnel ping failed")
 
 					if failures[t.Name] >= h.cfg.FailureThreshold && t.Healthy {
 						h.logger.Error().
 							Str("tunnel", t.Name).
-							Str("overlay_ip", t.OverlayIP).
+							Str("ping_target", pingTarget).
 							Msg("tunnel marked down")
 						onDown(t.Name)
 					}

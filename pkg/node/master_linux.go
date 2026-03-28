@@ -5,9 +5,11 @@ package node
 import (
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
+	"github.com/thebtf/awg-mesh/pkg/routing"
 	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
@@ -38,6 +40,10 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 		return fmt.Errorf("create interface %q: %w", tunnel.InterfaceName, err)
 	}
 
+	masterTransportIP := strings.TrimSpace(tunnel.MasterTransportIP)
+	endpointTransportIP := strings.TrimSpace(tunnel.EndpointTransportIP)
+	transportSubnet := strings.TrimSpace(tunnel.TransportSubnet)
+
 	peerConfigs := make([]wg.PeerConfig, 0, 1)
 	if tunnel.PeerPublicKey.IsZero() {
 		m.node.logger.Warn().
@@ -45,9 +51,18 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 			Str("endpoint_host", endpointHost).
 			Msg("peer public key is empty; configuring tunnel without peers")
 	} else {
-		peerConfigs = append(peerConfigs, wg.PeerConfig{
+		peerCfg := wg.PeerConfig{
 			PublicKey: tunnel.PeerPublicKey,
-		})
+		}
+		if transportSubnet != "" && endpointTransportIP != "" {
+			allowedIPs, err := buildPeerAllowedIPs(transportSubnet, tunnel.OverlayIP)
+			if err != nil {
+				_ = iface.Close()
+				return err
+			}
+			peerCfg.AllowedIPs = allowedIPs
+		}
+		peerConfigs = append(peerConfigs, peerCfg)
 	}
 
 	cfg := wg.Config{
@@ -59,6 +74,13 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 		return fmt.Errorf("configure interface %q: %w", tunnel.InterfaceName, err)
 	}
 
+	if masterTransportIP != "" {
+		if err := addInterfaceAddress(tunnel.InterfaceName, masterTransportIP); err != nil {
+			_ = iface.Close()
+			return fmt.Errorf("assign transport address for tunnel %q: %w", tunnel.Name, err)
+		}
+	}
+
 	tunnel.platformState.iface = iface
 	m.node.logger.Info().
 		Str("tunnel", tunnel.Name).
@@ -66,7 +88,122 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 		Int("mtu", mtu).
 		Msg("master tunnel interface created")
 
+	if endpointTransportIP != "" && strings.TrimSpace(tunnel.OverlayIP) != "" {
+		overlayCIDR := normalizeTransportOverlayRoute(tunnel.OverlayIP)
+		if err := routing.AddRoute(overlayCIDR, endpointTransportIP, tunnel.InterfaceName); err != nil {
+			_ = iface.Close()
+			return fmt.Errorf("add overlay route for tunnel %q: %w", tunnel.Name, err)
+		}
+	}
+
+	if tunnel.BalancerIP != "" {
+		m.rebuildECMP(tunnel.BalancerIP)
+	}
+
 	return nil
+}
+
+func (m *MasterRunner) rebuildECMP(balancerIP string) {
+	if balancerIP == "" {
+		return
+	}
+
+	cidr := balancerIP + "/32"
+	m.mu.RLock()
+	nexthops := make([]routing.NextHop, 0, len(m.tunnels))
+	for _, t := range m.tunnels {
+		if t.BalancerIP == balancerIP && t.Healthy {
+			nexthops = append(nexthops, routing.NextHop{
+				Via:    t.EndpointTransportIP,
+				Dev:    "wg-" + t.Name,
+				Weight: t.Weight,
+			})
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(nexthops) == 0 {
+		if err := routing.RemoveECMPRoute(cidr); err != nil {
+			m.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to remove ECMP route")
+			return
+		}
+		m.node.logger.Info().Str("balancer_ip", balancerIP).Msg("ECMP route removed")
+		return
+	}
+
+	if err := routing.SetECMPRoute(cidr, nexthops); err != nil {
+		m.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to rebuild ECMP route")
+		return
+	}
+	m.node.logger.Info().Str("balancer_ip", balancerIP).Int("nexthops", len(nexthops)).Msg("ECMP route updated")
+}
+
+func (m *MasterRunner) removeOverlayRoute(overlayIP string) {
+	if overlayIP == "" {
+		return
+	}
+	cidr := normalizeTransportOverlayRoute(overlayIP)
+	if err := routing.DeleteRoute(cidr); err != nil {
+		m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to remove overlay route")
+	}
+}
+
+func (m *MasterRunner) restoreOverlayRoute(overlayIP, endpointTransportIP, interfaceName string) {
+	if overlayIP == "" || endpointTransportIP == "" {
+		return
+	}
+	cidr := normalizeTransportOverlayRoute(overlayIP)
+	if err := routing.ReplaceRoute(cidr, endpointTransportIP, interfaceName); err != nil {
+		m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to restore overlay route")
+	}
+}
+
+func addInterfaceAddress(interfaceName, address string) error {
+	ip := net.ParseIP(strings.TrimSpace(address))
+	if ip == nil {
+		return fmt.Errorf("invalid transport IP %q", address)
+	}
+
+	networkAddress := ip.String() + "/30"
+	out, err := exec.Command("ip", "addr", "add", networkAddress, "dev", interfaceName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip addr add %s dev %s: %w: %s", networkAddress, interfaceName, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func buildPeerAllowedIPs(transportSubnet, overlayIP string) ([]net.IPNet, error) {
+	peerAllowed := make([]net.IPNet, 0, 2)
+	transport, err := net.ParseCIDR(strings.TrimSpace(transportSubnet))
+	if err != nil {
+		return nil, fmt.Errorf("parse transport subnet %q: %w", transportSubnet, err)
+	}
+	peerAllowed = append(peerAllowed, *transport)
+
+	if strings.TrimSpace(overlayIP) == "" {
+		return nil, fmt.Errorf("overlay IP is required for peer allowed IPs")
+	}
+	normalizedOverlay := normalizeTransportOverlayRoute(overlayIP)
+	_, parsedOverlay, err := net.ParseCIDR(normalizedOverlay)
+	if err != nil {
+		return nil, fmt.Errorf("parse overlay IP %q: %w", normalizedOverlay, err)
+	}
+	peerAllowed = append(peerAllowed, *parsedOverlay)
+	return peerAllowed, nil
+}
+
+func normalizeTransportOverlayRoute(overlayIP string) string {
+	trimmed := strings.TrimSpace(overlayIP)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "/") {
+		host, _, err := net.ParseCIDR(trimmed)
+		if err == nil {
+			return host.String() + "/32"
+		}
+	}
+	return trimmed + "/32"
 }
 
 func (m *MasterRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
@@ -178,11 +315,11 @@ func copyStringPtr(value *string) *string {
 
 func copyPeerConfig(peer wg.PeerConfig) wg.PeerConfig {
 	copied := wg.PeerConfig{
-		PublicKey:                   peer.PublicKey,
-		Remove:                      peer.Remove,
-		UpdateOnly:                  peer.UpdateOnly,
-		ReplaceAllowedIPs:           peer.ReplaceAllowedIPs,
-		AllowedIPs:                  append([]net.IPNet(nil), peer.AllowedIPs...),
+		PublicKey:         peer.PublicKey,
+		Remove:            peer.Remove,
+		UpdateOnly:        peer.UpdateOnly,
+		ReplaceAllowedIPs: peer.ReplaceAllowedIPs,
+		AllowedIPs:        append([]net.IPNet(nil), peer.AllowedIPs...),
 	}
 	if peer.PresharedKey != nil {
 		copiedKey := *peer.PresharedKey

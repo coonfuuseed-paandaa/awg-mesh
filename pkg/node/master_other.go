@@ -36,3 +36,9 @@ func (m *MasterRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
 func (m *MasterRunner) GetParams(tunnelName string) (wg.Config, error) {
 	return wg.Config{}, fmt.Errorf("UAPI not supported on this platform")
 }
+
+func (m *MasterRunner) rebuildECMP(balancerIP string) {}
+
+func (m *MasterRunner) removeOverlayRoute(overlayIP string) {}
+
+func (m *MasterRunner) restoreOverlayRoute(overlayIP, endpointTransportIP, interfaceName string) {}

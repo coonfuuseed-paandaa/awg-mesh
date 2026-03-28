@@ -75,3 +75,7 @@ rotation:
     tier2_interval: 168h
     tier3_interval: 720h
     preset: aggressive
+
+transport:
+  pool: 10.255.0.0/16
+  prefix_length: 30

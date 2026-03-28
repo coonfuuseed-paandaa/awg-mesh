@@ -13,15 +13,19 @@ import (
 
 // MasterTunnel represents a single tunnel managed by master mode.
 type MasterTunnel struct {
-	Name          string
-	InterfaceName string
-	OverlayIP     string
-	BalancerIP    string
-	PeerPublicKey wg.Key
-	Healthy       bool
-	Weight        int
-	lastParams    wg.Config
-	platformState masterTunnelPlatformState
+	Name                string
+	InterfaceName       string
+	EndpointHost        string
+	OverlayIP           string
+	BalancerIP          string
+	TransportSubnet     string
+	MasterTransportIP   string
+	EndpointTransportIP string
+	PeerPublicKey       wg.Key
+	Healthy             bool
+	Weight              int
+	lastParams          wg.Config
+	platformState       masterTunnelPlatformState
 }
 
 // MasterRunner runs node logic for master mode.
@@ -53,6 +57,11 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
+	if m.node.config.OverlayIP != "" {
+		if err := AssignOverlayIP(m.node.config.OverlayIP); err != nil {
+			return fmt.Errorf("assign overlay IP: %w", err)
+		}
+	}
 	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, newCaptureScheduler(m.node.logger, newCaptureFunc())); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
@@ -69,9 +78,36 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 		Str("public_key", publicKey.String()).
 		Msg("master runner started")
 
+	if state, err := loadNodeTransportState(m.node.config.ConfigDir); err == nil && len(state.Tunnels) > 0 {
+		reconciled := 0
+		for _, tt := range state.Tunnels {
+			peerKey := wg.Key{}
+			if tt.PeerPublicKey != "" {
+				if parsedKey, parseErr := wg.ParseKey(tt.PeerPublicKey); parseErr == nil {
+					peerKey = parsedKey
+				}
+			}
+
+			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, "", "", "", tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
+				if !strings.Contains(err.Error(), "already exists") {
+					m.node.logger.Warn().
+						Str("tunnel", tt.Name).
+						Err(err).
+						Msg("reconcile tunnel failed")
+				}
+			} else {
+				reconciled++
+			}
+		}
+
+		m.node.logger.Info().
+			Int("tunnels", reconciled).
+			Msg("reconciled tunnels from saved state")
+	}
+
 	if m.node.topology != nil {
 		for _, ep := range m.node.topology.Endpoints {
-			if addErr := m.AddTunnel(ep.Name, ep.Host, ep.OverlayIP, "", 1, wg.Key{}); addErr != nil {
+			if addErr := m.AddTunnel(ep.Name, ep.Host, ep.OverlayIP, "", "", "", "", 1, wg.Key{}); addErr != nil {
 				m.node.logger.Warn().
 					Str("endpoint", ep.Name).
 					Err(addErr).
@@ -91,17 +127,39 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	go hc.Run(ctx, m.listMasterTunnels,
 		func(name string) {
 			m.mu.Lock()
-			if t, ok := m.tunnels[name]; ok {
+			t, ok := m.tunnels[name]
+			if ok {
 				t.Healthy = false
 			}
 			m.mu.Unlock()
+
+			if ok && t != nil {
+				m.removeOverlayRoute(t.OverlayIP)
+				m.rebuildECMP(t.BalancerIP)
+				m.node.logger.Info().
+					Str("tunnel", t.Name).
+					Str("overlay_ip", t.OverlayIP).
+					Str("balancer_ip", t.BalancerIP).
+					Msg("tunnel down, overlay route removed, ECMP rebuilt")
+			}
 		},
 		func(name string) {
 			m.mu.Lock()
-			if t, ok := m.tunnels[name]; ok {
+			t, ok := m.tunnels[name]
+			if ok {
 				t.Healthy = true
 			}
 			m.mu.Unlock()
+
+			if ok && t != nil {
+				m.restoreOverlayRoute(t.OverlayIP, t.EndpointTransportIP, t.InterfaceName)
+				m.rebuildECMP(t.BalancerIP)
+				m.node.logger.Info().
+					Str("tunnel", t.Name).
+					Str("overlay_ip", t.OverlayIP).
+					Str("balancer_ip", t.BalancerIP).
+					Msg("tunnel recovered, overlay route restored, ECMP rebuilt")
+			}
 		},
 	)
 
@@ -112,7 +170,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 }
 
 // AddTunnel adds a new tunnel to the managed set.
-func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP string, weight int, peerPublicKey wg.Key) error {
+func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, transportSubnet, masterTransportIP, endpointTransportIP string, weight int, peerPublicKey wg.Key) error {
 	if name == "" {
 		return fmt.Errorf("tunnel name is required")
 	}
@@ -124,13 +182,17 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP strin
 	}
 
 	t := &MasterTunnel{
-		Name:          name,
-		InterfaceName: "wg-" + name,
-		OverlayIP:     overlayIP,
-		BalancerIP:    balancerIP,
-		PeerPublicKey: peerPublicKey,
-		Healthy:       true,
-		Weight:        weight,
+		Name:                name,
+		InterfaceName:       "wg-" + name,
+		EndpointHost:        endpointHost,
+		OverlayIP:           overlayIP,
+		BalancerIP:          balancerIP,
+		TransportSubnet:     strings.TrimSpace(transportSubnet),
+		MasterTransportIP:   strings.TrimSpace(masterTransportIP),
+		EndpointTransportIP: strings.TrimSpace(endpointTransportIP),
+		PeerPublicKey:       peerPublicKey,
+		Healthy:             true,
+		Weight:              weight,
 	}
 	m.tunnels[name] = t
 	m.mu.Unlock()
@@ -143,6 +205,19 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP strin
 		}
 		m.mu.Unlock()
 		return fmt.Errorf("create tunnel interface for %q: %w", name, err)
+	}
+
+	if err := m.saveTransportState(t); err != nil {
+		m.mu.Lock()
+		currentTunnel, exists := m.tunnels[name]
+		if exists && currentTunnel == t {
+			delete(m.tunnels, name)
+		}
+		m.mu.Unlock()
+		if closeErr := m.closeTunnelInterface(t); closeErr != nil {
+			return fmt.Errorf("save transport state for %q: %w (also failed to close interface: %v)", name, err, closeErr)
+		}
+		return fmt.Errorf("save transport state for %q: %w", name, err)
 	}
 
 	m.node.logger.Info().
@@ -250,4 +325,54 @@ func (m *MasterRunner) listTunnelPointers() []*MasterTunnel {
 		tunnels = append(tunnels, tunnel)
 	}
 	return tunnels
+}
+
+func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
+	if m == nil || m.node == nil {
+		return fmt.Errorf("master runner node is required")
+	}
+	if tunnel == nil {
+		return fmt.Errorf("master tunnel is required")
+	}
+
+	state, err := loadNodeTransportState(m.node.config.ConfigDir)
+	if err != nil {
+		return fmt.Errorf("load node transport state: %w", err)
+	}
+
+	peerPublicKey := tunnel.PeerPublicKey.String()
+	if tunnel.PeerPublicKey.IsZero() {
+		peerPublicKey = ""
+	}
+
+	next := append(make([]TunnelTransport, 0, len(state.Tunnels)+1),
+		state.Tunnels...)
+	updated := false
+	for idx, existing := range next {
+		if existing.Name == tunnel.Name {
+			next[idx] = TunnelTransport{
+				Name:            tunnel.Name,
+				TransportIP:     tunnel.MasterTransportIP,
+				PeerTransportIP: tunnel.EndpointTransportIP,
+				PeerPublicKey:   peerPublicKey,
+				PeerEndpoint:    tunnel.EndpointHost,
+			}
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		next = append(next, TunnelTransport{
+			Name:            tunnel.Name,
+			TransportIP:     tunnel.MasterTransportIP,
+			PeerTransportIP: tunnel.EndpointTransportIP,
+			PeerPublicKey:   peerPublicKey,
+			PeerEndpoint:    tunnel.EndpointHost,
+		})
+	}
+
+	return saveNodeTransportState(m.node.config.ConfigDir, NodeTransportState{
+		OverlayIP: strings.TrimSpace(m.node.config.OverlayIP),
+		Tunnels:   next,
+	})
 }

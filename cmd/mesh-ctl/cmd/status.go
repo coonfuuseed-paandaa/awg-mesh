@@ -4,12 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
 	"github.com/thebtf/awg-mesh/pkg/topology"
+	"gopkg.in/yaml.v3"
 )
+
+type localTransportState struct {
+	Allocations []struct {
+		Tunnel     string `yaml:"tunnel"`
+		MasterIP   string `yaml:"master_ip"`
+		EndpointIP string `yaml:"endpoint_ip"`
+	} `yaml:"allocations"`
+}
 
 func newStatusCommand() *cobra.Command {
 	return &cobra.Command{
@@ -35,14 +46,25 @@ func newStatusCommand() *cobra.Command {
 				nodes = append(nodes, nodeInfo{name: e.Name, host: e.Host, mode: "endpoint"})
 			}
 
-			fmt.Printf("%-20s %-10s %-20s %-10s %-15s %s\n", "NAME", "MODE", "HOST", "STATUS", "OVERLAY_IP", "TUNNELS")
+			transportStatePath := filepath.Join(configDir, "transport.yml")
+			transportByTunnel := make(map[string]string)
+			if transportData, err := os.ReadFile(transportStatePath); err == nil {
+				var transportState localTransportState
+				if yaml.Unmarshal(transportData, &transportState) == nil {
+					for _, allocation := range transportState.Allocations {
+						transportByTunnel[allocation.Tunnel] = allocation.MasterIP + "->" + allocation.EndpointIP
+					}
+				}
+			}
+
+			fmt.Printf("%-20s %-10s %-20s %-10s %-15s %-25s %s\n", "NAME", "MODE", "HOST", "STATUS", "OVERLAY_IP", "TRANSPORT", "TUNNELS")
 			fmt.Println("--------------------------------------------------------------------------------------------")
 
 			for _, n := range nodes {
 				nd := nodeDir(configDir, n.name)
 				token, tokenErr := loadToken(nd)
 				if tokenErr != nil {
-					fmt.Printf("%-20s %-10s %-20s %-10s\n", n.name, n.mode, n.host, "NO_TOKEN")
+					fmt.Printf("%-20s %-10s %-20s %-10s %-15s %-25s %s\n", n.name, n.mode, n.host, "NO_TOKEN", "-", "-", "0")
 					continue
 				}
 
@@ -52,7 +74,7 @@ func newStatusCommand() *cobra.Command {
 					Token:      token,
 				})
 				if err != nil {
-					fmt.Printf("%-20s %-10s %-20s %-10s\n", n.name, n.mode, n.host, "CONNECT_ERR")
+					fmt.Printf("%-20s %-10s %-20s %-10s %-15s %-25s %s\n", n.name, n.mode, n.host, "CONNECT_ERR", "-", "-", "0")
 					continue
 				}
 
@@ -65,12 +87,23 @@ func newStatusCommand() *cobra.Command {
 				}
 
 				if err != nil {
-					fmt.Printf("%-20s %-10s %-20s %-10s\n", n.name, n.mode, n.host, "OFFLINE")
+					fmt.Printf("%-20s %-10s %-20s %-10s %-15s %-25s %s\n", n.name, n.mode, n.host, "OFFLINE", "-", "-", "0")
 					continue
 				}
 
-				fmt.Printf("%-20s %-10s %-20s %-10s %-15s %d\n",
-					resp.Name, resp.Mode, n.host, "ONLINE", resp.OverlayIp, len(resp.Tunnels))
+				transportPairs := make([]string, 0, len(resp.Tunnels))
+				for _, tunnel := range resp.Tunnels {
+					if transport, ok := transportByTunnel[tunnel.Name]; ok && transport != "" {
+						transportPairs = append(transportPairs, transport)
+					}
+				}
+				transportDisplay := "-"
+				if len(transportPairs) > 0 {
+					transportDisplay = strings.Join(transportPairs, ",")
+				}
+
+				fmt.Printf("%-20s %-10s %-20s %-10s %-15s %-25s %s\n",
+					resp.Name, resp.Mode, n.host, "ONLINE", resp.OverlayIp, transportDisplay, fmt.Sprintf("%d", len(resp.Tunnels)))
 			}
 
 			return nil

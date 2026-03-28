@@ -79,6 +79,9 @@ message AddTunnelRequest {
   AwgParams params = 7;
   int32 weight = 8;
   bool backup = 9;
+  string transport_subnet = 10;
+  string master_transport_ip = 11;
+  string endpoint_transport_ip = 12;
 }
 
 message AddTunnelResponse {
@@ -108,6 +111,9 @@ message AddPeerRequest {
   AwgParams params = 4;
   string endpoint_host = 5;
   int32 persistent_keepalive = 6;
+  string transport_subnet = 7;
+  string local_transport_ip = 8;
+  string peer_transport_ip = 9;
 }
 
 message AddPeerResponse {

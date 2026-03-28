@@ -33,6 +33,11 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
+	if c.node.config.OverlayIP != "" {
+		if err := AssignOverlayIP(c.node.config.OverlayIP); err != nil {
+			return fmt.Errorf("assign overlay IP: %w", err)
+		}
+	}
 	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, nil, c, nil); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}

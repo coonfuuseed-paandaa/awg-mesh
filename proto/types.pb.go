@@ -607,18 +607,21 @@ func (x *RotateTokenResponse) GetSuccess() bool {
 }
 
 type AddTunnelRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	EndpointHost  string                 `protobuf:"bytes,2,opt,name=endpoint_host,json=endpointHost,proto3" json:"endpoint_host,omitempty"`
-	OverlayIp     string                 `protobuf:"bytes,3,opt,name=overlay_ip,json=overlayIp,proto3" json:"overlay_ip,omitempty"`
-	BalancerIp    string                 `protobuf:"bytes,4,opt,name=balancer_ip,json=balancerIp,proto3" json:"balancer_ip,omitempty"`
-	PeerPublicKey []byte                 `protobuf:"bytes,5,opt,name=peer_public_key,json=peerPublicKey,proto3" json:"peer_public_key,omitempty"`
-	PresharedKey  []byte                 `protobuf:"bytes,6,opt,name=preshared_key,json=presharedKey,proto3" json:"preshared_key,omitempty"`
-	Params        *AwgParams             `protobuf:"bytes,7,opt,name=params,proto3" json:"params,omitempty"`
-	Weight        int32                  `protobuf:"varint,8,opt,name=weight,proto3" json:"weight,omitempty"`
-	Backup        bool                   `protobuf:"varint,9,opt,name=backup,proto3" json:"backup,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Name                string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	EndpointHost        string                 `protobuf:"bytes,2,opt,name=endpoint_host,json=endpointHost,proto3" json:"endpoint_host,omitempty"`
+	OverlayIp           string                 `protobuf:"bytes,3,opt,name=overlay_ip,json=overlayIp,proto3" json:"overlay_ip,omitempty"`
+	BalancerIp          string                 `protobuf:"bytes,4,opt,name=balancer_ip,json=balancerIp,proto3" json:"balancer_ip,omitempty"`
+	PeerPublicKey       []byte                 `protobuf:"bytes,5,opt,name=peer_public_key,json=peerPublicKey,proto3" json:"peer_public_key,omitempty"`
+	PresharedKey        []byte                 `protobuf:"bytes,6,opt,name=preshared_key,json=presharedKey,proto3" json:"preshared_key,omitempty"`
+	Params              *AwgParams             `protobuf:"bytes,7,opt,name=params,proto3" json:"params,omitempty"`
+	Weight              int32                  `protobuf:"varint,8,opt,name=weight,proto3" json:"weight,omitempty"`
+	Backup              bool                   `protobuf:"varint,9,opt,name=backup,proto3" json:"backup,omitempty"`
+	TransportSubnet     string                 `protobuf:"bytes,10,opt,name=transport_subnet,json=transportSubnet,proto3" json:"transport_subnet,omitempty"`
+	MasterTransportIp   string                 `protobuf:"bytes,11,opt,name=master_transport_ip,json=masterTransportIp,proto3" json:"master_transport_ip,omitempty"`
+	EndpointTransportIp string                 `protobuf:"bytes,12,opt,name=endpoint_transport_ip,json=endpointTransportIp,proto3" json:"endpoint_transport_ip,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *AddTunnelRequest) Reset() {
@@ -712,6 +715,27 @@ func (x *AddTunnelRequest) GetBackup() bool {
 		return x.Backup
 	}
 	return false
+}
+
+func (x *AddTunnelRequest) GetTransportSubnet() string {
+	if x != nil {
+		return x.TransportSubnet
+	}
+	return ""
+}
+
+func (x *AddTunnelRequest) GetMasterTransportIp() string {
+	if x != nil {
+		return x.MasterTransportIp
+	}
+	return ""
+}
+
+func (x *AddTunnelRequest) GetEndpointTransportIp() string {
+	if x != nil {
+		return x.EndpointTransportIp
+	}
+	return ""
 }
 
 type AddTunnelResponse struct {
@@ -914,6 +938,9 @@ type AddPeerRequest struct {
 	Params              *AwgParams             `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
 	EndpointHost        string                 `protobuf:"bytes,5,opt,name=endpoint_host,json=endpointHost,proto3" json:"endpoint_host,omitempty"`
 	PersistentKeepalive int32                  `protobuf:"varint,6,opt,name=persistent_keepalive,json=persistentKeepalive,proto3" json:"persistent_keepalive,omitempty"`
+	TransportSubnet     string                 `protobuf:"bytes,7,opt,name=transport_subnet,json=transportSubnet,proto3" json:"transport_subnet,omitempty"`
+	LocalTransportIp    string                 `protobuf:"bytes,8,opt,name=local_transport_ip,json=localTransportIp,proto3" json:"local_transport_ip,omitempty"`
+	PeerTransportIp     string                 `protobuf:"bytes,9,opt,name=peer_transport_ip,json=peerTransportIp,proto3" json:"peer_transport_ip,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -988,6 +1015,27 @@ func (x *AddPeerRequest) GetPersistentKeepalive() int32 {
 		return x.PersistentKeepalive
 	}
 	return 0
+}
+
+func (x *AddPeerRequest) GetTransportSubnet() string {
+	if x != nil {
+		return x.TransportSubnet
+	}
+	return ""
+}
+
+func (x *AddPeerRequest) GetLocalTransportIp() string {
+	if x != nil {
+		return x.LocalTransportIp
+	}
+	return ""
+}
+
+func (x *AddPeerRequest) GetPeerTransportIp() string {
+	if x != nil {
+		return x.PeerTransportIp
+	}
+	return ""
 }
 
 type AddPeerResponse struct {
@@ -1998,7 +2046,7 @@ const file_types_proto_rawDesc = "" +
 	"\x12RotateTokenRequest\x12$\n" +
 	"\x0enew_token_hash\x18\x01 \x01(\tR\fnewTokenHash\"/\n" +
 	"\x13RotateTokenResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xb4\x02\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xc3\x03\n" +
 	"\x10AddTunnelRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12#\n" +
 	"\rendpoint_host\x18\x02 \x01(\tR\fendpointHost\x12\x1d\n" +
@@ -2010,7 +2058,11 @@ const file_types_proto_rawDesc = "" +
 	"\rpreshared_key\x18\x06 \x01(\fR\fpresharedKey\x12*\n" +
 	"\x06params\x18\a \x01(\v2\x12.awgmesh.AwgParamsR\x06params\x12\x16\n" +
 	"\x06weight\x18\b \x01(\x05R\x06weight\x12\x16\n" +
-	"\x06backup\x18\t \x01(\bR\x06backup\"\x80\x01\n" +
+	"\x06backup\x18\t \x01(\bR\x06backup\x12)\n" +
+	"\x10transport_subnet\x18\n" +
+	" \x01(\tR\x0ftransportSubnet\x12.\n" +
+	"\x13master_transport_ip\x18\v \x01(\tR\x11masterTransportIp\x122\n" +
+	"\x15endpoint_transport_ip\x18\f \x01(\tR\x13endpointTransportIp\"\x80\x01\n" +
 	"\x11AddTunnelResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
 	"\x11master_public_key\x18\x02 \x01(\fR\x0fmasterPublicKey\x12%\n" +
@@ -2021,7 +2073,7 @@ const file_types_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"=\n" +
 	"\n" +
 	"TunnelList\x12/\n" +
-	"\atunnels\x18\x01 \x03(\v2\x15.awgmesh.TunnelStatusR\atunnels\"\xf9\x01\n" +
+	"\atunnels\x18\x01 \x03(\v2\x15.awgmesh.TunnelStatusR\atunnels\"\xfe\x02\n" +
 	"\x0eAddPeerRequest\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12#\n" +
@@ -2030,7 +2082,10 @@ const file_types_proto_rawDesc = "" +
 	"allowedIps\x12*\n" +
 	"\x06params\x18\x04 \x01(\v2\x12.awgmesh.AwgParamsR\x06params\x12#\n" +
 	"\rendpoint_host\x18\x05 \x01(\tR\fendpointHost\x121\n" +
-	"\x14persistent_keepalive\x18\x06 \x01(\x05R\x13persistentKeepalive\"+\n" +
+	"\x14persistent_keepalive\x18\x06 \x01(\x05R\x13persistentKeepalive\x12)\n" +
+	"\x10transport_subnet\x18\a \x01(\tR\x0ftransportSubnet\x12,\n" +
+	"\x12local_transport_ip\x18\b \x01(\tR\x10localTransportIp\x12*\n" +
+	"\x11peer_transport_ip\x18\t \x01(\tR\x0fpeerTransportIp\"+\n" +
 	"\x0fAddPeerResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"2\n" +
 	"\x11RemovePeerRequest\x12\x1d\n" +

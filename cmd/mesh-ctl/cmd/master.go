@@ -189,10 +189,21 @@ func newMasterInitCommand() *cobra.Command {
 				return fmt.Errorf("write pubkey file %q: %w", pubkeyPath, err)
 			}
 
+			alloc, err := loadOrCreateAllocator(configDir, topo)
+			if err != nil {
+				return fmt.Errorf("load transport allocator: %w", err)
+			}
+
 			for _, epName := range master.Endpoints {
 				ep := topo.FindEndpoint(epName)
 				if ep == nil {
 					fmt.Fprintf(os.Stderr, "warning: endpoint %q not found in topology for master %q\n", epName, master.Name)
+					continue
+				}
+
+				allocation, err := alloc.Allocate(master.Name, ep.Name)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: allocate transport for master %q and endpoint %q failed: %v\n", master.Name, ep.Name, err)
 					continue
 				}
 
@@ -211,6 +222,9 @@ func newMasterInitCommand() *cobra.Command {
 					BalancerIp:    "",
 					PeerPublicKey: peerPublicKey,
 					Weight:        1,
+					TransportSubnet:     allocation.Subnet.String(),
+					MasterTransportIp:   allocation.MasterIP.String(),
+					EndpointTransportIp: allocation.EndpointIP.String(),
 				})
 				addCancel()
 				if addErr != nil {
@@ -223,7 +237,51 @@ func newMasterInitCommand() *cobra.Command {
 					continue
 				}
 
-				fmt.Printf("Added tunnel for endpoint %q on master %q.\n", ep.Name, master.Name)
+				epToken, err := loadToken(nodeDir(configDir, ep.Name))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: endpoint %q token missing for master %q: %v\n", ep.Name, master.Name, err)
+					continue
+				}
+
+				peerClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
+					Target:     ep.Host + ":9090",
+					CACertPath: caPath(configDir),
+					Token:      epToken,
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: cannot connect to endpoint %q: %v\n", ep.Name, err)
+					continue
+				}
+
+				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				peerResp, peerErr := peerClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
+					PublicKey:           resp.NodePublicKey,
+					AllowedIps:          []string{allocation.Subnet.String()},
+					EndpointHost:        master.Host + ":" + strconv.Itoa(master.ListenPort),
+					PersistentKeepalive: 25,
+					TransportSubnet:     allocation.Subnet.String(),
+					LocalTransportIp:    allocation.EndpointIP.String(),
+					PeerTransportIp:     allocation.MasterIP.String(),
+				})
+				peerCancel()
+				if closeErr := peerClient.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client for endpoint %q: %v\n", ep.Name, closeErr)
+				}
+				if peerErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: add peer to endpoint %q failed: %v\n", ep.Name, peerErr)
+					continue
+				}
+				if !peerResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: add peer to endpoint %q failed: %s\n", ep.Name, "[RPC failure]")
+					continue
+				}
+
+				fmt.Printf("Added tunnel and peer for endpoint %q on master %q.\n", ep.Name, master.Name)
+				fmt.Printf("Added peer on endpoint %q for master %q.\n", ep.Name, master.Name)
+			}
+
+			if err := saveTransportState(alloc, configDir); err != nil {
+				return fmt.Errorf("save transport state: %w", err)
 			}
 
 			fmt.Printf("Master %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
