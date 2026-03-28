@@ -35,3 +35,4 @@ rename-check.tmp
 # Local Go build/module caches (created by sandboxed builds)
 /.gocache/
 /.gomodcache/
+TECHNICAL_DEBT.md
