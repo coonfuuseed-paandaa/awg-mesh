@@ -20,8 +20,9 @@ overlay:
 masters:
   - name: ru-01
     host: 127.0.0.1
+    peer_host: 192.168.50.10
     overlay_ip: 172.20.70.2
-    listen_port: 11820
+    listen_port: 51820
     grpc_port: 19090
     endpoints:
       - kz-01
@@ -32,8 +33,9 @@ masters:
 
   - name: ru-02
     host: 127.0.0.1
+    peer_host: 192.168.50.11
     overlay_ip: 172.20.70.3
-    listen_port: 21820
+    listen_port: 51820
     grpc_port: 29090
     endpoints:
       - kz-01
@@ -45,36 +47,41 @@ masters:
 endpoints:
   - name: kz-01
     host: 127.0.0.1
+    peer_host: 192.168.50.20
     overlay_ip: 172.20.70.34
-    listen_port: 31820
+    listen_port: 51820
     grpc_port: 39090
     region: kz
 
   - name: kz-02
     host: 127.0.0.1
+    peer_host: 192.168.50.21
     overlay_ip: 172.20.70.35
-    listen_port: 41820
+    listen_port: 51820
     grpc_port: 49090
     region: kz
 
   - name: kz-03
     host: 127.0.0.1
+    peer_host: 192.168.50.22
     overlay_ip: 172.20.70.36
-    listen_port: 51821
+    listen_port: 51820
     grpc_port: 59090
     region: kz
 
   - name: pl-01
     host: 127.0.0.1
+    peer_host: 192.168.50.30
     overlay_ip: 172.20.70.37
-    listen_port: 16820
+    listen_port: 51820
     grpc_port: 16090
     region: pl
 
   - name: us-01
     host: 127.0.0.1
+    peer_host: 192.168.50.31
     overlay_ip: 172.20.70.38
-    listen_port: 17820
+    listen_port: 51820
     grpc_port: 17090
     region: us
 

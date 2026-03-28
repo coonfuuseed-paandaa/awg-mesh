@@ -40,6 +40,7 @@ type NamedRange struct {
 type MasterNode struct {
 	Name       string   `yaml:"name"`
 	Host       string   `yaml:"host"`
+	PeerHost   string   `yaml:"peer_host,omitempty"`
 	OverlayIP  string   `yaml:"overlay_ip"`
 	ListenPort int      `yaml:"listen_port"`
 	GRPCPort   int      `yaml:"grpc_port,omitempty"`
@@ -55,10 +56,21 @@ func (m MasterNode) GRPCAddr() string {
 	return m.Host + ":" + strconv.Itoa(port)
 }
 
+// PeerAddr returns the WG peering address (peer_host:listen_port).
+// Falls back to host when peer_host is not set.
+func (m MasterNode) PeerAddr() string {
+	h := m.PeerHost
+	if h == "" {
+		h = m.Host
+	}
+	return h + ":" + strconv.Itoa(m.ListenPort)
+}
+
 // EndpointNode describes an endpoint node.
 type EndpointNode struct {
 	Name       string `yaml:"name"`
 	Host       string `yaml:"host"`
+	PeerHost   string `yaml:"peer_host,omitempty"`
 	OverlayIP  string `yaml:"overlay_ip"`
 	ListenPort int    `yaml:"listen_port"`
 	GRPCPort   int    `yaml:"grpc_port,omitempty"`
@@ -72,6 +84,16 @@ func (e EndpointNode) GRPCAddr() string {
 		port = 9090
 	}
 	return e.Host + ":" + strconv.Itoa(port)
+}
+
+// PeerAddr returns the WG peering address (peer_host:listen_port).
+// Falls back to host when peer_host is not set.
+func (e EndpointNode) PeerAddr() string {
+	h := e.PeerHost
+	if h == "" {
+		h = e.Host
+	}
+	return h + ":" + strconv.Itoa(e.ListenPort)
 }
 
 // ClientNode describes a client node.

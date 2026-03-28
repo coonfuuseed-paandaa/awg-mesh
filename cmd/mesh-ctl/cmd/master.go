@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -194,11 +194,25 @@ func newMasterInitCommand() *cobra.Command {
 				return fmt.Errorf("load transport allocator: %w", err)
 			}
 
+			parsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))
+			for _, nr := range topo.Overlay.Ranges {
+				if r, rErr := topology.ParseRange(nr); rErr == nil {
+					parsedRanges = append(parsedRanges, r)
+				}
+			}
+
 			for _, epName := range master.Endpoints {
 				ep := topo.FindEndpoint(epName)
 				if ep == nil {
 					fmt.Fprintf(os.Stderr, "warning: endpoint %q not found in topology for master %q\n", epName, master.Name)
 					continue
+				}
+
+				var balancerIP string
+				if epAddr, parseErr := netip.ParseAddr(ep.OverlayIP); parseErr == nil {
+					if bip := topology.BalancerIPForAddr(parsedRanges, epAddr); bip.IsValid() {
+						balancerIP = bip.String()
+					}
 				}
 
 				allocation, err := alloc.Allocate(master.Name, ep.Name)
@@ -217,9 +231,9 @@ func newMasterInitCommand() *cobra.Command {
 				addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				addResp, addErr := client.Agent().AddTunnel(addCtx, &proto.AddTunnelRequest{
 					Name:          ep.Name,
-					EndpointHost:  ep.Host + ":" + strconv.Itoa(ep.ListenPort),
+					EndpointHost:  ep.PeerAddr(),
 					OverlayIp:     ep.OverlayIP,
-					BalancerIp:    "",
+					BalancerIp:    balancerIP,
 					PeerPublicKey: peerPublicKey,
 					Weight:        1,
 					TransportSubnet:     allocation.Subnet.String(),
@@ -257,7 +271,7 @@ func newMasterInitCommand() *cobra.Command {
 				peerResp, peerErr := peerClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
 					PublicKey:           resp.NodePublicKey,
 					AllowedIps:          []string{allocation.Subnet.String()},
-					EndpointHost:        master.Host + ":" + strconv.Itoa(master.ListenPort),
+					EndpointHost:        master.PeerAddr(),
 					PersistentKeepalive: 25,
 					TransportSubnet:     allocation.Subnet.String(),
 					LocalTransportIp:    allocation.EndpointIP.String(),

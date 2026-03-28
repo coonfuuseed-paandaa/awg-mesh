@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -250,7 +249,7 @@ func newEndpointInitCommand() *cobra.Command {
 				masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
 					Name:          ep.Name,
-					EndpointHost:  ep.Host + ":" + strconv.Itoa(ep.ListenPort),
+					EndpointHost:  ep.PeerAddr(),
 					OverlayIp:     ep.OverlayIP,
 					BalancerIp:    balancerIP,
 					PeerPublicKey: resp.NodePublicKey,
@@ -280,7 +279,7 @@ func newEndpointInitCommand() *cobra.Command {
 				peerResp, peerErr := selfClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
 					PublicKey:           addResp.MasterPublicKey,
 					AllowedIps:          []string{allocation.Subnet.String()},
-					EndpointHost:        master.Host + ":" + strconv.Itoa(master.ListenPort),
+					EndpointHost:        master.PeerAddr(),
 					PersistentKeepalive: 25,
 					TransportSubnet:     allocation.Subnet.String(),
 					LocalTransportIp:    allocation.EndpointIP.String(),
