@@ -33,6 +33,11 @@ type TransportConfigurator interface {
 	ConfigureTransport(pubkeyHex, localIP, peerIP string) error
 }
 
+// KeyProvider returns the node's WireGuard public key.
+type KeyProvider interface {
+	GetPublicKey() (wg.Key, error)
+}
+
 // NodeStateProvider exposes live node status metadata.
 type NodeStateProvider interface {
 	GetNodeState() NodeState

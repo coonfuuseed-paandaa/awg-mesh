@@ -65,6 +65,9 @@ func (e *EndpointRunner) createInterface() error {
 	if err := routing.EnableMasquerade("eth0"); err != nil {
 		e.node.logger.Warn().Err(err).Msg("failed to enable masquerade on eth0")
 	}
+	if err := routing.ClampMSSToPMTU(); err != nil {
+		e.node.logger.Warn().Err(err).Msg("failed to enable TCP MSS clamping")
+	}
 
 	return nil
 }

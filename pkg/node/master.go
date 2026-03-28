@@ -62,7 +62,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
-	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, newCaptureScheduler(m.node.logger, newCaptureFunc())); err != nil {
+	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, newCaptureScheduler(m.node.logger, newCaptureFunc()), m); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	m.startTime = time.Now()
@@ -167,6 +167,12 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 
 	m.node.logger.Info().Msg("master runner stopping")
 	return nil
+}
+
+// GetPublicKey returns the master's WireGuard public key.
+func (m *MasterRunner) GetPublicKey() (wg.Key, error) {
+	_, pubKey, err := EnsureKeypair(m.node.config.ConfigDir)
+	return pubKey, err
 }
 
 // AddTunnel adds a new tunnel to the managed set.

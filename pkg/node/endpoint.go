@@ -21,6 +21,12 @@ func NewEndpointRunner(node *Node) *EndpointRunner {
 	return &EndpointRunner{node: node}
 }
 
+// GetPublicKey returns the endpoint's WireGuard public key.
+func (e *EndpointRunner) GetPublicKey() (wg.Key, error) {
+	_, pubKey, err := EnsureKeypair(e.node.config.ConfigDir)
+	return pubKey, err
+}
+
 // Run starts endpoint mode and blocks until context cancellation.
 func (e *EndpointRunner) Run(ctx context.Context) error {
 	if ctx == nil {
@@ -39,7 +45,7 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
-	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e, e, e, nil); err != nil {
+	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e, e, e, nil, e); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	e.startTime = time.Now()

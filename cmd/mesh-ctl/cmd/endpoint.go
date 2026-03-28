@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -206,6 +207,19 @@ func newEndpointInitCommand() *cobra.Command {
 				}
 			}()
 
+			var balancerIP string
+			if epAddr, parseErr := netip.ParseAddr(ep.OverlayIP); parseErr == nil {
+				parsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))
+				for _, nr := range topo.Overlay.Ranges {
+					if r, rErr := topology.ParseRange(nr); rErr == nil {
+						parsedRanges = append(parsedRanges, r)
+					}
+				}
+				if bip := topology.BalancerIPForAddr(parsedRanges, epAddr); bip.IsValid() {
+					balancerIP = bip.String()
+				}
+			}
+
 			for _, master := range topo.Masters {
 				if !containsName(master.Endpoints, ep.Name) {
 					continue
@@ -238,7 +252,7 @@ func newEndpointInitCommand() *cobra.Command {
 					Name:          ep.Name,
 					EndpointHost:  ep.Host + ":" + strconv.Itoa(ep.ListenPort),
 					OverlayIp:     ep.OverlayIP,
-					BalancerIp:    "",
+					BalancerIp:    balancerIP,
 					PeerPublicKey: resp.NodePublicKey,
 					Weight:        1,
 					TransportSubnet:     allocation.Subnet.String(),
@@ -264,7 +278,7 @@ func newEndpointInitCommand() *cobra.Command {
 
 				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				peerResp, peerErr := selfClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
-					PublicKey:           resp.NodePublicKey,
+					PublicKey:           addResp.MasterPublicKey,
 					AllowedIps:          []string{allocation.Subnet.String()},
 					EndpointHost:        master.Host + ":" + strconv.Itoa(master.ListenPort),
 					PersistentKeepalive: 25,

@@ -35,11 +35,12 @@ type AgentHandler struct {
 	stateProvider    NodeStateProvider
 	captureFunc      CaptureFunc
 	captureScheduler CaptureScheduler
+	keyProvider      KeyProvider
 }
 
 // NewAgentHandler creates an AgentHandler that stores received config under configDir.
 func NewAgentHandler(configDir string, logger zerolog.Logger) *AgentHandler {
-	return NewAgentHandlerFull(configDir, logger, nil, nil, nil, nil, nil, nil)
+	return NewAgentHandlerFull(configDir, logger, nil, nil, nil, nil, nil, nil, nil)
 }
 
 // NewAgentHandlerFull creates an AgentHandler with optional runtime managers.
@@ -52,6 +53,7 @@ func NewAgentHandlerFull(
 	peerMgr PeerManager,
 	stateProvider NodeStateProvider,
 	captureScheduler CaptureScheduler,
+	keyProvider KeyProvider,
 ) *AgentHandler {
 	return &AgentHandler{
 		configDir:        configDir,
@@ -62,6 +64,7 @@ func NewAgentHandlerFull(
 		stateProvider:    stateProvider,
 		captureFunc:      captureFunc,
 		captureScheduler: captureScheduler,
+		keyProvider:      keyProvider,
 	}
 }
 
@@ -106,10 +109,21 @@ func (h *AgentHandler) Init(_ context.Context, req *proto.InitRequest) (*proto.I
 
 	h.logger.Info().Str("configDir", h.configDir).Msg("node initialized via Init RPC")
 
-	return &proto.InitResponse{
+	resp := &proto.InitResponse{
 		Success: true,
 		Message: fmt.Sprintf("initialized: config written to %s", h.configDir),
-	}, nil
+	}
+
+	if h.keyProvider != nil {
+		pubKey, err := h.keyProvider.GetPublicKey()
+		if err != nil {
+			h.logger.Warn().Err(err).Msg("init: failed to read public key")
+		} else {
+			resp.NodePublicKey = pubKey[:]
+		}
+	}
+
+	return resp, nil
 }
 
 // CaptureRefresh triggers TLS/QUIC packet capture on the node.
@@ -228,10 +242,21 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 		return nil, status.Errorf(codes.Internal, "add tunnel: %v", err)
 	}
 
-	return &proto.AddTunnelResponse{
+	resp := &proto.AddTunnelResponse{
 		Success:       true,
 		InterfaceName: "wg-" + tunnelName,
-	}, nil
+	}
+
+	if h.keyProvider != nil {
+		pubKey, err := h.keyProvider.GetPublicKey()
+		if err != nil {
+			h.logger.Warn().Err(err).Msg("add tunnel: failed to read master public key")
+		} else {
+			resp.MasterPublicKey = pubKey[:]
+		}
+	}
+
+	return resp, nil
 }
 
 // RemoveTunnel removes a tunnel from master mode nodes.

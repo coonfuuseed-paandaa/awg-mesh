@@ -25,6 +25,7 @@ func startGRPCServer(
 	peerMgr grpcserver.PeerManager,
 	stateProvider grpcserver.NodeStateProvider,
 	scheduler grpcserver.CaptureScheduler,
+	keyProvider grpcserver.KeyProvider,
 ) error {
 	if ctx == nil {
 		return fmt.Errorf("context is required")
@@ -45,6 +46,7 @@ func startGRPCServer(
 		peerMgr,
 		stateProvider,
 		scheduler,
+		keyProvider,
 	)
 	serverConfig := grpcserver.ServerConfig{
 		ListenAddr:    defaultGRPCListenAddr,

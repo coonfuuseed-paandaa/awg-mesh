@@ -88,6 +88,18 @@ func AllocateIP(ranges []Range, existing []netip.Addr) (netip.Addr, error) {
 	return netip.Addr{}, errors.New("no available IP addresses in provided ranges")
 }
 
+// BalancerIPForAddr returns the balancer IP of the range that contains addr.
+// Returns an invalid Addr if no range matches or the range has no balancer IP.
+func BalancerIPForAddr(ranges []Range, addr netip.Addr) netip.Addr {
+	normalized := normalizeAddr(addr)
+	for _, r := range ranges {
+		if r.Contains(normalized) {
+			return r.BalancerIP
+		}
+	}
+	return netip.Addr{}
+}
+
 // RangesOverlap reports whether two ranges overlap.
 func RangesOverlap(a, b Range) bool {
 	aPrefix := a.Network.Masked()

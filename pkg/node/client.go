@@ -6,6 +6,7 @@ import (
 	"time"
 
 	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
 // ClientRunner runs node logic for client mode.
@@ -18,6 +19,12 @@ type ClientRunner struct {
 // NewClientRunner creates a client mode runner.
 func NewClientRunner(node *Node) *ClientRunner {
 	return &ClientRunner{node: node}
+}
+
+// GetPublicKey returns the client's WireGuard public key.
+func (c *ClientRunner) GetPublicKey() (wg.Key, error) {
+	_, pubKey, err := EnsureKeypair(c.node.config.ConfigDir)
+	return pubKey, err
 }
 
 // Run starts client mode and blocks until context cancellation.
@@ -38,7 +45,7 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
-	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, c, c, nil); err != nil {
+	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, c, c, nil, c); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	c.startTime = time.Now()
