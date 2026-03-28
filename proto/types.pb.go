@@ -941,6 +941,7 @@ type AddPeerRequest struct {
 	TransportSubnet     string                 `protobuf:"bytes,7,opt,name=transport_subnet,json=transportSubnet,proto3" json:"transport_subnet,omitempty"`
 	LocalTransportIp    string                 `protobuf:"bytes,8,opt,name=local_transport_ip,json=localTransportIp,proto3" json:"local_transport_ip,omitempty"`
 	PeerTransportIp     string                 `protobuf:"bytes,9,opt,name=peer_transport_ip,json=peerTransportIp,proto3" json:"peer_transport_ip,omitempty"`
+	BalancerIp          string                 `protobuf:"bytes,10,opt,name=balancer_ip,json=balancerIp,proto3" json:"balancer_ip,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1034,6 +1035,13 @@ func (x *AddPeerRequest) GetLocalTransportIp() string {
 func (x *AddPeerRequest) GetPeerTransportIp() string {
 	if x != nil {
 		return x.PeerTransportIp
+	}
+	return ""
+}
+
+func (x *AddPeerRequest) GetBalancerIp() string {
+	if x != nil {
+		return x.BalancerIp
 	}
 	return ""
 }
@@ -2073,7 +2081,7 @@ const file_types_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"=\n" +
 	"\n" +
 	"TunnelList\x12/\n" +
-	"\atunnels\x18\x01 \x03(\v2\x15.awgmesh.TunnelStatusR\atunnels\"\xfe\x02\n" +
+	"\atunnels\x18\x01 \x03(\v2\x15.awgmesh.TunnelStatusR\atunnels\"\x9f\x03\n" +
 	"\x0eAddPeerRequest\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12#\n" +
@@ -2085,7 +2093,10 @@ const file_types_proto_rawDesc = "" +
 	"\x14persistent_keepalive\x18\x06 \x01(\x05R\x13persistentKeepalive\x12)\n" +
 	"\x10transport_subnet\x18\a \x01(\tR\x0ftransportSubnet\x12,\n" +
 	"\x12local_transport_ip\x18\b \x01(\tR\x10localTransportIp\x12*\n" +
-	"\x11peer_transport_ip\x18\t \x01(\tR\x0fpeerTransportIp\"+\n" +
+	"\x11peer_transport_ip\x18\t \x01(\tR\x0fpeerTransportIp\x12\x1f\n" +
+	"\vbalancer_ip\x18\n" +
+	" \x01(\tR\n" +
+	"balancerIp\"+\n" +
 	"\x0fAddPeerResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"2\n" +
 	"\x11RemovePeerRequest\x12\x1d\n" +
