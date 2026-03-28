@@ -1,6 +1,8 @@
 services:
   node-server:
     image: awg-mesh:test
+    privileged: true
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node \"$@\"", "--"]
     command:
       - "--mode"
       - "endpoint"
@@ -12,11 +14,6 @@ services:
       - "51820"
       - "--config-dir"
       - "/config"
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    devices:
-      - /dev/net/tun:/dev/net/tun
     volumes:
       - node-server-config:/config
     networks:
@@ -25,6 +22,8 @@ services:
 
   node-client:
     image: awg-mesh:test
+    privileged: true
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node \"$@\"", "--"]
     command:
       - "--mode"
       - "client"
@@ -34,11 +33,6 @@ services:
       - "172.20.70.3"
       - "--config-dir"
       - "/config"
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    devices:
-      - /dev/net/tun:/dev/net/tun
     volumes:
       - node-client-config:/config
     networks:
