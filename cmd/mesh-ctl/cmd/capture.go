@@ -83,7 +83,7 @@ func newCaptureRefreshCommand() *cobra.Command {
 
 				client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 					Target:     m.GRPCAddr(),
-					CACertPath: caPath(configDir),
+					Insecure: true,
 					Token:      token,
 				})
 				if err != nil {

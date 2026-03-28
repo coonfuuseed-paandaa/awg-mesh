@@ -90,7 +90,7 @@ func loadOrCreateAllocator(configDir string, topo *topology.Topology) (*transpor
 
 	alloc := transport.NewAllocator(parsedPrefix, topo.Transport.PrefixLength)
 	statePath := filepath.Join(cleanConfigDir, "transport.yml")
-	if err := alloc.LoadState(statePath); err != nil && !os.IsNotExist(err) {
+	if err := alloc.LoadState(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 

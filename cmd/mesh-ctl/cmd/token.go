@@ -55,7 +55,7 @@ func newTokenRotateCommand() *cobra.Command {
 
 			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 				Target:     host + ":9090",
-				CACertPath: caPath(configDir),
+				Insecure: true,
 				Token:      oldToken,
 			})
 			if err != nil {

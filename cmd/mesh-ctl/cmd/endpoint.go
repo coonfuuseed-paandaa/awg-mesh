@@ -194,8 +194,8 @@ func newEndpointInitCommand() *cobra.Command {
 
 			selfClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
 				Target:     ep.GRPCAddr(),
-				CACertPath: caPath(configDir),
-				Token:      token,
+				Token:    token,
+				Insecure: true,
 			})
 			if err != nil {
 				return fmt.Errorf("create self gRPC client: %w", err)
@@ -225,8 +225,8 @@ func newEndpointInitCommand() *cobra.Command {
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
 					Target:     master.GRPCAddr(),
-					CACertPath: caPath(configDir),
 					Token:      masterToken,
+					Insecure:   true,
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)
@@ -325,8 +325,8 @@ func newEndpointRemoveCommand() *cobra.Command {
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
 					Target:     master.GRPCAddr(),
-					CACertPath: caPath(configDir),
 					Token:      masterToken,
+					Insecure:   true,
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)

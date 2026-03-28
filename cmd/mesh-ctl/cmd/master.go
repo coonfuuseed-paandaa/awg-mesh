@@ -245,7 +245,7 @@ func newMasterInitCommand() *cobra.Command {
 
 				peerClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
 					Target:     ep.GRPCAddr(),
-					CACertPath: caPath(configDir),
+					Insecure: true,
 					Token:      epToken,
 				})
 				if err != nil {

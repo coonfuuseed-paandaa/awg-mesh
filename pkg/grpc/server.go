@@ -164,19 +164,23 @@ func (p *dynamicCertificateProvider) getServerCertificate(_ *tls.ClientHelloInfo
 	return fallbackCert, nil
 }
 
-func (p *dynamicCertificateProvider) getClientConfig(_ *tls.ClientHelloInfo) (*tls.Config, error) {
+func (p *dynamicCertificateProvider) getClientConfig(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+	// GetConfigForClient replaces the entire TLS config for this connection.
+	// We must include GetCertificate so the server cert is still available.
 	pool, err := pkgtls.LoadCACert(p.caPath)
 	if err != nil {
 		return &tls.Config{
-			ClientAuth: tls.NoClientCert,
-			MinVersion: tls.VersionTLS13,
+			GetCertificate: p.getServerCertificate,
+			ClientAuth:     tls.NoClientCert,
+			MinVersion:     tls.VersionTLS13,
 		}, nil
 	}
 
 	return &tls.Config{
-		ClientAuth: tls.VerifyClientCertIfGiven,
-		ClientCAs:  pool,
-		MinVersion: tls.VersionTLS13,
+		GetCertificate: p.getServerCertificate,
+		ClientAuth:     tls.VerifyClientCertIfGiven,
+		ClientCAs:      pool,
+		MinVersion:     tls.VersionTLS13,
 	}, nil
 }
 

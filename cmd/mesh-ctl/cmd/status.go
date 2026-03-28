@@ -71,7 +71,7 @@ func newStatusCommand() *cobra.Command {
 
 				client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 					Target:     n.grpcAddr,
-					CACertPath: caPath(configDir),
+					Insecure: true,
 					Token:      token,
 				})
 				if err != nil {
