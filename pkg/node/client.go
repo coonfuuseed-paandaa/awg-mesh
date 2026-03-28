@@ -67,6 +67,8 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 		Str("public_key", publicKey.String()).
 		Msg("client runner started")
 
+	c.startHealthCheck(ctx)
+
 	<-ctx.Done()
 
 	c.node.logger.Info().Msg("client runner stopping")

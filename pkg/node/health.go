@@ -37,11 +37,18 @@ func NewHealthChecker(cfg HealthConfig, logger zerolog.Logger) *HealthChecker {
 	}
 }
 
-// Run starts the healthcheck loop. It calls onDown when a tunnel fails consecutively
+// HealthTarget is a generic health check target — used by both master and client.
+type HealthTarget struct {
+	Name     string
+	PingAddr string
+	Healthy  bool
+}
+
+// Run starts the healthcheck loop. It calls onDown when a target fails consecutively
 // cfg.FailureThreshold times, and onUp when it recovers. Blocks until ctx is cancelled.
 func (h *HealthChecker) Run(
 	ctx context.Context,
-	tunnels func() []MasterTunnel,
+	targets func() []HealthTarget,
 	onDown func(name string),
 	onUp func(name string),
 ) {
@@ -54,22 +61,18 @@ func (h *HealthChecker) Run(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, t := range tunnels() {
-				pingTarget := t.EndpointTransportIP
-				if pingTarget == "" {
-					pingTarget = t.OverlayIP
-				}
-				if pingTarget == "" {
+			for _, t := range targets() {
+				if t.PingAddr == "" {
 					continue
 				}
 
-				alive := PingOverlay(pingTarget, h.cfg.Timeout)
+				alive := PingOverlay(t.PingAddr, h.cfg.Timeout)
 
 				if alive {
 					if failures[t.Name] > 0 {
 						h.logger.Info().
 							Str("tunnel", t.Name).
-							Str("ping_target", pingTarget).
+							Str("ping_target", t.PingAddr).
 							Msg("tunnel recovered")
 						onUp(t.Name)
 					}
@@ -78,14 +81,14 @@ func (h *HealthChecker) Run(
 					failures[t.Name]++
 					h.logger.Warn().
 						Str("tunnel", t.Name).
-						Str("ping_target", pingTarget).
+						Str("ping_target", t.PingAddr).
 						Int("consecutive_failures", failures[t.Name]).
 						Msg("tunnel ping failed")
 
 					if failures[t.Name] >= h.cfg.FailureThreshold && t.Healthy {
 						h.logger.Error().
 							Str("tunnel", t.Name).
-							Str("ping_target", pingTarget).
+							Str("ping_target", t.PingAddr).
 							Msg("tunnel marked down")
 						onDown(t.Name)
 					}

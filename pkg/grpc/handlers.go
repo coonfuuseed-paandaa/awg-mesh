@@ -371,6 +371,7 @@ type tunnelTransport struct {
 	PeerTransportIP string `yaml:"peer_transport_ip"`
 	PeerPublicKey   string `yaml:"peer_public_key"`
 	PeerEndpoint    string `yaml:"peer_endpoint"`
+	BalancerIP      string `yaml:"balancer_ip,omitempty"`
 }
 
 func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRequest) error {
@@ -391,6 +392,7 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 		PeerTransportIP: req.GetPeerTransportIp(),
 		PeerPublicKey:   peerPublicKey,
 		PeerEndpoint:    peerEndpoint,
+		BalancerIP:      strings.TrimSpace(req.GetBalancerIp()),
 	}
 
 	nextTunnels := append([]tunnelTransport(nil), state.Tunnels...)

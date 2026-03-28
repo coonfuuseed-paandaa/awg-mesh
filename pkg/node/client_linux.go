@@ -25,6 +25,8 @@ type transportLink struct {
 	pubkeyHex        string
 	localTransportIP string
 	peerTransportIP  string
+	balancerIP       string
+	healthy          bool
 }
 
 type clientPlatformState struct {
@@ -93,6 +95,7 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	newLink := &transportLink{
 		iface:     iface,
 		pubkeyHex: pubkeyHex,
+		healthy:   true,
 	}
 
 	c.platformState.mu.Lock()
@@ -289,6 +292,8 @@ func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) err
 		pubkeyHex:        link.pubkeyHex,
 		localTransportIP: trimmedLocalIP,
 		peerTransportIP:  trimmedPeerIP,
+		balancerIP:       link.balancerIP,
+		healthy:          link.healthy,
 	}
 
 	nextLinks := make([]*transportLink, 0, len(c.platformState.links))
@@ -308,15 +313,19 @@ func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) err
 
 	c.platformState.links = nextLinks
 	c.platformState.byKey = nextByKey
-	linksSnapshot := append([]*transportLink(nil), nextLinks...)
 	c.platformState.mu.Unlock()
 
 	if err := ensureInterfaceAddress(updatedLink.iface.Name(), trimmedLocalIP); err != nil {
 		return fmt.Errorf("assign transport IP %s/30 on %s: %w", trimmedLocalIP, updatedLink.iface.Name(), err)
 	}
 
-	if err := c.updateDefaultRoute(linksSnapshot); err != nil {
-		return err
+	if updatedLink.balancerIP != "" {
+		c.rebuildECMP(updatedLink.balancerIP)
+	} else {
+		linksSnapshot := append([]*transportLink(nil), nextLinks...)
+		if err := c.updateDefaultRoute(linksSnapshot); err != nil {
+			return err
+		}
 	}
 
 	peerLabel := trimmedPubkeyHex
@@ -370,6 +379,9 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 		}
 
 		pubkeyHex := hex.EncodeToString(peerPublicKey)
+		if balancerIP := strings.TrimSpace(tunnel.BalancerIP); balancerIP != "" {
+			c.SetBalancerIP(pubkeyHex, balancerIP)
+		}
 		if err := c.ConfigureTransport(pubkeyHex, strings.TrimSpace(tunnel.TransportIP), strings.TrimSpace(tunnel.PeerTransportIP)); err != nil {
 			c.node.logger.Warn().
 				Str("tunnel", tunnel.Name).
@@ -468,6 +480,112 @@ func buildClientNexthops(links []*transportLink) []routing.NextHop {
 		})
 	}
 	return nexthops
+}
+
+// startHealthCheck launches the healthcheck goroutine for client transport links.
+func (c *ClientRunner) startHealthCheck(ctx context.Context) {
+	hcCfg := HealthConfig{
+		Interval:         defaultHealthInterval,
+		Timeout:          defaultHealthTimeout,
+		FailureThreshold: defaultHealthFailureThreshold,
+	}
+	hcLogger := c.node.logger.With().Str("component", "healthcheck").Logger()
+	hc := NewHealthChecker(hcCfg, hcLogger)
+
+	go hc.Run(ctx, c.healthTargets,
+		func(name string) {
+			c.platformState.mu.Lock()
+			link := c.platformState.byKey[name]
+			if link != nil {
+				link.healthy = false
+			}
+			c.platformState.mu.Unlock()
+			if link != nil && link.balancerIP != "" {
+				c.rebuildECMP(link.balancerIP)
+			}
+		},
+		func(name string) {
+			c.platformState.mu.Lock()
+			link := c.platformState.byKey[name]
+			if link != nil {
+				link.healthy = true
+			}
+			c.platformState.mu.Unlock()
+			if link != nil && link.balancerIP != "" {
+				c.rebuildECMP(link.balancerIP)
+			}
+		},
+	)
+}
+
+// rebuildECMP builds a multipath route to balancerIP/32 using all healthy
+// transport links that share the same balancer IP. Mirrors master's rebuildECMP.
+func (c *ClientRunner) rebuildECMP(balancerIP string) {
+	if balancerIP == "" {
+		return
+	}
+
+	cidr := balancerIP + "/32"
+	c.platformState.mu.Lock()
+	nexthops := make([]routing.NextHop, 0, len(c.platformState.links))
+	for _, link := range c.platformState.links {
+		if link.balancerIP == balancerIP && link.healthy && strings.TrimSpace(link.peerTransportIP) != "" {
+			nexthops = append(nexthops, routing.NextHop{
+				Via:    link.peerTransportIP,
+				Dev:    link.iface.Name(),
+				Weight: 1,
+			})
+		}
+	}
+	c.platformState.mu.Unlock()
+
+	if len(nexthops) == 0 {
+		if err := routing.RemoveECMPRoute(cidr); err != nil {
+			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to remove client ECMP route")
+			return
+		}
+		c.node.logger.Info().Str("balancer_ip", balancerIP).Msg("client ECMP route removed")
+		return
+	}
+
+	if err := routing.SetECMPRoute(cidr, nexthops); err != nil {
+		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to set client ECMP route")
+		return
+	}
+
+	routing.EnableStickyECMP(cidr)
+	routing.EnableL4Hash()
+
+	c.node.logger.Info().Str("balancer_ip", balancerIP).Int("nexthops", len(nexthops)).Msg("client ECMP route updated")
+}
+
+// SetBalancerIP sets the balancer IP for a specific peer link.
+func (c *ClientRunner) SetBalancerIP(pubkeyHex, balancerIP string) {
+	c.platformState.mu.Lock()
+	link, exists := c.platformState.byKey[strings.TrimSpace(pubkeyHex)]
+	if exists && link != nil {
+		link.balancerIP = strings.TrimSpace(balancerIP)
+	}
+	c.platformState.mu.Unlock()
+}
+
+// healthTargets returns health check targets from all transport links.
+func (c *ClientRunner) healthTargets() []HealthTarget {
+	c.platformState.mu.Lock()
+	defer c.platformState.mu.Unlock()
+
+	targets := make([]HealthTarget, 0, len(c.platformState.links))
+	for _, link := range c.platformState.links {
+		if link == nil || link.peerTransportIP == "" {
+			continue
+		}
+		targets = append(targets, HealthTarget{
+			Name:     link.pubkeyHex,
+			PingAddr: link.peerTransportIP,
+			Healthy:  link.healthy,
+		})
+	}
+	return targets
 }
 
 func extractPeerEndpoint(endpointHost string) string {
