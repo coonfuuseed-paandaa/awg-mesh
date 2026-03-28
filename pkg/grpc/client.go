@@ -18,6 +18,7 @@ type ClientConfig struct {
 	CACertPath string
 	CertPath   string // directory containing node.crt + node.key; enables mTLS when non-empty
 	Token      string // bearer token; used when CertPath is empty
+	Insecure   bool   // skip TLS cert verification (for pre-Init bootstrap)
 }
 
 // Client wraps a gRPC client connection and the typed AwgAgent client.
@@ -29,18 +30,31 @@ type Client struct {
 // NewClient creates a gRPC client using mTLS (if CertPath is set) or bearer
 // token (if Token is set). One of the two must be provided.
 func NewClient(cfg ClientConfig) (*Client, error) {
-	pool, err := pkgtls.LoadCACert(cfg.CACertPath)
-	if err != nil {
-		return nil, fmt.Errorf("grpc client: load CA cert: %w", err)
-	}
+	pool, caErr := pkgtls.LoadCACert(cfg.CACertPath)
 
 	var conn *grpc.ClientConn
+	var err error
 
 	switch {
-	case cfg.CertPath != "":
-		cert, err := pkgtls.LoadCertKey(cfg.CertPath)
+	case cfg.Insecure && cfg.Token != "":
+		// Pre-Init bootstrap: skip TLS verification, use token auth only.
+		tlsCfg := &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // pre-Init bootstrap, token authenticates
+			MinVersion:         tls.VersionTLS13,
+		}
+		conn, err = grpc.NewClient(
+			cfg.Target,
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+			grpc.WithPerRPCCredentials(&tokenCredentials{token: cfg.Token, insecure: true}),
+		)
 		if err != nil {
-			return nil, fmt.Errorf("grpc client: load cert/key: %w", err)
+			return nil, fmt.Errorf("grpc client: dial (insecure+token) %s: %w", cfg.Target, err)
+		}
+
+	case cfg.CertPath != "" && caErr == nil:
+		cert, certErr := pkgtls.LoadCertKey(cfg.CertPath)
+		if certErr != nil {
+			return nil, fmt.Errorf("grpc client: load cert/key: %w", certErr)
 		}
 		tlsCfg := &tls.Config{
 			RootCAs:      pool,
@@ -52,7 +66,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 			return nil, fmt.Errorf("grpc client: dial (mTLS) %s: %w", cfg.Target, err)
 		}
 
-	case cfg.Token != "":
+	case cfg.Token != "" && caErr == nil:
 		tlsCfg := &tls.Config{
 			RootCAs:    pool,
 			MinVersion: tls.VersionTLS13,
@@ -64,6 +78,22 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		)
 		if err != nil {
 			return nil, fmt.Errorf("grpc client: dial (token) %s: %w", cfg.Target, err)
+		}
+
+	case cfg.Token != "":
+		// Pre-Init: CA cert not available yet. Connect with TLS but skip server cert verification.
+		// Server has ephemeral self-signed cert. Token provides authentication.
+		tlsCfg := &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // pre-Init bootstrap, token authenticates
+			MinVersion:         tls.VersionTLS13,
+		}
+		conn, err = grpc.NewClient(
+			cfg.Target,
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+			grpc.WithPerRPCCredentials(&tokenCredentials{token: cfg.Token, insecure: true}),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("grpc client: dial (token, insecure) %s: %w", cfg.Target, err)
 		}
 
 	default:
@@ -88,7 +118,8 @@ func (c *Client) Close() error {
 
 // tokenCredentials implements credentials.PerRPCCredentials for bearer token auth.
 type tokenCredentials struct {
-	token string
+	token    string
+	insecure bool // true during pre-Init bootstrap (InsecureSkipVerify)
 }
 
 func (tc *tokenCredentials) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
@@ -98,5 +129,5 @@ func (tc *tokenCredentials) GetRequestMetadata(_ context.Context, _ ...string) (
 }
 
 func (tc *tokenCredentials) RequireTransportSecurity() bool {
-	return true
+	return !tc.insecure
 }

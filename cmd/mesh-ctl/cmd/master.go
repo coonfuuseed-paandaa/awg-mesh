@@ -151,8 +151,8 @@ func newMasterInitCommand() *cobra.Command {
 
 			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 				Target:     master.GRPCAddr(),
-				CACertPath: caPath(configDir),
-				Token:      token,
+				Token:    token,
+				Insecure: true, // pre-Init bootstrap
 			})
 			if err != nil {
 				return fmt.Errorf("create gRPC client: %w", err)
@@ -320,8 +320,8 @@ func newMasterRemoveCommand() *cobra.Command {
 
 			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 				Target:     master.GRPCAddr(),
-				CACertPath: caPath(configDir),
-				Token:      token,
+				Token:    token,
+				Insecure: true, // pre-Init bootstrap
 			})
 			if err != nil {
 				return fmt.Errorf("create gRPC client: %w", err)

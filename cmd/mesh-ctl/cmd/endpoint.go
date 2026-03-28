@@ -148,9 +148,9 @@ func newEndpointInitCommand() *cobra.Command {
 			}
 
 			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-				Target:     ep.GRPCAddr(),
-				CACertPath: caPath(configDir),
-				Token:      token,
+				Target:   ep.GRPCAddr(),
+				Token:    token,
+				Insecure: true, // pre-Init: server has no CA-signed cert yet
 			})
 			if err != nil {
 				return fmt.Errorf("create gRPC client: %w", err)
