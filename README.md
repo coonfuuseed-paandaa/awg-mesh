@@ -653,6 +653,8 @@ All modes run from the same binary: `awg-mesh-node`. The mode is selected with `
 ```
 --mode          string   Node operating mode: master|endpoint|client (required)
 --name          string   Node name matching topology entry (required)
+--overlay-ip    string   Overlay IP address for this node (e.g., 172.20.70.2)
+--listen-port   int      AWG/WireGuard UDP listen port (default: 51820)
 --config-dir    string   Directory for keys, certs, and runtime state (default: /config)
 --topology      string   Path to mesh-topology.yml (no default — pass explicitly or omit to receive config via gRPC Init)
 --log-level     string   Logging verbosity: debug|info|warn|error (default: info)

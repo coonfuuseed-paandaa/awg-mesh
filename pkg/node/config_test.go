@@ -317,3 +317,60 @@ func mustPublicKeyString(t *testing.T) string {
 	}
 	return privateKey.PublicKey().String()
 }
+
+func TestGetPublicKeyMaster(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	_, expectedPub, err := EnsureKeypair(dir)
+	if err != nil {
+		t.Fatalf("EnsureKeypair: %v", err)
+	}
+
+	runner := &MasterRunner{node: &Node{config: NodeConfig{ConfigDir: dir}}}
+	gotPub, err := runner.GetPublicKey()
+	if err != nil {
+		t.Fatalf("GetPublicKey: %v", err)
+	}
+	if gotPub != expectedPub {
+		t.Fatalf("key mismatch: got %s, want %s", gotPub, expectedPub)
+	}
+}
+
+func TestGetPublicKeyEndpoint(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	_, expectedPub, err := EnsureKeypair(dir)
+	if err != nil {
+		t.Fatalf("EnsureKeypair: %v", err)
+	}
+
+	runner := &EndpointRunner{node: &Node{config: NodeConfig{ConfigDir: dir}}}
+	gotPub, err := runner.GetPublicKey()
+	if err != nil {
+		t.Fatalf("GetPublicKey: %v", err)
+	}
+	if gotPub != expectedPub {
+		t.Fatalf("key mismatch: got %s, want %s", gotPub, expectedPub)
+	}
+}
+
+func TestGetPublicKeyClient(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	_, expectedPub, err := EnsureKeypair(dir)
+	if err != nil {
+		t.Fatalf("EnsureKeypair: %v", err)
+	}
+
+	runner := &ClientRunner{node: &Node{config: NodeConfig{ConfigDir: dir}}}
+	gotPub, err := runner.GetPublicKey()
+	if err != nil {
+		t.Fatalf("GetPublicKey: %v", err)
+	}
+	if gotPub != expectedPub {
+		t.Fatalf("key mismatch: got %s, want %s", gotPub, expectedPub)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -179,6 +180,15 @@ func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP
 	return m.configureErr
 }
 
+type testKeyProvider struct {
+	key wg.Key
+	err error
+}
+
+func (m *testKeyProvider) GetPublicKey() (wg.Key, error) {
+	return m.key, m.err
+}
+
 type testNodeStateProvider struct {
 	state NodeState
 }
@@ -315,6 +325,77 @@ func TestInitWritesInitArtifacts(t *testing.T) {
 	assertFileContents(t, filepath.Join(configDir, "tls", "node.crt"), "node-cert")
 	assertFileContents(t, filepath.Join(configDir, "tls", "node.key"), "node-key")
 	assertFileContents(t, filepath.Join(configDir, "node-config.json"), "{}")
+}
+
+func TestInitReturnsPublicKeyFromKeyProvider(t *testing.T) {
+	t.Parallel()
+
+	key, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubKey := key.PublicKey()
+
+	kp := &testKeyProvider{key: pubKey}
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, nil, nil, kp)
+	resp, initErr := handler.Init(context.Background(), &proto.InitRequest{
+		CaCert:   []byte("ca"),
+		NodeCert: []byte("cert"),
+		NodeKey:  []byte("key"),
+	})
+	if initErr != nil {
+		t.Fatalf("Init returned error: %v", initErr)
+	}
+	if !resp.GetSuccess() {
+		t.Fatal("expected successful Init")
+	}
+	if len(resp.GetNodePublicKey()) != 32 {
+		t.Fatalf("expected 32-byte public key, got %d bytes", len(resp.GetNodePublicKey()))
+	}
+	var gotKey wg.Key
+	copy(gotKey[:], resp.GetNodePublicKey())
+	if gotKey != pubKey {
+		t.Fatalf("public key mismatch: got %s, want %s", gotKey, pubKey)
+	}
+}
+
+func TestAddTunnelReturnsMasterPublicKey(t *testing.T) {
+	t.Parallel()
+
+	key, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubKey := key.PublicKey()
+
+	mgr := &testTunnelManager{}
+	kp := &testKeyProvider{key: pubKey}
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), mgr, nil, nil, nil, nil, nil, kp)
+
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = 0xAA
+	}
+
+	resp, addErr := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
+		Name:          "test-tunnel",
+		PeerPublicKey: peerKey,
+		Weight:        1,
+	})
+	if addErr != nil {
+		t.Fatalf("AddTunnel returned error: %v", addErr)
+	}
+	if !resp.GetSuccess() {
+		t.Fatal("expected successful AddTunnel")
+	}
+	if len(resp.GetMasterPublicKey()) != 32 {
+		t.Fatalf("expected 32-byte master public key, got %d bytes", len(resp.GetMasterPublicKey()))
+	}
+	var gotKey wg.Key
+	copy(gotKey[:], resp.GetMasterPublicKey())
+	if gotKey != pubKey {
+		t.Fatalf("master public key mismatch: got %s, want %s", gotKey, pubKey)
+	}
 }
 
 func TestRotateParamsMapsProtoValuesToConfig(t *testing.T) {
@@ -1106,6 +1187,18 @@ func TestGetParams(t *testing.T) {
 			tt.verifyParams(t, resp)
 		})
 	}
+}
+
+func TestGetRoutesNonLinux(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "linux" {
+		t.Skip("this test validates non-Linux behavior")
+	}
+
+	handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
+	_, err := handler.GetRoutes(context.Background(), &proto.Empty{})
+	assertCode(t, err, codes.Unimplemented)
 }
 
 func assertFileContents(t *testing.T, path string, expected string) {

@@ -154,6 +154,40 @@ func TestRangesOverlap(t *testing.T) {
 	}
 }
 
+func TestBalancerIPForAddr(t *testing.T) {
+	t.Parallel()
+
+	ranges := []Range{
+		mustRange(t, NamedRange{Name: "masters", CIDR: "172.20.70.0/27", BalancerIP: "172.20.70.1"}),
+		mustRange(t, NamedRange{Name: "endpoints", CIDR: "172.20.70.32/27", BalancerIP: "172.20.70.33"}),
+		mustRange(t, NamedRange{Name: "clients", CIDR: "172.20.70.128/25"}),
+	}
+
+	// Endpoint IP should match endpoints range
+	bip := BalancerIPForAddr(ranges, netip.MustParseAddr("172.20.70.34"))
+	if !bip.IsValid() || bip.String() != "172.20.70.33" {
+		t.Fatalf("expected 172.20.70.33 for endpoint IP, got %s", bip)
+	}
+
+	// Master IP should match masters range
+	bip = BalancerIPForAddr(ranges, netip.MustParseAddr("172.20.70.2"))
+	if !bip.IsValid() || bip.String() != "172.20.70.1" {
+		t.Fatalf("expected 172.20.70.1 for master IP, got %s", bip)
+	}
+
+	// Client IP in range without balancer
+	bip = BalancerIPForAddr(ranges, netip.MustParseAddr("172.20.70.130"))
+	if bip.IsValid() {
+		t.Fatalf("expected invalid balancer for client range, got %s", bip)
+	}
+
+	// IP outside all ranges
+	bip = BalancerIPForAddr(ranges, netip.MustParseAddr("10.0.0.1"))
+	if bip.IsValid() {
+		t.Fatalf("expected invalid balancer for unknown IP, got %s", bip)
+	}
+}
+
 func mustRange(t *testing.T, input NamedRange) Range {
 	t.Helper()
 
