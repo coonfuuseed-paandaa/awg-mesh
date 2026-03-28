@@ -49,6 +49,11 @@ func (e *EndpointRunner) createInterface() error {
 		return fmt.Errorf("configure interface %q: %w", endpointInterfaceName, err)
 	}
 
+	if err := setInterfaceUp(endpointInterfaceName); err != nil {
+		_ = iface.Close()
+		return fmt.Errorf("bring up interface %q: %w", endpointInterfaceName, err)
+	}
+
 	e.platformState.iface = iface
 	e.node.logger.Info().
 		Str("interface", iface.Name()).

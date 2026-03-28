@@ -74,6 +74,11 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 		return fmt.Errorf("configure interface %q: %w", tunnel.InterfaceName, err)
 	}
 
+	if err := setInterfaceUp(tunnel.InterfaceName); err != nil {
+		_ = iface.Close()
+		return fmt.Errorf("bring up interface %q: %w", tunnel.InterfaceName, err)
+	}
+
 	if masterTransportIP != "" {
 		if err := addInterfaceAddress(tunnel.InterfaceName, masterTransportIP); err != nil {
 			_ = iface.Close()
@@ -156,6 +161,14 @@ func (m *MasterRunner) restoreOverlayRoute(overlayIP, endpointTransportIP, inter
 	if err := routing.ReplaceRoute(cidr, endpointTransportIP, interfaceName); err != nil {
 		m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to restore overlay route")
 	}
+}
+
+func setInterfaceUp(interfaceName string) error {
+	out, err := exec.Command("ip", "link", "set", interfaceName, "up").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip link set %s up: %w: %s", interfaceName, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func addInterfaceAddress(interfaceName, address string) error {
