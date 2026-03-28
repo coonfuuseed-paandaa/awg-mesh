@@ -124,7 +124,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	hcLogger := m.node.logger.With().Str("component", "healthcheck").Logger()
 	hc := NewHealthChecker(hcCfg, hcLogger)
 
-	go hc.Run(ctx, m.listMasterTunnels,
+	go hc.Run(ctx, m.healthTargets,
 		func(name string) {
 			m.mu.Lock()
 			t, ok := m.tunnels[name]
@@ -268,6 +268,23 @@ func (m *MasterRunner) listMasterTunnels() []MasterTunnel {
 		result = append(result, *t)
 	}
 	return result
+}
+
+func (m *MasterRunner) healthTargets() []HealthTarget {
+	tunnels := m.listMasterTunnels()
+	targets := make([]HealthTarget, 0, len(tunnels))
+	for _, t := range tunnels {
+		pingAddr := t.EndpointTransportIP
+		if pingAddr == "" {
+			pingAddr = t.OverlayIP
+		}
+		targets = append(targets, HealthTarget{
+			Name:     t.Name,
+			PingAddr: pingAddr,
+			Healthy:  t.Healthy,
+		})
+	}
+	return targets
 }
 
 func (m *MasterRunner) ListTunnels() []grpcserver.TunnelInfo {

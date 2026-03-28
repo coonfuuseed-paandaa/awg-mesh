@@ -52,3 +52,15 @@ func ClampMSS(iface string, mss int) error { return errNotSupported }
 
 // RemoveMSSClamp is not supported on non-Linux platforms.
 func RemoveMSSClamp(iface string, mss int) error { return errNotSupported }
+
+// ClampMSSToPMTU is not supported on non-Linux platforms.
+func ClampMSSToPMTU() error { return errNotSupported }
+
+// EnableStickyECMP is not supported on non-Linux platforms.
+func EnableStickyECMP(balancerCIDR string) error { return errNotSupported }
+
+// DisableStickyECMP is not supported on non-Linux platforms.
+func DisableStickyECMP(balancerCIDR string) error { return errNotSupported }
+
+// EnableL4Hash is not supported on non-Linux platforms.
+func EnableL4Hash() error { return errNotSupported }

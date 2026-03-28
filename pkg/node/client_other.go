@@ -52,3 +52,9 @@ func (c *ClientRunner) ConfigureTransport(_ string, _ string, _ string) error {
 func (c *ClientRunner) reconcileFromTransportState() error {
 	return nil
 }
+
+func (c *ClientRunner) startHealthCheck(_ context.Context) {}
+
+func (c *ClientRunner) rebuildECMP(_ string) error { return nil }
+
+func (c *ClientRunner) SetBalancerIP(_, _ string) {}

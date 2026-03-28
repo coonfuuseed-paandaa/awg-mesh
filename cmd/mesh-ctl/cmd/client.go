@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -297,11 +297,29 @@ func newClientInitCommand() *cobra.Command {
 				return fmt.Errorf("load transport allocator: %w", err)
 			}
 
+			parsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))
+			for _, nr := range topo.Overlay.Ranges {
+				if r, rErr := topology.ParseRange(nr); rErr == nil {
+					parsedRanges = append(parsedRanges, r)
+				} else {
+					fmt.Fprintf(os.Stderr, "warning: failed to parse topology range %q: %v\n", nr, rErr)
+				}
+			}
+
 			for _, masterName := range client.Masters {
 				master := topo.FindMaster(masterName)
 				if master == nil {
 					fmt.Fprintf(os.Stderr, "warning: master %q not found in topology, skipping\n", masterName)
 					continue
+				}
+
+				var masterBalancerIP string
+				if masterAddr, parseErr := netip.ParseAddr(master.OverlayIP); parseErr == nil {
+					if bip := topology.BalancerIPForAddr(parsedRanges, masterAddr); bip.IsValid() {
+						masterBalancerIP = bip.String()
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "warning: failed to parse master overlay IP %q for master %q: %v\n", master.OverlayIP, master.Name, parseErr)
 				}
 
 				allocation, err := alloc.Allocate(master.Name, client.Name)
@@ -377,11 +395,12 @@ func newClientInitCommand() *cobra.Command {
 				peerResp, peerErr := clientPeerClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
 					PublicKey:           masterPubkey,
 					AllowedIps:          []string{"0.0.0.0/0"},
-					EndpointHost:        master.Name + "|" + master.Host + ":" + strconv.Itoa(master.ListenPort),
+					EndpointHost:        master.Name + "|" + master.PeerAddr(),
 					PersistentKeepalive: 25,
 					TransportSubnet:     allocation.Subnet.String(),
 					LocalTransportIp:    allocation.EndpointIP.String(),
 					PeerTransportIp:     allocation.MasterIP.String(),
+					BalancerIp:          masterBalancerIP,
 				})
 				peerCancel()
 				if closeErr := clientPeerClient.Close(); closeErr != nil {

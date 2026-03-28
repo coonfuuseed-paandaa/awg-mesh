@@ -21,6 +21,7 @@ type TunnelTransport struct {
 	PeerTransportIP string `yaml:"peer_transport_ip"`
 	PeerPublicKey   string `yaml:"peer_public_key"`
 	PeerEndpoint    string `yaml:"peer_endpoint"`
+	BalancerIP      string `yaml:"balancer_ip,omitempty"`
 }
 
 func saveNodeTransportState(configDir string, state NodeTransportState) error {
