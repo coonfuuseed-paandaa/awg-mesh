@@ -1,0 +1,97 @@
+# AWG Mesh Simulation Topology
+# Uses localhost with mapped ports for mesh-ctl access from Windows host
+# gRPC ports: ru-01=19090, ru-02=29090, kz-01=39090, kz-02=49090, kz-03=59090, pl-01=69090, us-01=79090
+# AWG ports: mapped to 1x820 range
+
+overlay:
+  space: 172.20.70.0/24
+  physical_mtu: 1500
+  awg_overhead: 80
+  ranges:
+    - name: masters
+      cidr: 172.20.70.0/27
+      balancer_ip: 172.20.70.1
+    - name: endpoints
+      cidr: 172.20.70.32/27
+      balancer_ip: 172.20.70.33
+    - name: clients
+      cidr: 172.20.70.128/25
+
+masters:
+  - name: ru-01
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.2
+    listen_port: 11820
+    grpc_port: 19090
+    endpoints:
+      - kz-01
+      - kz-02
+      - kz-03
+      - us-01
+      - pl-01
+
+  - name: ru-02
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.3
+    listen_port: 21820
+    grpc_port: 29090
+    endpoints:
+      - kz-01
+      - kz-02
+      - kz-03
+      - us-01
+      - pl-01
+
+endpoints:
+  - name: kz-01
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.34
+    listen_port: 31820
+    grpc_port: 39090
+    region: kz
+
+  - name: kz-02
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.35
+    listen_port: 41820
+    grpc_port: 49090
+    region: kz
+
+  - name: kz-03
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.36
+    listen_port: 51821
+    grpc_port: 59090
+    region: kz
+
+  - name: pl-01
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.37
+    listen_port: 16820
+    grpc_port: 16090
+    region: pl
+
+  - name: us-01
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.38
+    listen_port: 17820
+    grpc_port: 17090
+    region: us
+
+clients: []
+
+capture:
+  domains_file: domains.txt
+  schedule: "24h"
+  retention_days: 30
+
+rotation:
+  defaults:
+    tier1_interval: 24h
+    tier2_interval: 168h
+    tier3_interval: 720h
+    preset: aggressive
+
+transport:
+  pool: 10.255.0.0/16
+  prefix_length: 30

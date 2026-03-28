@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -41,7 +42,17 @@ type MasterNode struct {
 	Host       string   `yaml:"host"`
 	OverlayIP  string   `yaml:"overlay_ip"`
 	ListenPort int      `yaml:"listen_port"`
+	GRPCPort   int      `yaml:"grpc_port,omitempty"`
 	Endpoints  []string `yaml:"endpoints"`
+}
+
+// GRPCAddr returns host:grpc_port for this node (default 9090).
+func (m MasterNode) GRPCAddr() string {
+	port := m.GRPCPort
+	if port == 0 {
+		port = 9090
+	}
+	return m.Host + ":" + strconv.Itoa(port)
 }
 
 // EndpointNode describes an endpoint node.
@@ -50,7 +61,17 @@ type EndpointNode struct {
 	Host       string `yaml:"host"`
 	OverlayIP  string `yaml:"overlay_ip"`
 	ListenPort int    `yaml:"listen_port"`
+	GRPCPort   int    `yaml:"grpc_port,omitempty"`
 	Region     string `yaml:"region"`
+}
+
+// GRPCAddr returns host:grpc_port for this node (default 9090).
+func (e EndpointNode) GRPCAddr() string {
+	port := e.GRPCPort
+	if port == 0 {
+		port = 9090
+	}
+	return e.Host + ":" + strconv.Itoa(port)
 }
 
 // ClientNode describes a client node.

@@ -198,6 +198,17 @@ func resolveClientTarget(topo *topology.Topology, client *topology.ClientNode) (
 	return master.Host, nil
 }
 
+func resolveClientGRPCAddr(topo *topology.Topology, client *topology.ClientNode) string {
+	if len(client.Masters) == 0 {
+		return "localhost:9090"
+	}
+	master := topo.FindMaster(client.Masters[0])
+	if master == nil {
+		return client.Masters[0] + ":9090"
+	}
+	return master.GRPCAddr()
+}
+
 func newClientInitCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init [name]",
@@ -242,7 +253,7 @@ func newClientInitCommand() *cobra.Command {
 			}
 
 			clientGRPC, err := grpcclient.NewClient(grpcclient.ClientConfig{
-				Target:     targetHost + ":9090",
+				Target:     resolveClientGRPCAddr(topo, client),
 				CACertPath: caPath(configDir),
 				Token:      token,
 			})
@@ -317,7 +328,7 @@ func newClientInitCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.Host + ":9090",
+					Target:     master.GRPCAddr(),
 					CACertPath: caPath(configDir),
 					Token:      masterToken,
 				})
@@ -353,7 +364,7 @@ func newClientInitCommand() *cobra.Command {
 				}
 
 				clientPeerClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     targetHost + ":9090",
+					Target:     resolveClientGRPCAddr(topo, client),
 					CACertPath: caPath(configDir),
 					Token:      token,
 				})
@@ -430,7 +441,7 @@ func newClientRemoveCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.Host + ":9090",
+					Target:     master.GRPCAddr(),
 					CACertPath: caPath(configDir),
 					Token:      masterToken,
 				})

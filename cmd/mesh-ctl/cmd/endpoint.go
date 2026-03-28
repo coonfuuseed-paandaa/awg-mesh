@@ -148,7 +148,7 @@ func newEndpointInitCommand() *cobra.Command {
 			}
 
 			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-				Target:     ep.Host + ":9090",
+				Target:     ep.GRPCAddr(),
 				CACertPath: caPath(configDir),
 				Token:      token,
 			})
@@ -193,7 +193,7 @@ func newEndpointInitCommand() *cobra.Command {
 			}
 
 			selfClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-				Target:     ep.Host + ":9090",
+				Target:     ep.GRPCAddr(),
 				CACertPath: caPath(configDir),
 				Token:      token,
 			})
@@ -224,7 +224,7 @@ func newEndpointInitCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.Host + ":9090",
+					Target:     master.GRPCAddr(),
 					CACertPath: caPath(configDir),
 					Token:      masterToken,
 				})
@@ -324,7 +324,7 @@ func newEndpointRemoveCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.Host + ":9090",
+					Target:     master.GRPCAddr(),
 					CACertPath: caPath(configDir),
 					Token:      masterToken,
 				})

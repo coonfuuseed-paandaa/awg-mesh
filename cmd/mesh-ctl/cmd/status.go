@@ -33,17 +33,18 @@ func newStatusCommand() *cobra.Command {
 			}
 
 			type nodeInfo struct {
-				name string
-				host string
-				mode string
+				name     string
+				host     string
+				grpcAddr string
+				mode     string
 			}
 
 			var nodes []nodeInfo
 			for _, m := range topo.Masters {
-				nodes = append(nodes, nodeInfo{name: m.Name, host: m.Host, mode: "master"})
+				nodes = append(nodes, nodeInfo{name: m.Name, host: m.Host, grpcAddr: m.GRPCAddr(), mode: "master"})
 			}
 			for _, e := range topo.Endpoints {
-				nodes = append(nodes, nodeInfo{name: e.Name, host: e.Host, mode: "endpoint"})
+				nodes = append(nodes, nodeInfo{name: e.Name, host: e.Host, grpcAddr: e.GRPCAddr(), mode: "endpoint"})
 			}
 
 			transportStatePath := filepath.Join(configDir, "transport.yml")
@@ -69,7 +70,7 @@ func newStatusCommand() *cobra.Command {
 				}
 
 				client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     n.host + ":9090",
+					Target:     n.grpcAddr,
 					CACertPath: caPath(configDir),
 					Token:      token,
 				})
