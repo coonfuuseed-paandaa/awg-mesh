@@ -174,7 +174,7 @@ func addInterfaceAddress(interfaceName, address string) error {
 
 func buildPeerAllowedIPs(transportSubnet, overlayIP string) ([]net.IPNet, error) {
 	peerAllowed := make([]net.IPNet, 0, 2)
-	transport, err := net.ParseCIDR(strings.TrimSpace(transportSubnet))
+	_, transport, err := net.ParseCIDR(strings.TrimSpace(transportSubnet))
 	if err != nil {
 		return nil, fmt.Errorf("parse transport subnet %q: %w", transportSubnet, err)
 	}
