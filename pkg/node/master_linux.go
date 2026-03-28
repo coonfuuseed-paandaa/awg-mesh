@@ -54,6 +54,14 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 		peerCfg := wg.PeerConfig{
 			PublicKey: tunnel.PeerPublicKey,
 		}
+		if endpointHost != "" {
+			addr, err := net.ResolveUDPAddr("udp", endpointHost)
+			if err != nil {
+				m.node.logger.Warn().Err(err).Str("endpoint_host", endpointHost).Msg("failed to resolve endpoint address")
+			} else {
+				peerCfg.Endpoint = addr
+			}
+		}
 		if transportSubnet != "" && endpointTransportIP != "" {
 			allowedIPs, err := buildPeerAllowedIPs(transportSubnet, tunnel.OverlayIP)
 			if err != nil {
