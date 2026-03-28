@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"embed"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -33,7 +34,7 @@ func ensureCA(configDir string) (*x509.Certificate, crypto.PrivateKey, error) {
 	if err == nil {
 		return caCert, caKey, nil
 	}
-	if !os.IsNotExist(err) {
+	if !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, err
 	}
 
