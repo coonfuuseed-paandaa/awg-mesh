@@ -320,7 +320,9 @@ func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) err
 	}
 
 	if updatedLink.balancerIP != "" {
-		c.rebuildECMP(updatedLink.balancerIP)
+		if err := c.rebuildECMP(updatedLink.balancerIP); err != nil {
+			return err
+		}
 	} else {
 		linksSnapshot := append([]*transportLink(nil), nextLinks...)
 		if err := c.updateDefaultRoute(linksSnapshot); err != nil {
@@ -494,25 +496,29 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 
 	go hc.Run(ctx, c.healthTargets,
 		func(name string) {
+			var balancerIP string
 			c.platformState.mu.Lock()
 			link := c.platformState.byKey[name]
 			if link != nil {
 				link.healthy = false
+				balancerIP = link.balancerIP
 			}
 			c.platformState.mu.Unlock()
-			if link != nil && link.balancerIP != "" {
-				c.rebuildECMP(link.balancerIP)
+			if balancerIP != "" {
+				c.rebuildECMP(balancerIP) //nolint:errcheck // health callback: logged inside rebuildECMP
 			}
 		},
 		func(name string) {
+			var balancerIP string
 			c.platformState.mu.Lock()
 			link := c.platformState.byKey[name]
 			if link != nil {
 				link.healthy = true
+				balancerIP = link.balancerIP
 			}
 			c.platformState.mu.Unlock()
-			if link != nil && link.balancerIP != "" {
-				c.rebuildECMP(link.balancerIP)
+			if balancerIP != "" {
+				c.rebuildECMP(balancerIP) //nolint:errcheck // health callback: logged inside rebuildECMP
 			}
 		},
 	)
@@ -520,9 +526,10 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 
 // rebuildECMP builds a multipath route to balancerIP/32 using all healthy
 // transport links that share the same balancer IP. Mirrors master's rebuildECMP.
-func (c *ClientRunner) rebuildECMP(balancerIP string) {
+// Returns an error if any routing or iptables operation fails.
+func (c *ClientRunner) rebuildECMP(balancerIP string) error {
 	if balancerIP == "" {
-		return
+		return nil
 	}
 
 	cidr := balancerIP + "/32"
@@ -540,23 +547,34 @@ func (c *ClientRunner) rebuildECMP(balancerIP string) {
 	c.platformState.mu.Unlock()
 
 	if len(nexthops) == 0 {
+		if err := routing.DisableStickyECMP(cidr); err != nil {
+			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to disable sticky ECMP rules")
+		}
 		if err := routing.RemoveECMPRoute(cidr); err != nil {
 			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to remove client ECMP route")
-			return
+			return fmt.Errorf("remove client ECMP route for %s: %w", balancerIP, err)
 		}
 		c.node.logger.Info().Str("balancer_ip", balancerIP).Msg("client ECMP route removed")
-		return
+		return nil
 	}
 
 	if err := routing.SetECMPRoute(cidr, nexthops); err != nil {
 		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to set client ECMP route")
-		return
+		return fmt.Errorf("set client ECMP route for %s: %w", balancerIP, err)
 	}
 
-	routing.EnableStickyECMP(cidr)
-	routing.EnableL4Hash()
+	if err := routing.EnableStickyECMP(cidr); err != nil {
+		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to enable sticky ECMP rules")
+		return fmt.Errorf("enable sticky ECMP for %s: %w", balancerIP, err)
+	}
+
+	if err := routing.EnableL4Hash(); err != nil {
+		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to enable L4 hash")
+		return fmt.Errorf("enable L4 hash: %w", err)
+	}
 
 	c.node.logger.Info().Str("balancer_ip", balancerIP).Int("nexthops", len(nexthops)).Msg("client ECMP route updated")
+	return nil
 }
 
 // SetBalancerIP sets the balancer IP for a specific peer link.

@@ -301,6 +301,8 @@ func newClientInitCommand() *cobra.Command {
 			for _, nr := range topo.Overlay.Ranges {
 				if r, rErr := topology.ParseRange(nr); rErr == nil {
 					parsedRanges = append(parsedRanges, r)
+				} else {
+					fmt.Fprintf(os.Stderr, "warning: failed to parse topology range %q: %v\n", nr, rErr)
 				}
 			}
 
@@ -316,6 +318,8 @@ func newClientInitCommand() *cobra.Command {
 					if bip := topology.BalancerIPForAddr(parsedRanges, masterAddr); bip.IsValid() {
 						masterBalancerIP = bip.String()
 					}
+				} else {
+					fmt.Fprintf(os.Stderr, "warning: failed to parse master overlay IP %q for master %q: %v\n", master.OverlayIP, master.Name, parseErr)
 				}
 
 				allocation, err := alloc.Allocate(master.Name, client.Name)
