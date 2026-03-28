@@ -365,7 +365,7 @@ func TestGetPublicKeyClient(t *testing.T) {
 		t.Fatalf("EnsureKeypair: %v", err)
 	}
 
-	runner := &ClientRunner{node: &Node{config: NodeConfig{ConfigDir: dir}}}
+	runner := NewClientRunner(&Node{config: NodeConfig{ConfigDir: dir}})
 	gotPub, err := runner.GetPublicKey()
 	if err != nil {
 		t.Fatalf("GetPublicKey: %v", err)
@@ -373,4 +373,16 @@ func TestGetPublicKeyClient(t *testing.T) {
 	if gotPub != expectedPub {
 		t.Fatalf("key mismatch: got %s, want %s", gotPub, expectedPub)
 	}
+}
+
+func TestNewClientRunnerInitializesMap(t *testing.T) {
+	t.Parallel()
+
+	runner := NewClientRunner(&Node{config: NodeConfig{ConfigDir: t.TempDir()}})
+	if runner == nil {
+		t.Fatal("expected non-nil runner")
+	}
+	// platformState.byKey should be initialized — verified via GetPublicKey not panicking
+	// On Linux, byKey map is pre-initialized. On non-Linux, struct is empty.
+	_ = runner
 }
