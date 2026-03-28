@@ -72,6 +72,33 @@ func (e *EndpointRunner) createInterface() error {
 	return nil
 }
 
+// ConfigureTransport assigns the local transport IP to wg0 after a peer is added.
+// Each master peer gets its own /30 subnet; the endpoint's IP is added to wg0.
+func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) error {
+	if e == nil || e.node == nil {
+		return fmt.Errorf("endpoint runner node is required")
+	}
+
+	trimmedLocalIP := strings.TrimSpace(localIP)
+	if net.ParseIP(trimmedLocalIP) == nil {
+		return fmt.Errorf("local transport IP %q is invalid", localIP)
+	}
+
+	if err := addInterfaceAddress(endpointInterfaceName, trimmedLocalIP); err != nil {
+		e.node.logger.Warn().Err(err).
+			Str("local_ip", trimmedLocalIP).
+			Msg("transport IP may already be assigned")
+	}
+
+	e.node.logger.Info().
+		Str("interface", endpointInterfaceName).
+		Str("local_ip", trimmedLocalIP).
+		Str("peer_ip", peerIP).
+		Msg("endpoint transport configured")
+
+	return nil
+}
+
 func (e *EndpointRunner) closeInterface() error {
 	if e == nil || e.platformState.iface == nil {
 		return nil
