@@ -11,6 +11,10 @@ import (
 
 type clientPlatformState struct{}
 
+func initClientPlatformState() clientPlatformState {
+	return clientPlatformState{}
+}
+
 func (c *ClientRunner) createInterfaces(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("context is required")

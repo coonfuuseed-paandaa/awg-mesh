@@ -36,6 +36,12 @@ type clientPlatformState struct {
 	nextIdx int
 }
 
+func initClientPlatformState() clientPlatformState {
+	return clientPlatformState{
+		byKey: make(map[string]*transportLink),
+	}
+}
+
 func (c *ClientRunner) createInterfaces(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("context is required")
@@ -63,7 +69,8 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	c.platformState.mu.Lock()
 	existingLink, hasExistingLink := c.platformState.byKey[pubkeyHex]
 	if hasExistingLink {
-		c.platformState.mu.Unlock()
+		// Hold lock across configure to prevent concurrent AddPeer race on same pubkey.
+		defer c.platformState.mu.Unlock()
 		return c.configurePeerOnIface(existingLink.iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
 	}
 
@@ -99,9 +106,6 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	}
 
 	c.platformState.mu.Lock()
-	if c.platformState.byKey == nil {
-		c.platformState.byKey = make(map[string]*transportLink)
-	}
 	if existing, exists := c.platformState.byKey[pubkeyHex]; exists {
 		c.platformState.mu.Unlock()
 		_ = iface.Close()

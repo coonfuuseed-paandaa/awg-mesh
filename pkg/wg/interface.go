@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"github.com/amnezia-vpn/amneziawg-go/device"
@@ -75,12 +76,15 @@ func NewInterface(name string, mtu int, logger *device.Logger) (*Interface, erro
 	return iface, nil
 }
 
+const uapiConnectionTimeout = 30 * time.Second
+
 func (iface *Interface) serveUAPI() {
 	for {
 		conn, err := iface.uapi.Accept()
 		if err != nil {
 			return
 		}
+		conn.SetDeadline(time.Now().Add(uapiConnectionTimeout))
 		go iface.dev.IpcHandle(conn)
 	}
 }

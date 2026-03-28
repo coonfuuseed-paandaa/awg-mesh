@@ -18,7 +18,10 @@ type ClientRunner struct {
 
 // NewClientRunner creates a client mode runner.
 func NewClientRunner(node *Node) *ClientRunner {
-	return &ClientRunner{node: node}
+	return &ClientRunner{
+		node:          node,
+		platformState: initClientPlatformState(),
+	}
 }
 
 // GetPublicKey returns the client's WireGuard public key.
