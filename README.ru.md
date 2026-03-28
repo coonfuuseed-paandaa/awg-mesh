@@ -618,6 +618,26 @@ rotation:
     preset: aggressive      # пресет параметров обфускации
 ```
 
+### transport
+
+Point-to-point адресация для WireGuard-туннелей. Каждая связка master↔endpoint получает уникальную подсеть /30 из пула. mesh-ctl выделяет автоматически — ноды никогда не назначают транспортные адреса самостоятельно.
+
+```yaml
+transport:
+  pool: 10.255.0.0/16         # пул адресов для point-to-point линков туннелей
+  prefix_length: 30            # /30 = 4 IP на туннель (2 используемых: сторона master + endpoint)
+```
+
+**Как это работает:**
+- Overlay IP (172.20.70.x) живут на loopback — это видимые пользователю адреса
+- Transport IP (10.255.x.x) живут на WireGuard-интерфейсах — это невидимая инфраструктура
+- Master маршрутизирует overlay через transport next-hop: `172.20.70.34 via 10.255.0.2 dev wg-kz-01`
+- ECMP balancer IP используют взвешенные transport nexthop для распределения нагрузки
+- Healthcheck пингует transport peer IP для проверки состояния туннеля
+- При перезапуске ноды transport state восстанавливается из `/config/transport.yml`
+
+Аллокации хранятся в `~/.mesh-ctl/transport.yml` и видны через `mesh-ctl config show`.
+
 ## Режимы узлов
 
 Все режимы запускаются из одного бинарника: `awg-mesh-node`. Режим выбирается флагом `--mode`.

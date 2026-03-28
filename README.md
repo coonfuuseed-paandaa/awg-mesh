@@ -618,6 +618,26 @@ rotation:
     preset: aggressive      # obfuscation parameter preset
 ```
 
+### transport
+
+Point-to-point addressing for WireGuard tunnels. Each master↔endpoint link gets a unique /30 subnet from this pool. mesh-ctl allocates automatically — nodes never self-assign transport addresses.
+
+```yaml
+transport:
+  pool: 10.255.0.0/16         # address pool for tunnel point-to-point links
+  prefix_length: 30            # /30 = 4 IPs per tunnel (2 usable: master + endpoint side)
+```
+
+**How it works:**
+- Overlay IPs (172.20.70.x) live on loopback — they are the user-visible addresses
+- Transport IPs (10.255.x.x) live on WireGuard interfaces — they are invisible plumbing
+- Master routes overlay destinations through transport next-hops: `172.20.70.34 via 10.255.0.2 dev wg-kz-01`
+- ECMP balancer IPs use weighted transport nexthops for load distribution
+- Healthcheck pings transport peer IP to verify tunnel health
+- On node restart, transport state is reconstructed from `/config/transport.yml`
+
+Transport allocations are stored in `~/.mesh-ctl/transport.yml` and visible via `mesh-ctl config show`.
+
 ## Node Modes
 
 All modes run from the same binary: `awg-mesh-node`. The mode is selected with `--mode`.
