@@ -62,12 +62,14 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
-	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, newCaptureScheduler(m.node.logger, newCaptureFunc()), m); err != nil {
+	scheduler := newCaptureScheduler(m.node.logger, newCaptureFunc())
+	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, scheduler, m); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	m.startTime = time.Now()
 
 	defer func() {
+		scheduler.StopSchedule()
 		if closeErr := m.closeAllTunnelInterfaces(); closeErr != nil {
 			m.node.logger.Warn().Err(closeErr).Msg("failed to close master tunnel interfaces")
 		}
@@ -122,7 +124,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 		FailureThreshold: defaultHealthFailureThreshold,
 	}
 	hcLogger := m.node.logger.With().Str("component", "healthcheck").Logger()
-	hc := NewHealthChecker(hcCfg, hcLogger)
+	hc := NewHealthChecker(hcCfg, hcLogger, m.masterHandshakeChecker())
 
 	go hc.Run(ctx, m.healthTargets,
 		func(name string) {
@@ -292,9 +294,10 @@ func (m *MasterRunner) healthTargets() []HealthTarget {
 			pingAddr = t.OverlayIP
 		}
 		targets = append(targets, HealthTarget{
-			Name:     t.Name,
-			PingAddr: pingAddr,
-			Healthy:  t.Healthy,
+			Name:          t.Name,
+			PingAddr:      pingAddr,
+			Healthy:       t.Healthy,
+			PeerPublicKey: t.PeerPublicKey,
 		})
 	}
 	return targets

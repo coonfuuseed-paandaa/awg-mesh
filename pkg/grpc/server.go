@@ -139,6 +139,11 @@ type dynamicCertificateProvider struct {
 	logger       zerolog.Logger
 	fallback     *tls.Certificate
 	fallbackLock sync.Mutex
+
+	certCache         *tls.Certificate
+	certCacheCrtMtime time.Time
+	certCacheKeyMtime time.Time
+	certCacheLock     sync.Mutex
 }
 
 func newDynamicCertificateProvider(certPath, caPath string, logger zerolog.Logger) *dynamicCertificateProvider {
@@ -150,10 +155,54 @@ func newDynamicCertificateProvider(certPath, caPath string, logger zerolog.Logge
 }
 
 func (p *dynamicCertificateProvider) getServerCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	certFile := filepath.Join(p.certPath, "node.crt")
+	keyFile := filepath.Join(p.certPath, "node.key")
+
+	// Check mtime-based cache to avoid disk read + PEM parse on every handshake.
+	// Both node.crt and node.key mtimes must match; if either Stat fails we treat
+	// the cached certificate as last-known-good rather than falling back to a
+	// self-signed ephemeral cert.
+	p.certCacheLock.Lock()
+	if p.certCache != nil {
+		certInfo, certErr := os.Stat(certFile)
+		keyInfo, keyErr := os.Stat(keyFile)
+		if certErr != nil || keyErr != nil {
+			// Temporary FS error — return the cached cert as last-known-good.
+			cached := p.certCache
+			p.certCacheLock.Unlock()
+			return cached, nil
+		}
+		if certInfo.ModTime().Equal(p.certCacheCrtMtime) && keyInfo.ModTime().Equal(p.certCacheKeyMtime) {
+			cached := p.certCache
+			p.certCacheLock.Unlock()
+			return cached, nil
+		}
+	}
+	p.certCacheLock.Unlock()
+
 	cert, err := pkgtls.LoadCertKey(p.certPath)
 	if err == nil {
+		p.certCacheLock.Lock()
+		p.certCache = &cert
+		if certInfo, statErr := os.Stat(certFile); statErr == nil {
+			p.certCacheCrtMtime = certInfo.ModTime()
+		}
+		if keyInfo, statErr := os.Stat(keyFile); statErr == nil {
+			p.certCacheKeyMtime = keyInfo.ModTime()
+		}
+		p.certCacheLock.Unlock()
 		return &cert, nil
 	}
+
+	// Load failed — return last-known-good cached cert before falling back to ephemeral.
+	p.certCacheLock.Lock()
+	if p.certCache != nil {
+		cached := p.certCache
+		p.certCacheLock.Unlock()
+		return cached, nil
+	}
+	p.certCacheLock.Unlock()
+
 	p.logger.Warn().Err(err).Str("cert_path", p.certPath).Msg("using fallback ephemeral certificate")
 
 	fallbackCert, fallbackErr := p.getFallbackCertificate()

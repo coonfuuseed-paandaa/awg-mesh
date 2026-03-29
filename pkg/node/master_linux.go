@@ -7,6 +7,7 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	"github.com/thebtf/awg-mesh/pkg/routing"
@@ -30,7 +31,7 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
 
-	mtu := CalculateMTU(1420, 80, 1)
+	mtu := calculateMTUFromTopology(m.node.topology, 1)
 	iface, err := wg.NewInterface(
 		tunnel.InterfaceName,
 		mtu,
@@ -355,6 +356,35 @@ func copyPeerConfig(peer wg.PeerConfig) wg.PeerConfig {
 		copied.PersistentKeepaliveInterval = &copiedInterval
 	}
 	return copied
+}
+
+// masterHandshakeChecker returns a HandshakeChecker that looks up the last WG
+// handshake time for a peer by its public key across all master tunnel interfaces.
+func (m *MasterRunner) masterHandshakeChecker() HandshakeChecker {
+	return func(peerKey wg.Key) time.Time {
+		m.mu.RLock()
+		tunnels := make([]*MasterTunnel, 0, len(m.tunnels))
+		for _, t := range m.tunnels {
+			tunnels = append(tunnels, t)
+		}
+		m.mu.RUnlock()
+
+		for _, t := range tunnels {
+			if t.platformState.iface == nil {
+				continue
+			}
+			dev, err := t.platformState.iface.GetDevice()
+			if err != nil {
+				continue
+			}
+			for _, peer := range dev.Peers {
+				if peer.PublicKey == peerKey {
+					return peer.LastHandshakeTime
+				}
+			}
+		}
+		return time.Time{}
+	}
 }
 
 func (m *MasterRunner) closeTunnelInterface(tunnel *MasterTunnel) error {

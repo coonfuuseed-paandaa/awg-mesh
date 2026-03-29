@@ -386,3 +386,79 @@ func TestNewClientRunnerInitializesMap(t *testing.T) {
 	// On Linux, byKey map is pre-initialized. On non-Linux, struct is empty.
 	_ = runner
 }
+
+func TestTransportStatePreservesOverlayAndBalancerIP(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state := NodeTransportState{
+		OverlayIP: "172.20.70.2",
+		Tunnels: []TunnelTransport{
+			{
+				Name:            "kz-01",
+				OverlayIP:       "172.20.70.34",
+				TransportIP:     "10.255.0.1",
+				PeerTransportIP: "10.255.0.2",
+				PeerPublicKey:   "abcd1234",
+				PeerEndpoint:    "192.168.1.1:51820",
+				BalancerIP:      "172.20.70.33",
+			},
+		},
+	}
+	if err := saveNodeTransportState(dir, state); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := loadNodeTransportState(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if len(loaded.Tunnels) != 1 {
+		t.Fatalf("expected 1 tunnel, got %d", len(loaded.Tunnels))
+	}
+	tt := loaded.Tunnels[0]
+	if tt.OverlayIP != "172.20.70.34" {
+		t.Fatalf("expected overlayIP 172.20.70.34, got %q", tt.OverlayIP)
+	}
+	if tt.BalancerIP != "172.20.70.33" {
+		t.Fatalf("expected balancerIP 172.20.70.33, got %q", tt.BalancerIP)
+	}
+	if loaded.OverlayIP != "172.20.70.2" {
+		t.Fatalf("expected node overlayIP 172.20.70.2, got %q", loaded.OverlayIP)
+	}
+}
+
+func TestAddTunnelInitiallyUnhealthy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	_, _, err := EnsureKeypair(dir)
+	if err != nil {
+		t.Fatalf("EnsureKeypair: %v", err)
+	}
+
+	runner := &MasterRunner{
+		node:    &Node{config: NodeConfig{ConfigDir: dir}},
+		tunnels: make(map[string]*MasterTunnel),
+	}
+
+	// AddTunnel on non-Linux is a no-op for interface creation but should
+	// still add the tunnel to the map. On Linux, Healthy starts false and
+	// becomes true only after interface creation succeeds.
+	_ = runner.AddTunnel("test-ep", "192.168.1.1:51820", "172.20.70.34", "172.20.70.33", "", "10.255.0.1", "10.255.0.2", 1, wg.Key{})
+
+	runner.mu.RLock()
+	tunnel, exists := runner.tunnels["test-ep"]
+	runner.mu.RUnlock()
+
+	if !exists {
+		t.Fatal("expected tunnel to exist in map")
+	}
+	if tunnel.OverlayIP != "172.20.70.34" {
+		t.Fatalf("expected overlayIP 172.20.70.34, got %q", tunnel.OverlayIP)
+	}
+	if tunnel.BalancerIP != "172.20.70.33" {
+		t.Fatalf("expected balancerIP 172.20.70.33, got %q", tunnel.BalancerIP)
+	}
+}

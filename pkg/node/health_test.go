@@ -17,7 +17,7 @@ func TestNewHealthChecker(t *testing.T) {
 		FailureThreshold: 5,
 	}
 
-	checker := NewHealthChecker(cfg, zerolog.Nop())
+	checker := NewHealthChecker(cfg, zerolog.Nop(), nil)
 	if checker == nil {
 		t.Fatal("expected checker instance")
 	}
@@ -133,7 +133,7 @@ func TestPingAllParallelCompletesInBoundedTime(t *testing.T) {
 
 	hc := NewHealthChecker(HealthConfig{
 		Timeout: 500 * time.Millisecond,
-	}, zerolog.Nop())
+	}, zerolog.Nop(), nil)
 
 	// 10 unreachable targets — if sequential, would take 5s; parallel should be ~500ms
 	targets := make([]HealthTarget, 10)

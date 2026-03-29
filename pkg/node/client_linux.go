@@ -83,7 +83,7 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
 
-	mtu := CalculateMTU(1420, 80, 1)
+	mtu := calculateMTUFromTopology(c.node.topology, 1)
 	iface, err := wg.NewInterface(ifaceName, mtu, device.NewLogger(device.LogLevelError, "[client] "))
 	if err != nil {
 		return fmt.Errorf("create client interface %q: %w", ifaceName, err)
@@ -496,7 +496,7 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 		FailureThreshold: defaultHealthFailureThreshold,
 	}
 	hcLogger := c.node.logger.With().Str("component", "healthcheck").Logger()
-	hc := NewHealthChecker(hcCfg, hcLogger)
+	hc := NewHealthChecker(hcCfg, hcLogger, nil)
 
 	go hc.Run(ctx, c.healthTargets,
 		func(name string) {

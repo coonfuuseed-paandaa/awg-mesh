@@ -30,7 +30,7 @@ func (e *EndpointRunner) createInterface() error {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
 
-	mtu := CalculateMTU(1420, 80, 1)
+	mtu := calculateMTUFromTopology(e.node.topology, 1)
 	iface, err := wg.NewInterface(
 		endpointInterfaceName,
 		mtu,

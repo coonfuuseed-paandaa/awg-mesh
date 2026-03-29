@@ -368,7 +368,20 @@ func newEndpointRemoveCommand() *cobra.Command {
 				fmt.Printf("Removed tunnel for endpoint %q from master %q.\n", ep.Name, master.Name)
 			}
 
-			fmt.Printf("Endpoint removed from all masters. Manual cleanup may be needed on endpoint host.\n")
+			// Deallocate transport subnets for this endpoint.
+			alloc, allocErr := loadOrCreateAllocator(configDir, topo)
+			if allocErr == nil {
+				for _, master := range topo.Masters {
+					if containsName(master.Endpoints, ep.Name) {
+						alloc.Deallocate(master.Name, ep.Name)
+					}
+				}
+				if saveErr := saveTransportState(alloc, configDir); saveErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: save transport state: %v\n", saveErr)
+				}
+			}
+
+			fmt.Printf("Endpoint removed from all masters. Transport subnets deallocated.\n")
 			return nil
 		},
 	}

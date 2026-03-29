@@ -297,6 +297,7 @@ func newClientInitCommand() *cobra.Command {
 				return fmt.Errorf("load transport allocator: %w", err)
 			}
 
+			mastersConnected := 0
 			parsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))
 			for _, nr := range topo.Overlay.Ranges {
 				if r, rErr := topology.ParseRange(nr); rErr == nil {
@@ -417,13 +418,19 @@ func newClientInitCommand() *cobra.Command {
 				}
 
 				fmt.Printf("Added peer on client %q for master %q.\n", name, master.Name)
+				mastersConnected++
+			}
+
+			if mastersConnected == 0 {
+				return fmt.Errorf("client %q: no masters connected — initialization incomplete (check master availability)", name)
 			}
 
 			if err := saveTransportState(alloc, configDir); err != nil {
 				return fmt.Errorf("save transport state: %w", err)
 			}
 
-			fmt.Printf("Client %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
+			fmt.Printf("Client %q initialized: %d/%d masters connected.\nPublic key: %s\n",
+				name, mastersConnected, len(client.Masters), hex.EncodeToString(resp.NodePublicKey))
 			return nil
 		},
 	}

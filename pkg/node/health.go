@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/thebtf/awg-mesh/pkg/wg"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
@@ -27,25 +28,36 @@ type HealthConfig struct {
 	FailureThreshold int
 }
 
+// HandshakeChecker is a callback that returns the time of the last WG handshake
+// for a peer identified by its public key. If ICMP ping fails but the handshake
+// is recent (within 2× health interval), the tunnel is considered alive. This
+// prevents false positives when ICMP is blocked but UDP tunnel traffic flows.
+// Pass nil to disable handshake-based fallback.
+type HandshakeChecker func(peerKey wg.Key) time.Time
+
 // HealthChecker monitors tunnel liveness and fires callbacks on state transitions.
 type HealthChecker struct {
-	cfg    HealthConfig
-	logger zerolog.Logger
+	cfg              HealthConfig
+	logger           zerolog.Logger
+	handshakeChecker HandshakeChecker
 }
 
 // NewHealthChecker creates a new HealthChecker with the given configuration.
-func NewHealthChecker(cfg HealthConfig, logger zerolog.Logger) *HealthChecker {
+// handshakeChecker may be nil to disable WG handshake fallback.
+func NewHealthChecker(cfg HealthConfig, logger zerolog.Logger, handshakeChecker HandshakeChecker) *HealthChecker {
 	return &HealthChecker{
-		cfg:    cfg,
-		logger: logger,
+		cfg:              cfg,
+		logger:           logger,
+		handshakeChecker: handshakeChecker,
 	}
 }
 
 // HealthTarget is a generic health check target — used by both master and client.
 type HealthTarget struct {
-	Name     string
-	PingAddr string
-	Healthy  bool
+	Name          string
+	PingAddr      string
+	Healthy       bool
+	PeerPublicKey wg.Key
 }
 
 // Run starts the healthcheck loop. It pings all targets in parallel using native
@@ -75,7 +87,22 @@ func (h *HealthChecker) Run(
 					continue
 				}
 
-				if results[i] {
+				alive := results[i]
+
+				// Fallback: if ICMP fails but WG handshake is recent, tunnel is alive.
+				// Uses PeerPublicKey as the stable WG peer identifier.
+				if !alive && h.handshakeChecker != nil && !t.PeerPublicKey.IsZero() {
+					lastHS := h.handshakeChecker(t.PeerPublicKey)
+					if !lastHS.IsZero() && time.Since(lastHS) < 2*h.cfg.Interval {
+						alive = true
+						h.logger.Debug().
+							Str("tunnel", t.Name).
+							Time("last_handshake", lastHS).
+							Msg("ICMP failed but WG handshake recent — tunnel alive")
+					}
+				}
+
+				if alive {
 					if failures[t.Name] > 0 {
 						h.logger.Info().
 							Str("tunnel", t.Name).

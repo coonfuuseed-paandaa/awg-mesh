@@ -37,6 +37,11 @@ func (m *MasterRunner) GetParams(tunnelName string) (wg.Config, error) {
 	return wg.Config{}, fmt.Errorf("UAPI not supported on this platform")
 }
 
+// masterHandshakeChecker returns nil on non-Linux platforms — WG UAPI is unavailable.
+func (m *MasterRunner) masterHandshakeChecker() HandshakeChecker {
+	return nil
+}
+
 func (m *MasterRunner) rebuildECMP(balancerIP string) {}
 
 func (m *MasterRunner) removeOverlayRoute(overlayIP string) {}

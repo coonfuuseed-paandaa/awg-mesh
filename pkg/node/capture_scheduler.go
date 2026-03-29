@@ -13,6 +13,7 @@ type captureScheduler struct {
 	mu     sync.Mutex
 	logger zerolog.Logger
 	stopCh chan struct{}
+	doneCh chan struct{}
 
 	// captureFunc is the actual capture implementation (injected, platform-specific).
 	captureFunc func(iface string, domains []string, countPerDomain int, timeout time.Duration) (int, error)
@@ -37,13 +38,22 @@ func (cs *captureScheduler) SetSchedule(domains []string, countPerDomain int, sc
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	// Stop existing schedule if any.
+	// Stop existing schedule if any, waiting for its goroutine to finish.
+	// Nil out the fields first so any concurrent caller (StopSchedule or
+	// another SetSchedule) sees a clean state and cannot double-close.
 	if cs.stopCh != nil {
-		close(cs.stopCh)
+		stopCh := cs.stopCh
+		doneCh := cs.doneCh
+		cs.stopCh = nil
+		cs.doneCh = nil
+		close(stopCh)
+		<-doneCh // safe to block here: run() never acquires cs.mu
 	}
 
 	cs.stopCh = make(chan struct{})
+	cs.doneCh = make(chan struct{})
 	stopCh := cs.stopCh
+	doneCh := cs.doneCh
 
 	cs.logger.Info().
 		Str("interval", interval.String()).
@@ -52,24 +62,31 @@ func (cs *captureScheduler) SetSchedule(domains []string, countPerDomain int, sc
 		Int("retention_days", retentionDays).
 		Msg("capture schedule started")
 
-	go cs.run(stopCh, interval, domains, countPerDomain)
+	go cs.run(stopCh, doneCh, interval, domains, countPerDomain)
 
 	return nil
 }
 
-// StopSchedule stops the running capture schedule.
+// StopSchedule stops the running capture schedule and blocks until the
+// scheduler's goroutine has fully exited. This ensures captureFunc cannot
+// race into closed tunnel interfaces after StopSchedule returns.
 func (cs *captureScheduler) StopSchedule() {
 	cs.mu.Lock()
-	defer cs.mu.Unlock()
+	stopCh := cs.stopCh
+	doneCh := cs.doneCh
+	cs.stopCh = nil
+	cs.doneCh = nil
+	cs.mu.Unlock()
 
-	if cs.stopCh != nil {
-		close(cs.stopCh)
-		cs.stopCh = nil
+	if stopCh != nil {
+		close(stopCh)
+		<-doneCh
 		cs.logger.Info().Msg("capture schedule stopped")
 	}
 }
 
-func (cs *captureScheduler) run(stopCh <-chan struct{}, interval time.Duration, domains []string, countPerDomain int) {
+func (cs *captureScheduler) run(stopCh <-chan struct{}, doneCh chan<- struct{}, interval time.Duration, domains []string, countPerDomain int) {
+	defer close(doneCh)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
