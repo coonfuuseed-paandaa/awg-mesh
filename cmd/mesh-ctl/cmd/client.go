@@ -83,6 +83,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Image      string
 					ListenPort int
 					Token      string
+					Masters    string
 				}{
 					Name:       client.Name,
 					Host:       "",
@@ -90,6 +91,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Image:      "ghcr.io/thebtf/awg-mesh:latest",
 					ListenPort: 51820,
 					Token:      token,
+					Masters:    strings.Join(client.Masters, ","),
 				}
 
 				outputPath := client.Name + "-docker-compose.yml"
@@ -198,15 +200,8 @@ func resolveClientTarget(topo *topology.Topology, client *topology.ClientNode) (
 	return master.Host, nil
 }
 
-func resolveClientGRPCAddr(topo *topology.Topology, client *topology.ClientNode) string {
-	if len(client.Masters) == 0 {
-		return "localhost:9090"
-	}
-	master := topo.FindMaster(client.Masters[0])
-	if master == nil {
-		return client.Masters[0] + ":9090"
-	}
-	return master.GRPCAddr()
+func resolveClientGRPCAddr(_ *topology.Topology, client *topology.ClientNode) string {
+	return client.GRPCAddr()
 }
 
 func newClientInitCommand() *cobra.Command {
@@ -392,11 +387,19 @@ func newClientInitCommand() *cobra.Command {
 					continue
 				}
 
+				// Use the actual listen port from the master's per-tunnel WG interface
+				// (not master.ListenPort which is the config default, not the ephemeral port).
+				peerHost := master.PeerHost
+				if peerHost == "" {
+					peerHost = master.Host
+				}
+				tunnelEndpoint := fmt.Sprintf("%s:%d", peerHost, addResp.ListenPort)
+
 				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				peerResp, peerErr := clientPeerClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
 					PublicKey:           masterPubkey,
 					AllowedIps:          []string{"0.0.0.0/0"},
-					EndpointHost:        master.Name + "|" + master.PeerAddr(),
+					EndpointHost:        master.Name + "|" + tunnelEndpoint,
 					PersistentKeepalive: 25,
 					TransportSubnet:     allocation.Subnet.String(),
 					LocalTransportIp:    allocation.EndpointIP.String(),

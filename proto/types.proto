@@ -88,6 +88,7 @@ message AddTunnelResponse {
   bool success = 1;
   bytes master_public_key = 2;
   string interface_name = 3;
+  int32 listen_port = 4;
 }
 
 message RemoveTunnelRequest {

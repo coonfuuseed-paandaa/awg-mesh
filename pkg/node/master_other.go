@@ -37,6 +37,10 @@ func (m *MasterRunner) GetParams(tunnelName string) (wg.Config, error) {
 	return wg.Config{}, fmt.Errorf("UAPI not supported on this platform")
 }
 
+func (m *MasterRunner) GetListenPort(tunnelName string) (int, error) {
+	return 0, fmt.Errorf("UAPI not supported on this platform")
+}
+
 // masterHandshakeChecker returns nil on non-Linux platforms — WG UAPI is unavailable.
 func (m *MasterRunner) masterHandshakeChecker() HandshakeChecker {
 	return nil

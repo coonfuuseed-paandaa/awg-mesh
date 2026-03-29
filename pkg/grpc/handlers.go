@@ -256,6 +256,12 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 		}
 	}
 
+	if h.tunnelMgr != nil {
+		if port, portErr := h.tunnelMgr.GetListenPort(tunnelName); portErr == nil {
+			resp.ListenPort = int32(port)
+		}
+	}
+
 	return resp, nil
 }
 
@@ -351,6 +357,12 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 		peerIP := strings.TrimSpace(req.GetPeerTransportIp())
 		if localIP != "" && peerIP != "" {
 			pubkeyHex := hex.EncodeToString(req.GetPublicKey())
+			// Set balancer IP before ConfigureTransport so rebuildECMP can use it.
+			if balancerIP := strings.TrimSpace(req.GetBalancerIp()); balancerIP != "" {
+				if bs, bsOk := h.peerMgr.(BalancerIPSetter); bsOk {
+					bs.SetBalancerIP(pubkeyHex, balancerIP)
+				}
+			}
 			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP); err != nil {
 				h.logger.Warn().Err(err).Msg("configure transport after AddPeer failed")
 			}

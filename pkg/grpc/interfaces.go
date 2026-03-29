@@ -12,6 +12,7 @@ type TunnelManager interface {
 	RemoveTunnel(name string) error
 	ListTunnels() []TunnelInfo
 	GetParams(tunnelName string) (wg.Config, error)
+	GetListenPort(tunnelName string) (int, error)
 }
 
 // ParamApplier applies AWG runtime parameter updates to an interface/tunnel.
@@ -31,6 +32,12 @@ type PeerManager interface {
 // It is called by the AddPeer handler after saving transport state.
 type TransportConfigurator interface {
 	ConfigureTransport(pubkeyHex, localIP, peerIP string) error
+}
+
+// BalancerIPSetter is an optional extension for setting balancer IP on a peer
+// link before ConfigureTransport triggers ECMP rebuild.
+type BalancerIPSetter interface {
+	SetBalancerIP(pubkeyHex, balancerIP string)
 }
 
 // KeyProvider returns the node's WireGuard public key.

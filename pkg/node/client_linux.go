@@ -94,6 +94,11 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 		return fmt.Errorf("configure private key on %q: %w", ifaceName, err)
 	}
 
+	if err := setInterfaceUp(ifaceName); err != nil {
+		_ = iface.Close()
+		return fmt.Errorf("bring up interface %q: %w", ifaceName, err)
+	}
+
 	if err := c.configurePeerOnIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("configure peer on %q: %w", ifaceName, err)
@@ -565,6 +570,14 @@ func (c *ClientRunner) rebuildECMP(balancerIP string) error {
 	if err := routing.SetECMPRoute(cidr, nexthops); err != nil {
 		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to set client ECMP route")
 		return fmt.Errorf("set client ECMP route for %s: %w", balancerIP, err)
+	}
+
+	// Also route the entire overlay space through the same ECMP nexthops
+	// so the client can reach master overlay IPs (not just the balancer).
+	if c.node.topology != nil && c.node.topology.Overlay.Space != "" {
+		if err := routing.SetECMPRoute(c.node.topology.Overlay.Space, nexthops); err != nil {
+			c.node.logger.Warn().Str("overlay", c.node.topology.Overlay.Space).Err(err).Msg("failed to set overlay space ECMP route")
+		}
 	}
 
 	if err := routing.EnableStickyECMP(cidr); err != nil {

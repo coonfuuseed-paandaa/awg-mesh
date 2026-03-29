@@ -85,7 +85,15 @@ endpoints:
     grpc_port: 17090
     region: us
 
-clients: []
+clients:
+  - name: client-01
+    type: linux
+    host: 127.0.0.1
+    overlay_ip: 172.20.70.131
+    grpc_port: 18090
+    masters:
+      - ru-01
+      - ru-02
 
 capture:
   domains_file: domains.txt

@@ -27,6 +27,11 @@ type testTunnelManager struct {
 	addErr         error
 	removeErr      error
 	getParamsErr   error
+	listenPort     int
+}
+
+func (m *testTunnelManager) GetListenPort(_ string) (int, error) {
+	return m.listenPort, nil
 }
 
 type addTunnelCall struct {

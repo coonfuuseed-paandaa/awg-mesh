@@ -100,8 +100,23 @@ func (e EndpointNode) PeerAddr() string {
 type ClientNode struct {
 	Name      string   `yaml:"name"`
 	Type      string   `yaml:"type"`
+	Host      string   `yaml:"host,omitempty"`
 	OverlayIP string   `yaml:"overlay_ip"`
+	GRPCPort  int      `yaml:"grpc_port,omitempty"`
 	Masters   []string `yaml:"masters"`
+}
+
+// GRPCAddr returns host:grpc_port for this node (default 9090).
+func (c ClientNode) GRPCAddr() string {
+	h := c.Host
+	if h == "" {
+		h = "localhost"
+	}
+	port := c.GRPCPort
+	if port == 0 {
+		port = 9090
+	}
+	return h + ":" + strconv.Itoa(port)
 }
 
 // CaptureConfig contains capture job settings.

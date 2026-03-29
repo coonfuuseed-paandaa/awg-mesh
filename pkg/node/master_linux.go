@@ -260,6 +260,25 @@ func (m *MasterRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
 	return nil
 }
 
+// GetListenPort returns the UDP listen port for a tunnel's WG interface.
+func (m *MasterRunner) GetListenPort(tunnelName string) (int, error) {
+	trimmedName := strings.TrimSpace(tunnelName)
+	m.mu.RLock()
+	tunnel, exists := m.tunnels[trimmedName]
+	m.mu.RUnlock()
+	if !exists {
+		return 0, fmt.Errorf("tunnel %q not found", trimmedName)
+	}
+	if tunnel.platformState.iface == nil {
+		return 0, fmt.Errorf("tunnel %q interface not initialized", trimmedName)
+	}
+	dev, err := tunnel.platformState.iface.GetDevice()
+	if err != nil {
+		return 0, fmt.Errorf("get device %q: %w", trimmedName, err)
+	}
+	return dev.ListenPort, nil
+}
+
 func (m *MasterRunner) GetParams(tunnelName string) (wg.Config, error) {
 	if m == nil || m.node == nil {
 		return wg.Config{}, fmt.Errorf("master runner node is required")

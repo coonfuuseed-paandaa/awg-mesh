@@ -17,7 +17,7 @@ services:
       - "19090:9090"
       - "19091:9091"
       - "11820:51820/udp"
-    entrypoint: ["sh", "-c", "echo test-hash > /config/mesh.token && exec /usr/local/bin/awg-mesh-node --mode master --name ru-01 --overlay-ip 172.20.70.2 --listen-port 51820"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode master --name ru-01 --overlay-ip 172.20.70.2 --listen-port 51820"]
 
   ru-02:
     image: awg-mesh-node:transport
@@ -34,7 +34,7 @@ services:
       - "29090:9090"
       - "29091:9091"
       - "21820:51820/udp"
-    entrypoint: ["sh", "-c", "echo test-hash > /config/mesh.token && exec /usr/local/bin/awg-mesh-node --mode master --name ru-02 --overlay-ip 172.20.70.3 --listen-port 51820"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode master --name ru-02 --overlay-ip 172.20.70.3 --listen-port 51820"]
 
   kz-01:
     image: awg-mesh-node:transport
@@ -50,7 +50,7 @@ services:
     ports:
       - "39090:9090"
       - "31820:51820/udp"
-    entrypoint: ["sh", "-c", "echo test-hash > /config/mesh.token && exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-01 --overlay-ip 172.20.70.34 --listen-port 51820"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-01 --overlay-ip 172.20.70.34 --listen-port 51820"]
 
   kz-02:
     image: awg-mesh-node:transport
@@ -66,7 +66,7 @@ services:
     ports:
       - "49090:9090"
       - "41820:51820/udp"
-    entrypoint: ["sh", "-c", "echo test-hash > /config/mesh.token && exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-02 --overlay-ip 172.20.70.35 --listen-port 51820"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-02 --overlay-ip 172.20.70.35 --listen-port 51820"]
 
   kz-03:
     image: awg-mesh-node:transport
@@ -82,7 +82,7 @@ services:
     ports:
       - "59090:9090"
       - "51821:51820/udp"
-    entrypoint: ["sh", "-c", "echo test-hash > /config/mesh.token && exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-03 --overlay-ip 172.20.70.36 --listen-port 51820"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-03 --overlay-ip 172.20.70.36 --listen-port 51820"]
 
   pl-01:
     image: awg-mesh-node:transport
@@ -98,7 +98,7 @@ services:
     ports:
       - "16090:9090"
       - "16820:51820/udp"
-    entrypoint: ["sh", "-c", "echo test-hash > /config/mesh.token && exec /usr/local/bin/awg-mesh-node --mode endpoint --name pl-01 --overlay-ip 172.20.70.37 --listen-port 51820"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name pl-01 --overlay-ip 172.20.70.37 --listen-port 51820"]
 
   us-01:
     image: awg-mesh-node:transport
@@ -114,7 +114,23 @@ services:
     ports:
       - "17090:9090"
       - "17820:51820/udp"
-    entrypoint: ["sh", "-c", "echo test-hash > /config/mesh.token && exec /usr/local/bin/awg-mesh-node --mode endpoint --name us-01 --overlay-ip 172.20.70.38 --listen-port 51820"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name us-01 --overlay-ip 172.20.70.38 --listen-port 51820"]
+
+  client-01:
+    image: awg-mesh-node:transport
+    container_name: client-01
+    hostname: client-01
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - client-01-config:/config
+      - ./mesh-topology.yml:/config/mesh-topology.yml:ro
+    networks:
+      mesh-sim:
+        ipv4_address: 192.168.50.100
+    ports:
+      - "18090:9090"
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode client --name client-01 --overlay-ip 172.20.70.131 --config-dir /config --topology /config/mesh-topology.yml"]
 
 networks:
   mesh-sim:
@@ -131,3 +147,4 @@ volumes:
   kz-03-config:
   pl-01-config:
   us-01-config:
+  client-01-config:

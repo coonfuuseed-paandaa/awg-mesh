@@ -743,6 +743,7 @@ type AddTunnelResponse struct {
 	Success         bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
 	MasterPublicKey []byte                 `protobuf:"bytes,2,opt,name=master_public_key,json=masterPublicKey,proto3" json:"master_public_key,omitempty"`
 	InterfaceName   string                 `protobuf:"bytes,3,opt,name=interface_name,json=interfaceName,proto3" json:"interface_name,omitempty"`
+	ListenPort      int32                  `protobuf:"varint,4,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -796,6 +797,13 @@ func (x *AddTunnelResponse) GetInterfaceName() string {
 		return x.InterfaceName
 	}
 	return ""
+}
+
+func (x *AddTunnelResponse) GetListenPort() int32 {
+	if x != nil {
+		return x.ListenPort
+	}
+	return 0
 }
 
 type RemoveTunnelRequest struct {
@@ -2070,11 +2078,13 @@ const file_types_proto_rawDesc = "" +
 	"\x10transport_subnet\x18\n" +
 	" \x01(\tR\x0ftransportSubnet\x12.\n" +
 	"\x13master_transport_ip\x18\v \x01(\tR\x11masterTransportIp\x122\n" +
-	"\x15endpoint_transport_ip\x18\f \x01(\tR\x13endpointTransportIp\"\x80\x01\n" +
+	"\x15endpoint_transport_ip\x18\f \x01(\tR\x13endpointTransportIp\"\xa1\x01\n" +
 	"\x11AddTunnelResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
 	"\x11master_public_key\x18\x02 \x01(\fR\x0fmasterPublicKey\x12%\n" +
-	"\x0einterface_name\x18\x03 \x01(\tR\rinterfaceName\")\n" +
+	"\x0einterface_name\x18\x03 \x01(\tR\rinterfaceName\x12\x1f\n" +
+	"\vlisten_port\x18\x04 \x01(\x05R\n" +
+	"listenPort\")\n" +
 	"\x13RemoveTunnelRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"0\n" +
 	"\x14RemoveTunnelResponse\x12\x18\n" +
