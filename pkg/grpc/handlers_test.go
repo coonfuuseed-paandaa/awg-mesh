@@ -460,6 +460,49 @@ func TestRotateParamsRejectsEmptyNewParams(t *testing.T) {
 	}
 }
 
+func TestRotateParamsAppliesNewPublicKey(t *testing.T) {
+	t.Parallel()
+
+	paramApplier := &testParamApplier{}
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil, nil)
+
+	newKey := make([]byte, 32)
+	for i := range newKey {
+		newKey[i] = byte(i + 0xA0)
+	}
+
+	resp, err := handler.RotateParams(context.Background(), &proto.RotateParamsRequest{
+		TunnelName:   "rekey-tunnel",
+		Tier:         3,
+		NewParams:    &proto.AwgParams{Jc: 5},
+		NewPublicKey: newKey,
+	})
+	if err != nil {
+		t.Fatalf("RotateParams returned error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatal("expected successful rotate response")
+	}
+	// Two ApplyParams calls: one for params, one for new public key
+	if len(paramApplier.calls) != 2 {
+		t.Fatalf("expected 2 ApplyParams calls (params + key), got %d", len(paramApplier.calls))
+	}
+	// First call: AWG params
+	if paramApplier.calls[0].cfg.Jc == nil || *paramApplier.calls[0].cfg.Jc != 5 {
+		t.Fatalf("first call should set Jc=5")
+	}
+	// Second call: peer config with new public key
+	if len(paramApplier.calls[1].cfg.Peers) != 1 {
+		t.Fatalf("second call should have 1 peer, got %d", len(paramApplier.calls[1].cfg.Peers))
+	}
+	gotKey := paramApplier.calls[1].cfg.Peers[0].PublicKey
+	var expectedKey wg.Key
+	copy(expectedKey[:], newKey)
+	if gotKey != expectedKey {
+		t.Fatalf("peer public key mismatch")
+	}
+}
+
 func TestRemoveTunnel(t *testing.T) {
 	t.Parallel()
 

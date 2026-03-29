@@ -104,6 +104,22 @@ func (a *Allocator) Find(master, endpoint string) (Allocation, bool) {
 	return Allocation{}, false
 }
 
+// Deallocate returns a /30 subnet back to the pool for the given master-endpoint pair.
+// Returns true if the allocation was found and removed, false if it didn't exist.
+func (a *Allocator) Deallocate(master, endpoint string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	tunnel := master + "/" + endpoint
+	for i, allocation := range a.allocations {
+		if allocation.Tunnel == tunnel {
+			a.allocations = append(a.allocations[:i], a.allocations[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // Allocations returns a copy of all known allocations.
 func (a *Allocator) Allocations() []Allocation {
 	a.mu.Lock()

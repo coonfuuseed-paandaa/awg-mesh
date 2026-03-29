@@ -17,6 +17,7 @@ type NodeTransportState struct {
 // TunnelTransport records transport addressing for one tunnel.
 type TunnelTransport struct {
 	Name            string `yaml:"name"`
+	OverlayIP       string `yaml:"overlay_ip,omitempty"`
 	TransportIP     string `yaml:"transport_ip"`
 	PeerTransportIP string `yaml:"peer_transport_ip"`
 	PeerPublicKey   string `yaml:"peer_public_key"`

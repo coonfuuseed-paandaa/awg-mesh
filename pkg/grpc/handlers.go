@@ -360,13 +360,19 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 	return &proto.AddPeerResponse{Success: true}, nil
 }
 
+// nodeTransportState mirrors node.NodeTransportState for transport.yml
+// serialization. Both structs must be kept in sync — they share the same file
+// format. A refactor to a shared package (e.g. pkg/transport) would eliminate
+// this duplication but requires breaking the pkg/node → pkg/grpc import cycle.
 type nodeTransportState struct {
 	OverlayIP string            `yaml:"overlay_ip"`
 	Tunnels   []tunnelTransport `yaml:"tunnels"`
 }
 
+// tunnelTransport mirrors node.TunnelTransport. See nodeTransportState comment.
 type tunnelTransport struct {
 	Name            string `yaml:"name"`
+	OverlayIP       string `yaml:"overlay_ip,omitempty"`
 	TransportIP     string `yaml:"transport_ip"`
 	PeerTransportIP string `yaml:"peer_transport_ip"`
 	PeerPublicKey   string `yaml:"peer_public_key"`
@@ -532,9 +538,30 @@ func (h *AgentHandler) RotateParams(_ context.Context, req *proto.RotateParamsRe
 		Int32("tier", req.GetTier()).
 		Msg("rotate params requested")
 
+	// Apply AWG obfuscation parameters via UAPI.
 	if err := h.paramApplier.ApplyParams(tunnelName, cfg); err != nil {
 		h.logger.Error().Err(err).Str("tunnel", tunnelName).Int32("tier", req.GetTier()).Msg("rotate params failed")
 		return nil, status.Errorf(codes.Internal, "apply params: %v", err)
+	}
+
+	// Tier 3: apply new peer public key if provided.
+	if rawKey := req.GetNewPublicKey(); len(rawKey) > 0 {
+		newKey, keyErr := wg.NewKey(rawKey)
+		if keyErr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "new_public_key: %v", keyErr)
+		}
+		peerCfg := wg.Config{
+			Peers: []wg.PeerConfig{{
+				PublicKey:         newKey,
+				ReplaceAllowedIPs: false,
+				UpdateOnly:        false,
+			}},
+		}
+		if err := h.paramApplier.ApplyParams(tunnelName, peerCfg); err != nil {
+			h.logger.Error().Err(err).Str("tunnel", tunnelName).Msg("rotate: apply new public key failed")
+			return nil, status.Errorf(codes.Internal, "apply new public key: %v", err)
+		}
+		h.logger.Info().Str("tunnel", tunnelName).Msg("tier 3: new peer public key applied")
 	}
 
 	return &proto.RotateParamsResponse{
@@ -623,12 +650,18 @@ func (h *AgentHandler) GetHealth(_ context.Context, _ *proto.Empty) (*proto.Heal
 	}, nil
 }
 
-// RotateToken updates the node's MESH_TOKEN hash.
+// RotateToken updates the node's MESH_TOKEN hash atomically (write-to-temp + rename).
 func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequest) (*proto.RotateTokenResponse, error) {
 	tokenPath := filepath.Join(h.configDir, "mesh.token")
-	if err := os.WriteFile(tokenPath, []byte(req.NewTokenHash), 0600); err != nil {
-		h.logger.Error().Err(err).Msg("rotate token: write hash")
+	tmpPath := tokenPath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(req.NewTokenHash), 0600); err != nil {
+		h.logger.Error().Err(err).Msg("rotate token: write temp hash")
 		return nil, status.Errorf(codes.Internal, "rotate token: %v", err)
+	}
+	if err := os.Rename(tmpPath, tokenPath); err != nil {
+		_ = os.Remove(tmpPath)
+		h.logger.Error().Err(err).Msg("rotate token: atomic rename")
+		return nil, status.Errorf(codes.Internal, "rotate token rename: %v", err)
 	}
 
 	h.logger.Info().Msg("token rotated")

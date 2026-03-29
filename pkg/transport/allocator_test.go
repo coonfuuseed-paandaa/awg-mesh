@@ -120,6 +120,52 @@ func TestFindMissing(t *testing.T) {
 	}
 }
 
+func TestDeallocate(t *testing.T) {
+	t.Parallel()
+
+	pool := netip.MustParsePrefix("10.100.0.0/28")
+	allocator := NewAllocator(pool, 30)
+
+	// Allocate 2 pairs
+	_, err := allocator.Allocate("master1", "ep1")
+	if err != nil {
+		t.Fatalf("allocate master1/ep1: %v", err)
+	}
+	_, err = allocator.Allocate("master1", "ep2")
+	if err != nil {
+		t.Fatalf("allocate master1/ep2: %v", err)
+	}
+
+	// Deallocate ep1
+	if !allocator.Deallocate("master1", "ep1") {
+		t.Fatal("expected Deallocate to return true")
+	}
+
+	// ep1 should no longer be found
+	if _, ok := allocator.Find("master1", "ep1"); ok {
+		t.Fatal("ep1 should not be found after Deallocate")
+	}
+
+	// ep2 should still exist
+	if _, ok := allocator.Find("master1", "ep2"); !ok {
+		t.Fatal("ep2 should still be found")
+	}
+
+	// Re-allocate ep1 — should get the freed subnet back (or a new one)
+	realloc, err := allocator.Allocate("master1", "ep1")
+	if err != nil {
+		t.Fatalf("re-allocate master1/ep1: %v", err)
+	}
+	if realloc.Tunnel != "master1/ep1" {
+		t.Fatalf("unexpected tunnel name: %s", realloc.Tunnel)
+	}
+
+	// Deallocate non-existent pair
+	if allocator.Deallocate("master1", "ep99") {
+		t.Fatal("expected Deallocate to return false for non-existent pair")
+	}
+}
+
 func assertAllocationIPs(t *testing.T, allocation Allocation) {
 	t.Helper()
 

@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -62,14 +64,13 @@ func NewServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Lo
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	tokenHash, err := pkgtls.LoadTokenHash(cfg.TokenHashPath)
-	if err != nil {
+	if _, err := pkgtls.LoadTokenHash(cfg.TokenHashPath); err != nil {
 		return nil, fmt.Errorf("grpc server: load token hash: %w", err)
 	}
 
 	gs := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsConfig)),
-		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(tokenHash, logger)),
+		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(newTokenHashProvider(cfg.TokenHashPath), logger)),
 	)
 
 	proto.RegisterAwgAgentServer(gs, handler)
@@ -84,13 +85,12 @@ func NewServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Lo
 // NewInsecureServer constructs a Server without transport TLS. Authentication
 // is performed by bearer token via the unary interceptor.
 func NewInsecureServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Logger) (*Server, error) {
-	tokenHash, err := pkgtls.LoadTokenHash(cfg.TokenHashPath)
-	if err != nil {
+	if _, err := pkgtls.LoadTokenHash(cfg.TokenHashPath); err != nil {
 		return nil, fmt.Errorf("grpc server: load token hash: %w", err)
 	}
 
 	gs := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(tokenHash, logger)),
+		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(newTokenHashProvider(cfg.TokenHashPath), logger)),
 	)
 
 	proto.RegisterAwgAgentServer(gs, handler)
@@ -106,8 +106,7 @@ func NewInsecureServer(cfg ServerConfig, handler proto.AwgAgentServer, logger ze
 // connection. It starts with ephemeral certificate fallback until real certs are
 // written to disk and rotates by reading files from disk on demand.
 func NewDynamicServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Logger) (*Server, error) {
-	tokenHash, err := pkgtls.LoadTokenHash(cfg.TokenHashPath)
-	if err != nil {
+	if _, err := pkgtls.LoadTokenHash(cfg.TokenHashPath); err != nil {
 		return nil, fmt.Errorf("grpc server: load token hash: %w", err)
 	}
 
@@ -123,7 +122,7 @@ func NewDynamicServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zer
 
 	gs := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsConfig)),
-		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(tokenHash, logger)),
+		grpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(newTokenHashProvider(cfg.TokenHashPath), logger)),
 	)
 	proto.RegisterAwgAgentServer(gs, handler)
 
@@ -274,7 +273,45 @@ func (s *Server) Stop() {
 // makeUnaryAuthInterceptor returns a unary server interceptor that enforces
 // dual-auth: mTLS certificate verification takes priority; bearer token is
 // the fallback when no client certificate is presented.
-func makeUnaryAuthInterceptor(tokenHash string, logger zerolog.Logger) grpc.UnaryServerInterceptor {
+// tokenHashProvider loads the current token hash from disk, enabling hot
+// rotation without server restart. The provider caches the hash and reloads
+// only when the file modification time changes.
+func newTokenHashProvider(hashDir string) func() string {
+	var (
+		mu          sync.Mutex
+		cached      string
+		cachedMtime time.Time
+	)
+
+	path := filepath.Join(hashDir, "mesh.token")
+	// Initial load.
+	if h, err := pkgtls.LoadTokenHash(hashDir); err == nil {
+		cached = h
+	}
+	if info, err := os.Stat(path); err == nil {
+		cachedMtime = info.ModTime()
+	}
+
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		info, err := os.Stat(path)
+		if err != nil {
+			return cached
+		}
+		if info.ModTime().Equal(cachedMtime) {
+			return cached
+		}
+		if h, err := pkgtls.LoadTokenHash(hashDir); err == nil {
+			cached = h
+			cachedMtime = info.ModTime()
+		}
+		return cached
+	}
+}
+
+func makeUnaryAuthInterceptor(tokenProvider func() string, logger zerolog.Logger) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
 		req interface{},
@@ -297,7 +334,7 @@ func makeUnaryAuthInterceptor(tokenHash string, logger zerolog.Logger) grpc.Unar
 				raw := vals[0]
 				if strings.HasPrefix(raw, "Bearer ") {
 					token := strings.TrimPrefix(raw, "Bearer ")
-					if pkgtls.VerifyToken(token, tokenHash) {
+					if pkgtls.VerifyToken(token, tokenProvider()) {
 						return handler(ctx, req)
 					}
 					logger.Warn().Str("method", info.FullMethod).Msg("invalid bearer token")

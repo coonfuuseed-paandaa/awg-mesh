@@ -42,14 +42,20 @@ func VerifyToken(token string, hash string) bool {
 }
 
 // SaveTokenHash writes the bcrypt hash to <dir>/mesh.token with 0600 permissions.
+// Uses atomic write (temp file + rename) to prevent partial reads.
 func SaveTokenHash(dir string, hash string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create token dir: %w", err)
 	}
 
 	path := filepath.Join(dir, tokenFile)
-	if err := os.WriteFile(path, []byte(hash), 0600); err != nil {
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(hash), 0600); err != nil {
 		return fmt.Errorf("write token hash: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace token hash: %w", err)
 	}
 
 	return nil

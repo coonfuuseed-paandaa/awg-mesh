@@ -88,7 +88,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 				}
 			}
 
-			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, "", "", "", tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
+			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, tt.OverlayIP, tt.BalancerIP, "", tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
 				if !strings.Contains(err.Error(), "already exists") {
 					m.node.logger.Warn().
 						Str("tunnel", tt.Name).
@@ -197,7 +197,7 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, tran
 		MasterTransportIP:   strings.TrimSpace(masterTransportIP),
 		EndpointTransportIP: strings.TrimSpace(endpointTransportIP),
 		PeerPublicKey:       peerPublicKey,
-		Healthy:             true,
+		Healthy:             false, // Set true only after interface creation succeeds (prevents ECMP race)
 		Weight:              weight,
 	}
 	m.tunnels[name] = t
@@ -212,6 +212,13 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, tran
 		m.mu.Unlock()
 		return fmt.Errorf("create tunnel interface for %q: %w", name, err)
 	}
+
+	// Interface created successfully — mark healthy so ECMP includes this tunnel.
+	m.mu.Lock()
+	if currentTunnel, exists := m.tunnels[name]; exists && currentTunnel == t {
+		t.Healthy = true
+	}
+	m.mu.Unlock()
 
 	if err := m.saveTransportState(t); err != nil {
 		m.mu.Lock()
@@ -246,6 +253,12 @@ func (m *MasterRunner) RemoveTunnel(name string) error {
 	}
 	delete(m.tunnels, name)
 	m.mu.Unlock()
+
+	// Clean up routing state before closing the interface.
+	m.removeOverlayRoute(tunnel.OverlayIP)
+	if tunnel.BalancerIP != "" {
+		m.rebuildECMP(tunnel.BalancerIP)
+	}
 
 	if err := m.closeTunnelInterface(tunnel); err != nil {
 		return fmt.Errorf("close tunnel interface for %q: %w", name, err)
@@ -371,27 +384,24 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 	next := append(make([]TunnelTransport, 0, len(state.Tunnels)+1),
 		state.Tunnels...)
 	updated := false
+	entry := TunnelTransport{
+		Name:            tunnel.Name,
+		OverlayIP:       tunnel.OverlayIP,
+		TransportIP:     tunnel.MasterTransportIP,
+		PeerTransportIP: tunnel.EndpointTransportIP,
+		PeerPublicKey:   peerPublicKey,
+		PeerEndpoint:    tunnel.EndpointHost,
+		BalancerIP:      tunnel.BalancerIP,
+	}
 	for idx, existing := range next {
 		if existing.Name == tunnel.Name {
-			next[idx] = TunnelTransport{
-				Name:            tunnel.Name,
-				TransportIP:     tunnel.MasterTransportIP,
-				PeerTransportIP: tunnel.EndpointTransportIP,
-				PeerPublicKey:   peerPublicKey,
-				PeerEndpoint:    tunnel.EndpointHost,
-			}
+			next[idx] = entry
 			updated = true
 			break
 		}
 	}
 	if !updated {
-		next = append(next, TunnelTransport{
-			Name:            tunnel.Name,
-			TransportIP:     tunnel.MasterTransportIP,
-			PeerTransportIP: tunnel.EndpointTransportIP,
-			PeerPublicKey:   peerPublicKey,
-			PeerEndpoint:    tunnel.EndpointHost,
-		})
+		next = append(next, entry)
 	}
 
 	return saveNodeTransportState(m.node.config.ConfigDir, NodeTransportState{
