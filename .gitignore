@@ -36,3 +36,4 @@ rename-check.tmp
 /.gocache/
 /.gomodcache/
 TECHNICAL_DEBT.md
+.mesh-ctl-e2e/

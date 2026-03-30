@@ -5,8 +5,10 @@ package node
 import (
 	"fmt"
 	"net"
-	"os/exec"
 	"strings"
+
+	"github.com/thebtf/awg-mesh/pkg/routing"
+	"github.com/vishvananda/netlink"
 )
 
 // AssignOverlayIP assigns the overlay IP to loopback with a /32 mask.
@@ -15,21 +17,16 @@ func AssignOverlayIP(ip string) error {
 	if parsedIP == nil {
 		return fmt.Errorf("overlay IP must be a valid IP address")
 	}
-	normalizedIP := parsedIP.String()
 
-	showOut, err := exec.Command("ip", "addr", "show", "dev", "lo").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ip addr show dev lo: %w: %s", err, strings.TrimSpace(string(showOut)))
-	}
-	if strings.Contains(string(showOut), normalizedIP+"/32") {
+	addr := &net.IPNet{IP: parsedIP, Mask: net.CIDRMask(32, 32)}
+	router := routing.NewNetlinkRouter()
+
+	exists, err := router.AddrExists("lo", addr)
+	if err == nil && exists {
 		return nil
 	}
 
-	addOut, err := exec.Command("ip", "addr", "add", normalizedIP+"/32", "dev", "lo").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ip addr add %s/32 dev lo: %w: %s", normalizedIP, err, strings.TrimSpace(string(addOut)))
-	}
-	return nil
+	return router.AddrAdd("lo", addr)
 }
 
 // RemoveOverlayIP removes the overlay IP from loopback.
@@ -38,11 +35,17 @@ func RemoveOverlayIP(ip string) error {
 	if parsedIP == nil {
 		return fmt.Errorf("overlay IP must be a valid IP address")
 	}
-	normalizedIP := parsedIP.String()
 
-	delOut, err := exec.Command("ip", "addr", "del", normalizedIP+"/32", "dev", "lo").CombinedOutput()
+	lo, err := netlink.LinkByName("lo")
 	if err != nil {
-		return fmt.Errorf("ip addr del %s/32 dev lo: %w: %s", normalizedIP, err, strings.TrimSpace(string(delOut)))
+		return fmt.Errorf("get loopback: %w", err)
+	}
+
+	addr := &netlink.Addr{
+		IPNet: &net.IPNet{IP: parsedIP, Mask: net.CIDRMask(32, 32)},
+	}
+	if err := netlink.AddrDel(lo, addr); err != nil {
+		return fmt.Errorf("addr del %s/32 dev lo: %w", parsedIP, err)
 	}
 	return nil
 }

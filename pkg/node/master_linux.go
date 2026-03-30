@@ -5,7 +5,6 @@ package node
 import (
 	"fmt"
 	"net"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -173,11 +172,8 @@ func (m *MasterRunner) restoreOverlayRoute(overlayIP, endpointTransportIP, inter
 }
 
 func setInterfaceUp(interfaceName string) error {
-	out, err := exec.Command("ip", "link", "set", interfaceName, "up").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ip link set %s up: %w: %s", interfaceName, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	router := routing.NewNetlinkRouter()
+	return router.LinkSetUp(interfaceName)
 }
 
 func addInterfaceAddress(interfaceName, address string) error {
@@ -186,12 +182,12 @@ func addInterfaceAddress(interfaceName, address string) error {
 		return fmt.Errorf("invalid transport IP %q", address)
 	}
 
-	networkAddress := ip.String() + "/30"
-	out, err := exec.Command("ip", "addr", "add", networkAddress, "dev", interfaceName).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ip addr add %s dev %s: %w: %s", networkAddress, interfaceName, err, strings.TrimSpace(string(out)))
+	addr := &net.IPNet{
+		IP:   ip,
+		Mask: net.CIDRMask(30, 32),
 	}
-	return nil
+	router := routing.NewNetlinkRouter()
+	return router.AddrAdd(interfaceName, addr)
 }
 
 func buildPeerAllowedIPs(transportSubnet, overlayIP string) ([]net.IPNet, error) {

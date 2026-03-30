@@ -59,14 +59,26 @@ func (e *EndpointRunner) createInterface() error {
 		Str("interface", iface.Name()).
 		Int("mtu", mtu).
 		Msg("endpoint interface created")
-	if err := routing.EnableForwarding(); err != nil {
+	sysctl := routing.NewProcSysctl()
+	if err := sysctl.EnableForwarding(); err != nil {
 		e.node.logger.Warn().Err(err).Msg("failed to enable IP forwarding")
 	}
-	if err := routing.EnableMasquerade("eth0"); err != nil {
-		e.node.logger.Warn().Err(err).Msg("failed to enable masquerade on eth0")
-	}
-	if err := routing.ClampMSSToPMTU(); err != nil {
-		e.node.logger.Warn().Err(err).Msg("failed to enable TCP MSS clamping")
+	fw, fwErr := routing.NewNftablesFirewall()
+	if fwErr != nil {
+		e.node.logger.Warn().Err(fwErr).Msg("nftables unavailable, falling back to iptables")
+		if err := routing.EnableMasquerade("eth0"); err != nil {
+			e.node.logger.Warn().Err(err).Msg("failed to enable masquerade on eth0")
+		}
+		if err := routing.ClampMSSToPMTU(); err != nil {
+			e.node.logger.Warn().Err(err).Msg("failed to enable TCP MSS clamping")
+		}
+	} else {
+		if err := fw.SetupNAT("eth0"); err != nil {
+			e.node.logger.Warn().Err(err).Msg("nftables: failed to enable masquerade")
+		}
+		if err := fw.ClampMSSToPMTU(); err != nil {
+			e.node.logger.Warn().Err(err).Msg("nftables: failed to enable MSS clamping")
+		}
 	}
 
 	return nil

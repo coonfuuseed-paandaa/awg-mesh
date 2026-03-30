@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -445,17 +444,15 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 		return fmt.Errorf("invalid transport IP %q", address)
 	}
 
-	normalizedCIDR := parsedIP.String() + "/30"
-	showOutput, err := exec.Command("ip", "addr", "show", "dev", interfaceName).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ip addr show dev %s: %w: %s", interfaceName, err, strings.TrimSpace(string(showOutput)))
-	}
-	if strings.Contains(string(showOutput), normalizedCIDR) {
+	addr := &net.IPNet{IP: parsedIP, Mask: net.CIDRMask(30, 32)}
+	router := routing.NewNetlinkRouter()
+	exists, err := router.AddrExists(interfaceName, addr)
+	if err == nil && exists {
 		return nil
 	}
 
-	if err := addInterfaceAddress(interfaceName, parsedIP.String()); err != nil {
-		if strings.Contains(err.Error(), "File exists") {
+	if err := router.AddrAdd(interfaceName, addr); err != nil {
+		if strings.Contains(err.Error(), "file exists") {
 			return nil
 		}
 		return err

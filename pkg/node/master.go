@@ -3,11 +3,13 @@ package node
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
 	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+	"github.com/thebtf/awg-mesh/pkg/routing"
 	"github.com/thebtf/awg-mesh/pkg/wg"
 )
 
@@ -28,12 +30,23 @@ type MasterTunnel struct {
 	platformState       masterTunnelPlatformState
 }
 
+// PacketForwarder abstracts eBPF-based inter-interface forwarding.
+// Implemented by pkg/ebpf.Forwarder on Linux, nil on other platforms.
+type PacketForwarder interface {
+	SetRoute(overlayIP net.IP, ifindex int) error
+	DeleteRoute(overlayIP net.IP) error
+	Attach(ifaceName string) error
+	Detach(ifaceName string) error
+	Close() error
+}
+
 // MasterRunner runs node logic for master mode.
 type MasterRunner struct {
 	node      *Node
 	tunnels   map[string]*MasterTunnel
 	mu        sync.RWMutex
 	startTime time.Time
+	forwarder PacketForwarder // nil if eBPF unavailable (graceful degradation)
 }
 
 // NewMasterRunner creates a master mode runner.
@@ -222,6 +235,24 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, tran
 	}
 	m.mu.Unlock()
 
+	// Wire eBPF forwarding: add overlay IP → interface index mapping.
+	if m.forwarder != nil && overlayIP != "" {
+		if overlayAddr := net.ParseIP(overlayIP); overlayAddr != nil {
+			ifindex, _ := routing.NewNetlinkRouter().LinkGetIndex(t.InterfaceName)
+			if ifindex > 0 {
+				if fwdErr := m.forwarder.SetRoute(overlayAddr, ifindex); fwdErr != nil {
+					m.node.logger.Warn().Err(fwdErr).Str("tunnel", name).Msg("ebpf: failed to set forwarding route")
+				} else {
+					m.node.logger.Debug().Str("tunnel", name).Str("overlay_ip", overlayIP).Int("ifindex", ifindex).Msg("ebpf: forwarding route set")
+				}
+			}
+		}
+		// Attach TC program to the tunnel interface.
+		if attachErr := m.forwarder.Attach(t.InterfaceName); attachErr != nil {
+			m.node.logger.Warn().Err(attachErr).Str("tunnel", name).Msg("ebpf: failed to attach TC")
+		}
+	}
+
 	if err := m.saveTransportState(t); err != nil {
 		m.mu.Lock()
 		currentTunnel, exists := m.tunnels[name]
@@ -255,6 +286,14 @@ func (m *MasterRunner) RemoveTunnel(name string) error {
 	}
 	delete(m.tunnels, name)
 	m.mu.Unlock()
+
+	// Clean up eBPF forwarding before removing routes.
+	if m.forwarder != nil && tunnel.OverlayIP != "" {
+		if overlayAddr := net.ParseIP(tunnel.OverlayIP); overlayAddr != nil {
+			m.forwarder.DeleteRoute(overlayAddr)
+		}
+		m.forwarder.Detach(tunnel.InterfaceName)
+	}
 
 	// Clean up routing state before closing the interface.
 	m.removeOverlayRoute(tunnel.OverlayIP)
