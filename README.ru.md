@@ -1,13 +1,18 @@
+<!-- LANG_SWITCHER: [English](README.md) | **Русский** | [中文](README.zh.md) -->
+
+<!-- BADGE_ROW -->
 [![CI](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fthebtf%2Fawg--mesh-2496ED?logo=docker)](https://ghcr.io/thebtf/awg-mesh)
 
-🌐 [English](README.md) | Русский
-
 # awg-mesh
 
-Docker-native зашифрованная overlay-сеть на базе AmneziaWG — форк WireGuard с обфускацией DPI, топология как код и автоматический onboarding.
+Docker-native зашифрованная overlay-сеть на базе AmneziaWG — топология как код, двухуровневая балансировка ECMP и анти-DPI обфускация в одном контейнере весом 42 МБ.
+
+Управлять мультирегиональной WireGuard-сетью вручную — значит разбросанные конфиги, ручной обмен ключами и отсутствие failover. awg-mesh заменяет всё это одним файлом `mesh-topology.yml` и тремя командами CLI. Вы описываете желаемую сеть — masters, endpoints, clients — и система автоматически выдаёт ключи, сертификаты, туннели, правила фаервола и записи балансировщика через нативные интерфейсы ядра Linux (netlink, nftables, eBPF) без порождения дочерних процессов.
+
+Модель трафика — двухуровневый ECMP: клиенты подключаются к пулу master-узлов (ingress), каждый master поддерживает AWG-туннели к пулу endpoint-узлов (egress), трафик распределяется по всем живым путям с sticky-сессиями на базе conntrack и failover через проверку доступности.
 
 ## Архитектура
 
@@ -25,11 +30,12 @@ graph TB
     subgraph Endpoints["Endpoint Nodes"]
         e1["awg-mesh-node\n(endpoint)"]
         e2["awg-mesh-node\n(endpoint)"]
+        e3["awg-mesh-node\n(endpoint)"]
     end
 
     subgraph Clients["Clients"]
         lc["awg-mesh-node\n(client, Linux)"]
-        mk["awg-mesh-node\n(client, MikroTik)"]
+        mk["MikroTik\n(client, .rsc)"]
     end
 
     inet["Internet"]
@@ -38,365 +44,231 @@ graph TB
     ctl -- "gRPC :9090\n(mTLS + token)" --> m2
     ctl -- "gRPC :9090\n(mTLS + token)" --> e1
     ctl -- "gRPC :9090\n(mTLS + token)" --> e2
+    ctl -- "gRPC :9090\n(mTLS + token)" --> e3
 
     m1 -- "AWG tunnels\n(ECMP LB)" --> e1
     m1 -- "AWG tunnels\n(ECMP LB)" --> e2
+    m1 -- "AWG tunnels\n(ECMP LB)" --> e3
     m2 -- "AWG tunnels\n(ECMP LB)" --> e1
     m2 -- "AWG tunnels\n(ECMP LB)" --> e2
+    m2 -- "AWG tunnels\n(ECMP LB)" --> e3
 
-    lc -- "AWG\n(DPI-obfuscated)" --> m1
-    lc -- "AWG\n(DPI-obfuscated)" --> m2
+    lc -- "AWG\n(DPI-obfuscated)\nECMP to masters" --> m1
+    lc -- "AWG\n(DPI-obfuscated)\nECMP to masters" --> m2
     mk -- "AWG\n(DPI-obfuscated)" --> m1
     mk -- "AWG\n(DPI-obfuscated)" --> m2
 
     e1 -- NAT --> inet
     e2 -- NAT --> inet
+    e3 -- NAT --> inet
 ```
 
-## Обзор
+## Что нового
 
-awg-mesh — это самохостируемая зашифрованная overlay-сеть для команд, которым нужна надёжная, устойчивая к цензуре связь между несколькими регионами. Построена на [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go) — форке WireGuard с обфускацией протокола для обхода систем глубокой инспекции пакетов (DPI) — и работает полностью в Docker-контейнерах без внешних зависимостей.
+### v1.1.0
 
-Система заменяет ручные WireGuard-конфиги и ручное управление пирами декларативным файлом топологии и CLI-плоскостью управления. Вы описываете нужную сеть в одном YAML-файле, запускаете три команды — сеть поднимается. Обмен ключами, выдача сертификатов, установка туннелей и настройка балансировщика — всё автоматизировано.
+- **Идемпотентная инициализация endpoint** — повторный запуск `endpoint init` безопасен: существующие туннели сохраняются, а не дублируются.
+- **Распространение overlay-маршрутов** — overlay-адреса надёжно анонсируются по всем туннельным интерфейсам после инициализации.
+- **Полностью Go data plane** — удалено 443 строки кода с `exec.Command`; все операции маршрутизации и фаервола выполняются напрямую через netlink, nftables и eBPF.
+- **E2E-симуляционный стенд** — 8-узловая Docker-симуляция (`tests/simulation/`), проверяющая WG-хендшейки, overlay-пинг, количество ECMP-nexthop, связность client-master и общий статус сети.
 
-Маршрутизация трафика работает по двухуровневой модели ECMP: клиенты подключаются к пулу master-узлов (ingress), каждый master поддерживает AWG-туннели к пулу endpoint-узлов (egress), трафик распределяется по доступным путям с sticky-сессиями и failover по результатам healthcheck. Такая архитектура обеспечивает горизонтальное масштабирование как на ingress-, так и на egress-уровне без центрального узкого места маршрутизации.
+### v1.0.0
+
+- **Нативный слой маршрутизации** — управление WireGuard-интерфейсами, программирование маршрутов и правил фаервола через vishvananda/netlink, google/nftables и cilium/ebpf. Никакого вызова внешних процессов во время работы.
+- **Интерфейсы Router / Firewall / Sysctl** — чёткое разделение ответственности; каждая подсистема тестируется и заменяется независимо.
+- **Ноль известных дефектов** — все 15 находок из цикла расследований v0.9.x устранены.
 
 ## Возможности
 
 **Сеть**
-- AmneziaWG overlay-mesh с anti-DPI обфускацией (форк WireGuard)
-- Двухуровневая ECMP-балансировка нагрузки со sticky-сессиями
-- Health-checked failover по master- и endpoint-узлам
-- Настраиваемая адресация overlay-сети с CIDR-диапазонами по ролям
+- AmneziaWG overlay-сеть с настраиваемой анти-DPI обфускацией (форк WireGuard с мусорными пакетами и рандомизацией заголовков S/H)
+- Двухуровневая балансировка ECMP со sticky-сессиями через nftables conntrack
+- Failover по результатам ICMP-проб с временной меткой WG-хендшейка в качестве запасного варианта
+- Настраиваемое overlay-адресное пространство с диапазонами CIDR по ролям и виртуальными IP балансировщика
+- Транспортная point-to-point адресация (10.255.x.x) выделяется автоматически для каждой пары туннелей
 
 **Эксплуатация**
-- Топология как код: единый `mesh-topology.yml` как источник истины
-- Трёхшаговый onboarding: `prepare` → `deploy` → `init`
-- Генерация `.rsc`-скриптов MikroTik RouterOS для провизии клиентов
-- Единый Docker-образ 42 МБ на Alpine — никаких sidecar-контейнеров
+- Топология как код: единственный `mesh-topology.yml` как источник истины
+- Трёхшаговый онбординг: `prepare` (генерация ключей + compose) → `deploy` (копирование на хост) → `init` (активация через gRPC)
+- Генерация `.rsc`-скрипта RouterOS для MikroTik — для подключения аппаратных клиентов
+- Один Alpine Docker-образ весом 42 МБ — никаких sidecar-контейнеров, никаких агентов
 
 **Безопасность**
-- Плоскость управления gRPC с двойной аутентификацией mTLS + bearer token
-- Горячая перезагрузка сертификатов без перезапуска сервиса
-- Трёхуровневая ротация параметров AWG (junk params / S-H headers / keypair)
-- Мимикрия протоколов через захват TLS/QUIC трафика с gopacket
+- Плоскость управления gRPC с двойной аутентификацией mTLS + bearer-токен (требуются оба)
+- Токены хранятся в bcrypt-хэше и ротируются независимо от TLS-сертификатов
+- Трёхуровневая ротация AWG-параметров: junk-параметры / S-H заголовки / полная пара ключей
+- Захват TLS/QUIC-пакетов через gopacket/libpcap для мимикрии под реальный трафик
+
+**Маршрутизация (нативное ядро)**
+- Жизненный цикл WireGuard-интерфейсов через vishvananda/netlink — без вызова `ip`
+- ECMP multipath-маршруты программируются напрямую в таблицу маршрутизации ядра
+- NAT и conntrack через nftables via google/nftables — без вызова `nft`
+- eBPF TC-программы через cilium/ebpf для высокопроизводительной пересылки пакетов
 
 **Наблюдаемость**
 - Prometheus-метрики на `:9091`
-- Структурированное JSON-логирование с настраиваемым уровнем
-- Отчёт о состоянии каждого узла через `mesh-ctl status`
+- Структурированное JSON-логирование через zerolog с настраиваемым уровнем логов
+- Статус по узлам через `mesh-ctl status`
+
+## Применение
+
+- **Цензуроустойчивый egress**: маршрутизация трафика через пул egress-узлов в разных юрисдикциях с автоматическим переключением при блокировке одного из них.
+- **Межрегиональное корпоративное подключение**: соединение офисных роутеров (MikroTik или Linux) с сетью master-узлов, ECMP распределяет нагрузку между ними.
+- **Self-hosted VPN с горизонтальным масштабированием**: добавьте master- или endpoint-узлы в файл топологии и перезапустите `init` — никакой ручной настройки пиров.
+- **Среды с анти-DPI**: параметры обфускации AWG ротируются по расписанию и калибруются по реальному TLS/QUIC-трафику для обхода классификаторов трафика.
 
 ## Быстрый старт
 
-В этом разделе описывается развёртывание сети с нуля: два мастера в России, четыре endpoint-узла в Казахстане и Польше, два клиента.
+Этот пример разворачивает минимальную сеть: два master'а в России, два endpoint'а в Казахстане, один Linux-клиент.
+
+```bash
+# 1. Установите mesh-ctl на своей машине администратора
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+export PATH=$PATH:$(go env GOPATH)/bin
+
+# 2. Создайте файл топологии (все поля описаны в разделе Конфигурация)
+cp mesh-topology.example.yml mesh-topology.yml
+# отредактируйте mesh-topology.yml, указав реальные IP-адреса и имена узлов
+
+# 3. Подготовьте каждый узел (генерирует ключи, токен, docker-compose файл)
+mesh-ctl master   prepare ru-master-01 -t mesh-topology.yml
+mesh-ctl master   prepare ru-master-02 -t mesh-topology.yml
+mesh-ctl endpoint prepare kz-01        -t mesh-topology.yml
+mesh-ctl endpoint prepare kz-02        -t mesh-topology.yml
+mesh-ctl client   prepare branch-01    -t mesh-topology.yml
+
+# 4. Скопируйте сгенерированные <name>-docker-compose.yml и запустите контейнеры на каждом хосте
+#    (подробный workflow с scp + docker compose — в разделе Деплой)
+
+# 5. Инициализируйте сеть — подключается через gRPC и поднимает AWG-туннели
+mesh-ctl endpoint init kz-01        -t mesh-topology.yml
+mesh-ctl endpoint init kz-02        -t mesh-topology.yml
+mesh-ctl master   init ru-master-01 -t mesh-topology.yml
+mesh-ctl master   init ru-master-02 -t mesh-topology.yml
+mesh-ctl client   init branch-01    -t mesh-topology.yml
+
+# 6. Проверьте состояние
+mesh-ctl status -t mesh-topology.yml
+```
+
+## Установка
 
 ### Требования
 
-**На каждом хосте, который будет запускать узел сети:**
-- Docker Engine 24+ (или Docker Desktop)
-- Ядро Linux с доступным `/dev/net/tun` (стандарт во всех современных дистрибутивах)
-- Входящий UDP 51820 и TCP 9090 доступны с вашей машины администратора
+**Машина администратора** (там, где запускается `mesh-ctl`):
+- Go 1.25+
+- Сетевой доступ к порту 9090 на каждом хосте с узлом
 
-**На машине администратора:**
-- Go 1.24+ (для сборки `mesh-ctl`)
-- Сетевой доступ к порту 9090 на каждом хосте
+**Каждый хост с узлом**:
+- Docker Engine 24+
+- Ядро Linux с доступным `/dev/net/tun` (стандартно во всех современных дистрибутивах)
+- Открытый исходящий UDP 51820 и входящий TCP 9090
 
-### Шаг 1: Установка mesh-ctl
-
-`mesh-ctl` — это CLI, который запускается на рабочей станции администратора для управления сетью. На узлах он не запускается.
-
-**Публичный репозиторий:**
+### Установка mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
 ```
 
-Бинарник устанавливается в `$GOPATH/bin` (обычно `~/go/bin`). Убедитесь, что он в `PATH`:
+Бинарник окажется в `$(go env GOPATH)/bin`. Убедитесь, что эта директория есть в `PATH`:
 
 ```bash
 export PATH=$PATH:$(go env GOPATH)/bin
-```
-
-**Приватный репозиторий** (требуется SSH-доступ к Git):
-
-```bash
-git clone git@github.com:thebtf/awg-mesh.git
-cd awg-mesh
-make install    # Linux/macOS
-# Windows (PowerShell):
-go install -trimpath -ldflags "-X main.version=$(git describe --tags --always) -s -w" ./cmd/mesh-ctl
-```
-
-Проверка:
-
-```bash
 mesh-ctl version
 ```
 
-При первом использовании `mesh-ctl` автоматически создаёт директорию состояния **`~/.mesh-ctl/`**. Там хранятся CA сертификат меша, токены и публичные ключи узлов. Текущее состояние можно проверить:
+При первом запуске `mesh-ctl` создаёт `~/.mesh-ctl/` для хранения mesh CA, токенов по узлам, публичных ключей и транспортных выделений. Посмотреть текущее состояние можно в любой момент:
 
 ```bash
-mesh-ctl config show
+mesh-ctl config show -t mesh-topology.yml
 ```
 
-### Шаг 2: Создание файла топологии
+### Деплой контейнеров узлов
 
-Создайте `mesh-topology.yml` в рабочей директории. Можно начать с [примера из репозитория](mesh-topology.example.yml) или написать с нуля.
-
-Если вы клонировали репозиторий:
+`mesh-ctl prepare` генерирует `<name>-docker-compose.yml` для каждого узла. Скопируйте его на целевой хост и запустите контейнер:
 
 ```bash
-cp mesh-topology.example.yml mesh-topology.yml
+# Перенос файлов на хост
+ssh user@185.10.20.30 'sudo mkdir -p /srv/awg-mesh'
+scp ru-master-01-docker-compose.yml user@185.10.20.30:~/
+
+# Запуск контейнера
+ssh user@185.10.20.30 'docker compose -f ru-master-01-docker-compose.yml up -d'
 ```
 
-Иначе создайте файл вручную. Минимальная топология для двух мастеров, двух endpoint-узлов и одного клиента:
+Сгенерированный compose-файл содержит правильный образ, capabilities, проброс портов и флаги запуска для конкретного узла. При желании можно включить блок сервиса `awg-mesh-node` в существующий compose-файл вашей инфраструктуры — см. [Деплой](#деплой).
 
-```yaml
-overlay:
-  space: 172.20.70.0/24
-  physical_mtu: 1500
-  awg_overhead: 80
-  ranges:
-    - name: masters
-      cidr: 172.20.70.0/27
-      balancer_ip: 172.20.70.1
-    - name: endpoints
-      cidr: 172.20.70.32/27
-      balancer_ip: 172.20.70.33
-    - name: clients
-      cidr: 172.20.70.128/25
-
-masters:
-  - name: ru-master-01
-    host: 185.10.20.30
-    overlay_ip: 172.20.70.2
-    listen_port: 51820
-    endpoints:
-      - kz-01
-      - pl-01
-  - name: ru-master-02
-    host: 185.10.20.31
-    overlay_ip: 172.20.70.3
-    listen_port: 51820
-    endpoints:
-      - kz-01
-      - pl-01
-
-endpoints:
-  - name: kz-01
-    host: 195.200.100.10
-    overlay_ip: 172.20.70.34
-    listen_port: 51820
-    region: kz
-  - name: pl-01
-    host: 91.200.50.100
-    overlay_ip: 172.20.70.37
-    listen_port: 51820
-    region: pl
-
-clients:
-  - name: branch-router
-    type: mikrotik
-    overlay_ip: 172.20.70.131
-    masters:
-      - ru-master-01
-      - ru-master-02
-
-capture:
-  domains_file: /config/domains.txt
-  schedule: "0 3 * * *"
-  retention_days: 30
-
-rotation:
-  defaults:
-    tier1_interval: 24h
-    tier2_interval: 168h
-    tier3_interval: 720h
-    preset: aggressive
-```
-
-### Шаг 3: Подготовка узлов
-
-Запустите `prepare` для каждого узла. Команда генерирует AWG-ключевые пары, mTLS-сертификаты, bearer token и Docker Compose-сниппет для данного узла:
+### Проверка
 
 ```bash
-# Подготовка всех мастеров
-mesh-ctl -t mesh-topology.yml master prepare --name ru-master-01
-mesh-ctl -t mesh-topology.yml master prepare --name ru-master-02
-
-# Подготовка всех endpoint-узлов
-mesh-ctl -t mesh-topology.yml endpoint prepare --name kz-01
-mesh-ctl -t mesh-topology.yml endpoint prepare --name pl-01
-
-# Подготовка клиентов (генерирует .rsc для MikroTik, если type: mikrotik)
-mesh-ctl -t mesh-topology.yml client prepare --name branch-router
+mesh-ctl status -t mesh-topology.yml
 ```
 
-После `prepare` сгенерированные файлы каждого узла хранятся в `~/.mesh-ctl/<node-name>/`. Compose-сниппет находится по пути `~/.mesh-ctl/<node-name>/docker-compose.snippet.yml`.
+Все узлы должны отображаться как `ONLINE` с количеством туннелей, соответствующим топологии.
 
-### Шаг 4: Развёртывание на хостах
+## Обновление
 
-Сгенерированный compose-сниппет — **не** самостоятельный compose-файл. Он определяет сервис `awg-mesh-node` в том виде, в каком он должен появиться внутри существующего compose-файла вашей инфраструктуры. Скопируйте сниппет на целевой хост и интегрируйте его.
-
-**Перенос конфига и compose-сниппета на хост:**
+### Обновление mesh-ctl
 
 ```bash
-# Создать директорию конфига на хосте (путь монтирования по умолчанию)
-ssh user@185.10.20.30 'sudo mkdir -p /srv/awg-mesh && sudo chown $USER /srv/awg-mesh'
-
-# Скопировать сгенерированный конфиг узла (ключи, сертификаты, токен, топология)
-scp -r ~/.mesh-ctl/ru-master-01/config/ user@185.10.20.30:/srv/awg-mesh/
-
-# Скопировать compose-сниппет для справки
-scp ~/.mesh-ctl/ru-master-01/docker-compose.snippet.yml user@185.10.20.30:~/
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
 ```
 
-**На хосте откройте существующий `docker-compose.yml` и добавьте сервис `awg-mesh-node`.** Например, если ваш инфраструктурный compose выглядит так:
+Директория состояния `~/.mesh-ctl/` (CA, токены, ключи, транспортные выделения) не затрагивается.
 
-```yaml
-# /home/user/infra/docker-compose.yml  (существующий файл)
-services:
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
+### Обновление контейнеров узлов
 
-  app:
-    image: myapp:latest
-    depends_on:
-      - postgres
-
-  postgres:
-    image: postgres:16
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-volumes:
-  pgdata:
-```
-
-Добавьте сервис узла, объединив сниппет:
-
-```yaml
-# /home/user/infra/docker-compose.yml  (после добавления awg-mesh-node)
-services:
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-
-  app:
-    image: myapp:latest
-    depends_on:
-      - postgres
-
-  postgres:
-    image: postgres:16
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  # --- awg-mesh-node (из mesh-ctl prepare) ---
-  awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:latest
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    volumes:
-      - /srv/awg-mesh:/config
-    ports:
-      - "51820:51820/udp"
-      - "9090:9090"
-      - "9091:9091"
-    command:
-      - --mode=master
-      - --name=ru-master-01
-      - --topology=/config/mesh-topology.yml
-
-volumes:
-  pgdata:
-```
-
-Стяните образ и запустите новый сервис без перезапуска существующих контейнеров:
+Загрузите новый образ и перезапустите. AWG-туннели восстанавливаются за 2–5 секунд:
 
 ```bash
-ssh user@185.10.20.30 'cd ~/infra && docker compose pull awg-mesh-node && docker compose up -d awg-mesh-node'
+# На каждом хосте с узлом:
+docker compose -f <name>-docker-compose.yml pull
+docker compose -f <name>-docker-compose.yml up -d
 ```
 
-Повторите для каждого хоста.
-
-### Шаг 5: Инициализация сети
-
-Когда все контейнеры запущены и порт 9090 доступен, запустите `init` для каждого узла. Команда подключается по gRPC, проверяет mTLS + токен аутентификации, обменивается конфигурациями пиров и поднимает AWG-туннели:
+В конфигурациях с несколькими master'ами обновляйте по одному, чтобы сохранить связность:
 
 ```bash
-mesh-ctl -t mesh-topology.yml master init --name ru-master-01
-mesh-ctl -t mesh-topology.yml master init --name ru-master-02
-mesh-ctl -t mesh-topology.yml endpoint init --name kz-01
-mesh-ctl -t mesh-topology.yml endpoint init --name pl-01
-mesh-ctl -t mesh-topology.yml client init --name branch-router
+# Обновляем Master 1 (ECMP продолжает пропускать трафик через Master 2)
+ssh master-01 'docker compose -f ru-master-01-docker-compose.yml pull && docker compose -f ru-master-01-docker-compose.yml up -d'
+
+# Ждём восстановления Master 1
+mesh-ctl status -t mesh-topology.yml
+
+# Затем обновляем Master 2
+ssh master-02 'docker compose -f ru-master-02-docker-compose.yml pull && docker compose -f ru-master-02-docker-compose.yml up -d'
 ```
 
-### Шаг 6: Проверка
-
-```bash
-# Проверить все узлы
-mesh-ctl -t mesh-topology.yml status
-
-# Детальная проверка конкретного узла
-mesh-ctl -t mesh-topology.yml status --node ru-master-01
-```
-
-Здоровая сеть показывает все туннели в состоянии up, активные ECMP-пути и отсутствие ошибок healthcheck.
-
-## Развёртывание
+## Деплой
 
 ### Docker-образ
 
 ```
 ghcr.io/thebtf/awg-mesh:latest
+ghcr.io/thebtf/awg-mesh:v1.1.0
+ghcr.io/thebtf/awg-mesh:<commit-sha>
 ```
 
-- Размер: ~42 МБ (базовый образ Alpine, статический Go-бинарник)
+- Размер: ~42 МБ (базовый образ Alpine)
 - Архитектуры: `linux/amd64`, `linux/arm64`
-- Нет внешних runtime-зависимостей
+- Никаких внешних runtime-зависимостей
 
 ### Монтирование тома
 
-Контейнер ожидает конфигурацию в `/config`. Смапируйте на `/srv/awg-mesh` на хосте (по умолчанию):
+Контейнер ожидает конфигурацию по пути `/config`. Смонтируйте туда директорию конфигурации узла:
 
 ```
 /srv/awg-mesh  →  /config  (внутри контейнера)
 ```
 
-Директория конфига должна содержать:
-- `mesh-topology.yml` — файл топологии
-- `node.key`, `node.pub` — AWG-ключевая пара
-- `node.crt`, `node.key.pem`, `ca.crt` — mTLS-сертификаты
-- `token` — bearer token для gRPC-аутентификации
+`mesh-ctl prepare` генерирует все необходимые файлы в привязку тома compose-файла.
 
-`mesh-ctl prepare` генерирует всё это. Скопируйте файлы в `/srv/awg-mesh/` перед запуском контейнера.
-
-### Интеграция в существующий docker-compose
-
-Compose-сниппет из `mesh-ctl prepare` — это отправная точка, а не самостоятельный файл. Предполагаемый рабочий процесс:
-
-1. `mesh-ctl prepare` генерирует блок сервиса для вашего узла
-2. Вы копируете этот блок в существующий `docker-compose.yml` вашей инфраструктуры
-3. Вы запускаете `docker compose up -d awg-mesh-node` вместе с другими сервисами
-
-Это позволяет awg-mesh-node находиться в одной Docker-сети с контейнерами вашего приложения и избегать управления отдельным compose-файлом на каждом хосте.
-
-**Минимальное определение сервиса** (что добавить в существующий compose):
+### Минимальное описание сервиса
 
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:latest
+    image: ghcr.io/thebtf/awg-mesh:v1.1.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -420,39 +292,35 @@ services:
 | Порт | Протокол | Назначение |
 |------|----------|-----------|
 | 51820 | UDP | AmneziaWG data plane (туннели между пирами) |
-| 9090 | TCP | gRPC management (mTLS + token аутентификация) |
-| 9091 | TCP | Prometheus-метрики |
+| 9090 | TCP | gRPC management (mTLS + token auth) |
+| 9091 | TCP | Prometheus metrics |
 
 Порт 51820 должен быть доступен между узлами (masters ↔ endpoints, clients → masters).
-Порт 9090 должен быть доступен с машины администратора, запускающей `mesh-ctl`.
+Порт 9090 должен быть доступен с машины администратора, где запущен `mesh-ctl`.
 
 ### Необходимые capabilities
 
-Контейнеру нужны Linux capabilities для управления сетевыми интерфейсами:
-
 | Capability | Причина |
 |-----------|---------|
-| `NET_ADMIN` | Создание и настройка WireGuard/AWG-интерфейсов |
-| `NET_RAW` | Захват трафика gopacket для мимикрии протоколов |
-| `/dev/net/tun` | TUN-устройство для overlay-сетевого интерфейса |
+| `NET_ADMIN` | Создание и настройка AWG-интерфейсов, программирование маршрутов, управление nftables |
+| `NET_RAW` | Захват трафика через gopacket/libpcap для определения протокольного fingerprint |
+| `/dev/net/tun` | TUN-устройство для overlay-интерфейса сети |
 
 ### Интеграция с systemd (опционально)
 
-Если нужно, чтобы compose-стек запускался при загрузке без Docker Desktop, создайте systemd unit:
-
 ```ini
-# /etc/systemd/system/infra.service
+# /etc/systemd/system/awg-mesh.service
 [Unit]
-Description=Infrastructure docker-compose stack
+Description=awg-mesh node
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/user/infra
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+WorkingDirectory=/home/user
+ExecStart=/usr/bin/docker compose -f ru-master-01-docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f ru-master-01-docker-compose.yml down
 TimeoutStartSec=0
 
 [Install]
@@ -460,358 +328,455 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now infra.service
+sudo systemctl enable --now awg-mesh.service
 ```
 
-## Обновление
-
-### Обновление mesh-ctl
-
-**Публичный репозиторий:**
-
-```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
-```
-
-**Из локального клона:**
-
-```bash
-cd awg-mesh
-git pull
-make install    # Linux/macOS
-# Windows (PowerShell):
-go install -trimpath -ldflags "-X main.version=$(git describe --tags --always) -s -w" ./cmd/mesh-ctl
-```
-
-Состояние `~/.mesh-ctl/` (CA, токены, ключи узлов) не затрагивается при обновлении.
-
-### Обновление узлов
-
-Загрузите новый образ и перезапустите контейнер. AWG-туннели кратковременно переподключатся (~2-5 сек):
-
-```bash
-# На каждом хосте:
-docker pull ghcr.io/thebtf/awg-mesh:latest
-docker compose restart awg-mesh-node
-```
-
-Для multi-master конфигураций — обновляйте по одному мастеру за раз:
-
-```bash
-# Master 1 (MikroTik ECMP продолжает маршрутизацию через Master 2):
-ssh master-01 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
-# Дождитесь возврата Master 1:
-mesh-ctl status
-# Затем Master 2:
-ssh master-02 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
-```
-
-Конфигурация в `/srv/awg-mesh` сохраняется при перезапусках. TLS-сертификаты, ключи и токены не затрагиваются.
-
-### Фиксация версии
-
-Для привязки к конкретной версии вместо `latest`:
-
-```yaml
-services:
-  awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:v0.1.0   # привязка к тегу релиза
-```
-
-Доступные теги:
-- `latest` — последняя сборка из master
-- `v0.1.0` — тег релиза (рекомендуется для production)
-- `<commit-sha>` — конкретный коммит (для отладки)
-
-## Конфигурация топологии
+## Конфигурация
 
 `mesh-topology.yml` — единственный источник истины для всей сети. Все команды `mesh-ctl` читают из этого файла.
 
 ### overlay
 
-Глобальные параметры сети:
-
 ```yaml
 overlay:
-  space: 172.20.70.0/24      # общее адресное пространство overlay-сети
+  space: 172.20.70.0/24      # полное адресное пространство overlay-сети
   physical_mtu: 1500          # MTU физической сети (обычно: 1500)
   awg_overhead: 80            # байты накладных расходов AWG-инкапсуляции
   ranges:
     - name: masters           # метка диапазона (информационная)
       cidr: 172.20.70.0/27   # диапазон адресов для master-узлов
-      balancer_ip: 172.20.70.1  # виртуальный IP для ECMP-балансировщика
+      balancer_ip: 172.20.70.1  # виртуальный IP ECMP-балансировщика
     - name: endpoints
       cidr: 172.20.70.32/27
       balancer_ip: 172.20.70.33
     - name: clients
-      cidr: 172.20.70.128/25  # для leaf-узлов balancer_ip не нужен
+      cidr: 172.20.70.128/25  # leaf-узлы — balancer_ip не нужен
 ```
 
-Overlay MTU вычисляется как `physical_mtu - awg_overhead`. Установите `physical_mtu` в MTU вашего физического канала; `awg_overhead` учитывает заголовки AWG, UDP и IP-инкапсуляцию.
+Overlay MTU = `physical_mtu - awg_overhead`. Укажите в `physical_mtu` MTU вашего физического канала.
 
 ### masters
 
-Узлы, принимающие клиентские подключения и пересылающие трафик на endpoint-узлы:
-
 ```yaml
 masters:
-  - name: ru-master-01        # уникальное имя, используется во всех командах mesh-ctl
-    host: 185.10.20.30        # публичный IP хоста, запускающего этот узел
+  - name: ru-master-01        # уникальное имя во всех командах mesh-ctl
+    host: 185.10.20.30        # публичный IP — используется mesh-ctl для gRPC-подключений
+    peer_host: 192.168.50.10  # опционально: адрес для WG-пиринга, если отличается от host
+                              #   (например, в Docker-симуляции с внутренними IP контейнеров)
     overlay_ip: 172.20.70.2   # назначенный overlay IP (из диапазона masters.cidr)
-    listen_port: 51820         # AWG-порт прослушивания
-    endpoints:                 # к каким endpoint-узлам подключается этот мастер
+    listen_port: 51820         # AWG listen port
+    grpc_port: 9090            # опционально: переопределение gRPC-порта (по умолчанию: 9090)
+    endpoints:                 # к каким endpoint-узлам подключается этот master
       - kz-01
       - kz-02
       - pl-01
 ```
 
-### endpoints
+`peer_host` используется, когда адрес, по которому WireGuard-пиры достигают этот узел, отличается от адреса, который `mesh-ctl` использует для gRPC-управления. Типичный случай — Docker-симуляции, где внутренние IP контейнеров используются для data-plane пиринга, а `localhost` с проброшенными портами — для управления.
 
-Egress-узлы, обеспечивающие NAT в интернет:
+### endpoints
 
 ```yaml
 endpoints:
   - name: kz-01
-    host: 195.200.100.10
+    host: 195.200.100.10      # публичный IP — используется mesh-ctl для gRPC-подключений
+    peer_host: 192.168.50.20  # опционально: адрес WG-пиринга (см. peer_host выше)
     overlay_ip: 172.20.70.34
     listen_port: 51820
-    region: kz               # опциональный тег региона для группировки
+    grpc_port: 9090            # опционально: переопределение gRPC-порта
+    region: kz                 # опциональная метка региона (информационная)
 ```
 
 ### clients
 
-Leaf-узлы, подключающиеся к мастерам:
-
 ```yaml
 clients:
   - name: branch-router
-    type: mikrotik            # linux | mikrotik
+    type: linux                # linux | mikrotik
+    host: 203.0.113.5          # management-хост для gRPC (Linux-клиенты)
     overlay_ip: 172.20.70.131
+    grpc_port: 9090            # опционально: переопределение gRPC-порта
     masters:
-      - ru-master-01          # к каким мастерам подключается этот клиент
+      - ru-master-01           # к каким master'ам подключается этот клиент
       - ru-master-02
 ```
 
-Для `type: mikrotik` команда `mesh-ctl client prepare` генерирует `.rsc`-скрипт, готовый к импорту на RouterOS-устройство.
+Для `type: mikrotik` команда `mesh-ctl client prepare` генерирует `.rsc`-скрипт, готовый для вставки в терминал RouterOS. Для MikroTik-клиентов поля `host` и `grpc_port` не нужны — они провизируются офлайн.
 
 ### capture
 
-Управляет подсистемой мимикрии протоколов (только для master-узлов):
+Управляет выборкой TLS/QUIC fingerprint, используемой для мимикрии AWG-протокола (только master-узлы):
 
 ```yaml
 capture:
-  domains_file: /config/domains.txt  # список доменов для сэмплирования TLS/QUIC
-  schedule: "0 3 * * *"              # cron: обновлять fingerprints ежедневно в 3:00
-  retention_days: 30                 # сколько хранить данные захваченных fingerprints
+  domains_file: /config/domains.txt  # список доменов для выборки
+  schedule: "24h"                     # интервал обновления (duration или cron-выражение)
+  retention_days: 30                  # срок хранения захваченных данных
 ```
 
 ### rotation
 
-Расписание ротации параметров AWG:
+Расписание ротации AWG-параметров обфускации:
 
 ```yaml
 rotation:
   defaults:
-    tier1_interval: 24h     # ротация параметров junk-пакетов каждые 24ч
-    tier2_interval: 168h    # ротация S/H-заголовков обфускации еженедельно
-    tier3_interval: 720h    # полная ротация ключевой пары ежемесячно
+    tier1_interval: 24h     # ротация параметров мусорных пакетов
+    tier2_interval: 168h    # ротация байт заголовков S1/H1/S2/H2
+    tier3_interval: 720h    # полная ротация AWG-ключевой пары
     preset: aggressive      # пресет параметров обфускации
 ```
 
 ### transport
 
-Point-to-point адресация для WireGuard-туннелей. Каждая связка master↔endpoint получает уникальную подсеть /30 из пула. mesh-ctl выделяет автоматически — ноды никогда не назначают транспортные адреса самостоятельно.
+Point-to-point адресация для WireGuard-туннельных интерфейсов. Выделяется автоматически через `mesh-ctl` — вручную назначать не нужно:
 
 ```yaml
 transport:
-  pool: 10.255.0.0/16         # пул адресов для point-to-point линков туннелей
-  prefix_length: 30            # /30 = 4 IP на туннель (2 используемых: сторона master + endpoint)
+  pool: 10.255.0.0/16      # пул адресов для туннельных point-to-point линков
+  prefix_length: 30         # /30 = 4 IP на туннель (2 используемых: сторона master + сторона endpoint)
 ```
 
-**Как это работает:**
-- Overlay IP (172.20.70.x) живут на loopback — это видимые пользователю адреса
-- Transport IP (10.255.x.x) живут на WireGuard-интерфейсах — это невидимая инфраструктура
-- Master маршрутизирует overlay через transport next-hop: `172.20.70.34 via 10.255.0.2 dev wg-kz-01`
-- ECMP balancer IP используют взвешенные transport nexthop для распределения нагрузки
-- Healthcheck пингует transport peer IP для проверки состояния туннеля
-- При перезапуске ноды transport state восстанавливается из `/config/transport.yml`
+Транспортные выделения хранятся в `~/.mesh-ctl/transport.yml` и видны через `mesh-ctl config show`.
 
-Аллокации хранятся в `~/.mesh-ctl/transport.yml` и видны через `mesh-ctl config show`.
+## Использование
+
+### Типовые сценарии
+
+**Первоначальное развёртывание сети:**
+
+```bash
+# Подготовка всех узлов (генерирует ключи, токены, docker-compose файлы)
+mesh-ctl master   prepare ru-master-01 -t mesh-topology.yml
+mesh-ctl master   prepare ru-master-02 -t mesh-topology.yml
+mesh-ctl endpoint prepare kz-01        -t mesh-topology.yml
+mesh-ctl endpoint prepare pl-01        -t mesh-topology.yml
+mesh-ctl client   prepare branch-01    -t mesh-topology.yml
+
+# Деплой контейнеров (копирование compose-файлов на хосты, запуск контейнеров)
+# ...см. раздел Деплой...
+
+# Инициализация — сначала endpoint'ы, чтобы master'а могли обменяться ключами пиров
+mesh-ctl endpoint init kz-01        -t mesh-topology.yml
+mesh-ctl endpoint init pl-01        -t mesh-topology.yml
+mesh-ctl master   init ru-master-01 -t mesh-topology.yml
+mesh-ctl master   init ru-master-02 -t mesh-topology.yml
+mesh-ctl client   init branch-01    -t mesh-topology.yml
+```
+
+**Проверка состояния сети:**
+
+```bash
+mesh-ctl status -t mesh-topology.yml
+mesh-ctl status --node ru-master-01 -t mesh-topology.yml
+```
+
+**Ротация AWG-параметров:**
+
+```bash
+mesh-ctl rotate --tier 1 -t mesh-topology.yml   # junk-параметры (без перезапуска туннеля)
+mesh-ctl rotate --tier 2 -t mesh-topology.yml   # S/H заголовки (кратковременный re-handshake)
+mesh-ctl rotate --tier 3 -t mesh-topology.yml   # полная пара ключей (переустановка туннеля)
+```
+
+**Ротация bearer-токенов:**
+
+```bash
+mesh-ctl token rotate -t mesh-topology.yml
+mesh-ctl token rotate --node ru-master-01 -t mesh-topology.yml
+```
+
+**Обновление протокольных fingerprint:**
+
+```bash
+mesh-ctl capture refresh -t mesh-topology.yml
+```
 
 ## Режимы узлов
 
-Все режимы запускаются из одного бинарника: `awg-mesh-node`. Режим выбирается флагом `--mode`.
+Все три режима работают из одного бинарника (`awg-mesh-node`). Режим выбирается флагом `--mode`.
 
-| Режим | Роль | Ключевые обязанности |
+| Режим | Роль | Основные обязанности |
 |-------|------|----------------------|
-| `master` | Ingress + маршрутизация | Принимает клиентские подключения, поддерживает AWG-туннели к endpoint-узлам, ECMP-балансировка, healthcheck, захват трафика |
-| `endpoint` | Egress + NAT | AWG-сервер, принимающий туннели от мастеров, NAT в интернет, назначение overlay IP |
-| `client` | Leaf-узел | Туннели к мастерам, overlay-маршрутизация, генерация `.rsc` для MikroTik |
+| `master` | Ingress + маршрутизация | Принимает AWG-подключения клиентов, поддерживает туннели к endpoint'ам, программирует ECMP-маршруты, проверяет доступность endpoint'ов, запускает цикл захвата |
+| `endpoint` | Egress + NAT | AWG-сервер, принимающий туннели от master'ов, NAT в интернет, назначение overlay-IP |
+| `client` | Leaf-узел | AWG-туннели к master'ам, ECMP-маршрут к balancer IP master'ов, overlay-маршрутизация |
 
-**Флаги бинарника**
+### Флаги бинарника узла
 
 ```
---mode          string   Режим работы узла: master|endpoint|client (обязательно)
+--mode          string   Режим работы узла: master|endpoint|client (по умолчанию: master)
 --name          string   Имя узла, совпадающее с записью в топологии (обязательно)
---config-dir    string   Директория для ключей, сертификатов и runtime-состояния (по умолчанию: /config)
---topology      string   Путь к mesh-topology.yml (без значения по умолчанию — указать явно или получить конфиг через gRPC Init)
+--overlay-ip    string   Overlay IP-адрес этого узла (например, 172.20.70.2)
+--listen-port   int      UDP порт AWG/WireGuard (по умолчанию: 51820)
+--config-dir    string   Директория для ключей, сертификатов, токена и runtime-состояния (по умолчанию: /config)
+--topology      string   Путь к mesh-topology.yml (опционально — узел может получить конфиг через gRPC Init)
 --log-level     string   Уровень логирования: debug|info|warn|error (по умолчанию: info)
---metrics-addr  string   Адрес прослушивания Prometheus-метрик (по умолчанию: :9091)
+--metrics-addr  string   Адрес Prometheus metrics (по умолчанию: :9091)
 ```
 
-## Справочник CLI
+## Справка по CLI
 
-`mesh-ctl` запускается на рабочей станции администратора и взаимодействует с узлами через gRPC.
+`mesh-ctl` запускается на рабочей станции администратора и общается с узлами через gRPC (mTLS + токен).
 
 **Глобальные флаги:**
 
 ```
--t, --topology string    Путь к mesh-topology.yml (по умолчанию: mesh-topology.yml)
-    --config-dir string  Директория состояния mesh-ctl: сертификаты, токены, данные сессий (по умолчанию: ~/.mesh-ctl)
+-t, --topology    string   Путь к mesh-topology.yml (по умолчанию: mesh-topology.yml)
+    --config-dir  string   Директория состояния mesh-ctl (по умолчанию: ~/.mesh-ctl)
 ```
 
-### Жизненный цикл узла
+### Жизненный цикл узлов
 
 ```bash
-# Master-узел
-mesh-ctl master prepare --name <name>   # генерация ключей, сертификатов, токена, compose-сниппета
-mesh-ctl master init    --name <name>   # подключение по gRPC и активация узла
-mesh-ctl master remove  --name <name>   # плановый вывод из эксплуатации
+# Master-узлы
+mesh-ctl master prepare <name>   # генерация ключей, токена, docker-compose файла
+mesh-ctl master init    <name>   # активация через gRPC: выпуск сертификатов, обмен пирами, подъём туннелей
+mesh-ctl master remove  <name>   # снос всех туннелей с этого master'а
 
-# Endpoint-узел
-mesh-ctl endpoint prepare --name <name>
-mesh-ctl endpoint init    --name <name>
-mesh-ctl endpoint remove  --name <name>
+# Endpoint-узлы
+mesh-ctl endpoint prepare <name>
+mesh-ctl endpoint init    <name>
+mesh-ctl endpoint remove  <name>
 
-# Клиентский узел
-mesh-ctl client prepare --name <name>   # генерация конфига + MikroTik .rsc (при наличии)
-mesh-ctl client init    --name <name>
-mesh-ctl client remove  --name <name>
+# Клиентские узлы
+mesh-ctl client prepare <name>   # генерирует конфиг Linux или MikroTik .rsc
+mesh-ctl client init    <name>
+mesh-ctl client remove  <name>
 ```
 
 ### Статус и мониторинг
 
 ```bash
-mesh-ctl status                         # таблица состояния всей сети
-mesh-ctl status --node <name>           # детали конкретного узла
+mesh-ctl status                   # таблица состояния всей сети (все узлы)
+mesh-ctl status --node <name>     # детали по одному узлу
+```
+
+### Ротация AWG-параметров
+
+```bash
+mesh-ctl rotate --tier 1                    # ротация количества и размеров мусорных пакетов
+mesh-ctl rotate --tier 2                    # ротация заголовков обфускации S1/H1/S2/H2
+mesh-ctl rotate --tier 3                    # полная ротация ключевой пары
+mesh-ctl rotate --tier 3 --node <name>     # ротация ключевой пары на одном узле
 ```
 
 ### Управление токенами
 
 ```bash
-mesh-ctl token rotate                   # ротация bearer-токенов на всех узлах
-mesh-ctl token rotate --node <name>     # ротация на конкретном узле
+mesh-ctl token rotate                       # ротация bearer-токенов на всех узлах
+mesh-ctl token rotate --node <name>        # ротация на конкретном узле
 ```
 
-### Ротация параметров AWG
+### Захват трафика (протокольная мимикрия)
 
 ```bash
-mesh-ctl rotate --tier 1                # ротация параметров junk-заголовков
-mesh-ctl rotate --tier 2                # ротация S/H-заголовков обфускации
-mesh-ctl rotate --tier 3                # полная ротация ключевой пары
-mesh-ctl rotate --tier 3 --node <name> # ротация ключевой пары на одном узле
-```
-
-### Захват трафика (мимикрия протоколов)
-
-```bash
-mesh-ctl capture refresh                         # обновить fingerprint TLS/QUIC в реальном времени
-mesh-ctl capture schedule --cron "0 4 * * *"    # настроить автоматическое обновление по расписанию
-mesh-ctl capture domains --list                  # показать домены для fingerprinting
+mesh-ctl capture refresh                              # немедленное обновление TLS/QUIC fingerprint
+mesh-ctl capture schedule --cron "0 4 * * *"         # настройка автоматического обновления по расписанию
+mesh-ctl capture domains --list                       # список доменов для выборки
 ```
 
 ### Управление overlay IP
 
 ```bash
-mesh-ctl ip list                        # список назначенных overlay IP
-mesh-ctl ip range --set 10.100.0.0/16  # настроить диапазон overlay-адресов
+mesh-ctl ip list                            # список всех назначенных overlay IP
+mesh-ctl ip range --set 10.100.0.0/16      # настройка диапазона overlay-адресов
 ```
 
-### Утилиты
+### Конфигурация
 
 ```bash
-mesh-ctl version                        # версия клиента и подключённых узлов
+mesh-ctl config show                        # отобразить текущее состояние mesh-ctl
+mesh-ctl version                            # показать версию mesh-ctl
 ```
+
+## Архитектура
+
+### Слой маршрутизации
+
+Data plane работает полностью через нативные интерфейсы ядра Linux — никаких дочерних процессов во время работы:
+
+```mermaid
+graph LR
+    subgraph awg-mesh-node
+        A[Node core] --> B[Router\nnetlink]
+        A --> C[Firewall\nnftables]
+        A --> D[eBPF TC\ncilium/ebpf]
+        A --> E[AWG UAPI\namneziawg-go]
+    end
+
+    B -->|ip link / ip route| K[Linux kernel\nrouting table]
+    C -->|nf_tables| K
+    D -->|tc filter| K
+    E -->|UAPI socket| W[AWG kernel module]
+```
+
+- **Router (netlink)**: создаёт WireGuard-интерфейсы, программирует ECMP multipath-маршруты, управляет транспортными point-to-point линками через `vishvananda/netlink` — ноль вызовов `ip`.
+- **Firewall (nftables)**: настраивает NAT masquerade, conntrack для sticky-сессий и правила меток пакетов через `google/nftables` — ноль вызовов `nft`.
+- **eBPF TC**: высокопроизводительные программы пересылки пакетов, загружаемые через `cilium/ebpf`.
+- **AWG UAPI**: настройка пиров, обмен ключами и параметры обфускации через AmneziaWG UAPI-сокет (`amneziawg-go` импортируется как библиотека, не как subprocess).
+
+### Плоскость управления gRPC
+
+Все операции control plane проходят через gRPC-сервер на `:9090`. 14 RPC включают:
+
+- `Init` — провизирование узла сертификатами, конфигурацией и overlay IP
+- `AddTunnel` / `RemoveTunnel` — управление AWG-туннелями master→endpoint
+- `AddPeer` / `RemovePeer` — управление записями пиров на endpoint-узлах
+- `RotateParams` — запуск ротации AWG-параметров по уровню
+- `GetStatus` — возврат состояния здоровья узла, туннелей и информации о пирах
+- `RotateToken` — выпуск нового bearer-токена
+- `RefreshCapture` — запуск живого захвата TLS/QUIC fingerprint
+
+### ECMP-балансировка нагрузки
+
+```
+Client → balancer_ip (172.20.70.1)
+             ↓  nftables conntrack (sticky)
+       ┌─────┴─────┐
+    master-01    master-02   (ECMP nexthops в таблице маршрутизации)
+       ↓ ECMP         ↓ ECMP
+    ┌──┴──┐        ┌──┴──┐
+  kz-01 pl-01    kz-01 pl-01  (пул endpoint'ов для каждого master'а)
+```
+
+Каждый master программирует multipath ECMP-маршрут для balancer IP endpoint'ов с одним nexthop на каждый живой endpoint. Сбой проверки доступности удаляет проблемный nexthop; восстановление добавляет его обратно — перезапуск не требуется.
+
+### Fallback по WG-хендшейку
+
+Основная проверка доступности: ICMP-пинг на транспортный IP пира. Запасной вариант: временная метка WireGuard-хендшейка — если последний хендшейк был в пределах порога, пир считается живым, даже если ICMP заблокирован.
 
 ## Безопасность
 
-### Транспорт и аутентификация
+### Аутентификация
 
-Плоскость управления gRPC на `:9090` требует одновременно mTLS и bearer token. Соединение отклоняется, если любой из credentials отсутствует или недействителен.
+Порт gRPC-управления (`:9090`) требует **одновременно** mTLS и bearer-токен. Подключение отклоняется при отсутствии или недействительности любого из учётных данных.
 
-- **mTLS**: каждый узел имеет уникальный сертификат, подписанный mesh CA. `mesh-ctl prepare` автоматически выдаёт сертификаты узлов. Сертификаты горячо перезагружаются по SIGHUP — перезапуск не требуется.
-- **Bearer token**: ротируется независимо от TLS-сертификатов. Используйте `mesh-ctl token rotate` для выдачи новых токенов без прерывания туннелей data plane.
+- **mTLS**: каждый узел имеет уникальный сертификат, подписанный mesh CA. `mesh-ctl prepare` генерирует CA при первом использовании и выпускает сертификаты узлов во время `init`. Сертификаты горячо перезагружаются по `SIGHUP` — перезапуск контейнера не нужен.
+- **Bearer-токен**: случайный токен, генерируемый при `prepare`, хранится в bcrypt-хэше по пути `/config/mesh.token`. Открытый текст хранится только в `~/.mesh-ctl/nodes/<name>/`. Ротация независима: `mesh-ctl token rotate`.
 
-### Ротация параметров AWG
+### Ротация AWG-параметров
 
-AmneziaWG расширяет WireGuard полями обфускации, делающими трафик неопознаваемым для DPI-систем. `awg-mesh` автоматизирует ротацию по трём уровням:
+AmneziaWG расширяет WireGuard полями обфускации, делающими туннельный трафик неопознаваемым для DPI-систем:
 
-| Уровень | Что ротируется | Влияние |
-|---------|---------------|---------|
-| 1 | Количество и размеры junk-пакетов | Минимальное — без перезапуска туннеля |
-| 2 | Байты заголовков S1/H1/S2/H2 | Кратковременное переподключение |
-| 3 | Ключевая пара WireGuard | Полное переустановление туннеля |
+| Уровень | Что ротируется | Влияние на туннель |
+|---------|---------------|-------------------|
+| 1 | Количество и размеры мусорных пакетов | Нет — живое обновление |
+| 2 | Байты заголовков S1/H1/S2/H2 | Кратковременный re-handshake |
+| 3 | AWG-ключевая пара | Полная переустановка туннеля |
 
-Настройте ротацию с помощью `mesh-ctl rotate` или задайте автоматическое расписание по уровням в `mesh-topology.yml`.
+Планируйте ротацию через `mesh-ctl rotate` или настройте автоматические интервалы в `mesh-topology.yml` в секции `rotation.defaults`.
 
-### Мимикрия протоколов
+### Протокольная мимикрия
 
-На master-узлах работает цикл захвата на базе gopacket, который сэмплирует реальные пакеты TLS ClientHello и QUIC Initial с настроенных доменов. Захваченные fingerprints применяются к параметрам обфускации AWG, делая трафик туннеля статистически похожим на обычные HTTPS/QUIC-потоки.
+Master-узлы запускают цикл захвата через gopacket/libpcap, который выбирает реальные пакеты TLS ClientHello и QUIC Initial с настроенных доменов. Захваченные fingerprint применяются к параметрам обфускации AWG, делая туннельный трафик статистически похожим на обычные HTTPS/QUIC-потоки.
 
 ## Наблюдаемость
 
 ### Prometheus-метрики
 
-Каждый узел публикует метрики на `:9091/metrics`.
+Каждый узел экспортирует метрики на `:9091/metrics`.
 
 | Метрика | Описание |
 |---------|---------|
-| `awgmesh_tunnel_up` | Состояние AWG-туннеля (0/1) на пир |
-| `awgmesh_tunnel_rx_bytes_total` | Принятые байты по туннелю |
-| `awgmesh_tunnel_tx_bytes_total` | Переданные байты по туннелю |
-| `awgmesh_ecmp_active_paths` | Активные ECMP-пути на мастер |
+| `awgmesh_tunnel_up` | Состояние AWG-туннеля (0/1) по пирам |
+| `awgmesh_tunnel_rx_bytes_total` | Принято байт по туннелю |
+| `awgmesh_tunnel_tx_bytes_total` | Отправлено байт по туннелю |
+| `awgmesh_ecmp_active_paths` | Активные ECMP-пути на master |
 | `awgmesh_rotation_total` | События ротации AWG по уровням |
 | `awgmesh_grpc_requests_total` | Количество gRPC-запросов по методу и статусу |
-| `awgmesh_healthcheck_failures_total` | Количество ошибок healthcheck endpoint-узлов |
+| `awgmesh_healthcheck_failures_total` | Количество сбоев проверки endpoint |
 
 ### Логирование
 
-Все компоненты пишут структурированный JSON в stdout. Установите `--log-level debug` для полных трассировок согласования туннелей. Направляйте в агрегатор логов (Loki, CloudWatch, Datadog) через стандартные Docker log drivers.
+Все компоненты пишут структурированный JSON в stdout через zerolog. Перенаправляйте в агрегатор логов через стандартные Docker log drivers.
 
 ```bash
-# Следить за логами конкретного узла
+# Фильтрация событий уровня error с запущенного узла
 docker logs -f awg-mesh-master | jq 'select(.level == "error")'
 ```
 
-## Разработка
+Установите `--log-level debug` для полных трасс переговоров туннелей и маршрутизации.
 
-### Требования
+## Тестирование
 
-- Go 1.25+
-- Docker (для интеграционных тестов)
-- `golangci-lint` v2
-
-### Сборка
+### Юнит- и интеграционные тесты
 
 ```bash
-# Локальный бинарник
-go build -o bin/awg-mesh-node ./cmd/awg-mesh-node
-go build -o bin/mesh-ctl      ./cmd/mesh-ctl
+# Установите заголовки libpcap (требуется для CGO-сборки gopacket)
+sudo apt-get install -y libpcap-dev   # Debian/Ubuntu
+sudo apk add libpcap-dev              # Alpine
 
-# Статический бинарник (совпадает с Docker-образом)
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -ldflags="-s -w" -o bin/awg-mesh-node ./cmd/awg-mesh-node
+# Юнит-тесты с детектором гонок
+CGO_ENABLED=1 go test -race ./...
 
-# Docker-образ
-docker build -t awg-mesh:dev .
+# С покрытием
+CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
 ```
 
-### Тесты
+CI-пайплайн требует минимум 40% покрытия.
+
+### E2E-симуляция
+
+Директория `tests/simulation/` содержит 8-узловую Docker-симуляцию:
+
+| Узел | Режим | Имя |
+|------|-------|-----|
+| Master | master | ru-01, ru-02 |
+| Endpoint | endpoint | kz-01, kz-02, kz-03, pl-01, us-01 |
+| Client | client | client-01 |
+
+Симуляция использует внутреннюю Docker-сеть (`192.168.50.0/24`) для AWG data-plane пиринга и проброшенные порты на `localhost` для gRPC-управления. Именно здесь задействуется поле `peer_host` — у каждого узла `host` равен `127.0.0.1` (gRPC), а `peer_host` — внутренний IP контейнера (WG-пиринг).
+
+**Запуск E2E-стенда:**
 
 ```bash
-go test ./...                    # юнит-тесты
-go test -tags integration ./...  # юнит + интеграционные тесты
-go test -race ./...              # детектор гонок
+cd tests/simulation
+AWG_E2E=1 go test -tags e2e -v -timeout 300s .
+```
+
+Тест-раннер (`TestE2EFullMesh`) выполняет пять подтестов последовательно:
+
+| Подтест | Проверяет |
+|---------|----------|
+| `WGHandshake` | На каждом master'е поднято 6 WG-интерфейсов (5 endpoint + 1 client) |
+| `OverlayPing` | Master может пинговать все overlay IP endpoint'ов |
+| `ECMP` | Master имеет ≥4 ECMP nexthop; client имеет 2 nexthop к balancer IP master'а |
+| `ClientToMaster` | Client достигает транспортный и overlay IP master'а |
+| `Status` | Все 7 не-клиентских узлов отображаются `ONLINE` в `mesh-ctl status` |
+
+Флаг `AWG_E2E=1` предотвращает случайный запуск в CI. Docker должен быть запущен с доступным compose-стеком из `tests/simulation/`.
+
+## Разработка
+
+### Сборка из исходников
+
+> **Важно:** `CGO_ENABLED=1` обязателен. Проект использует gopacket/libpcap для захвата пакетов, что требует CGO. Сборки с `CGO_ENABLED=0` завершатся ошибкой.
+
+```bash
+# Установка системной зависимости
+sudo apt-get install -y libpcap-dev   # Debian/Ubuntu
+
+# Сборка обоих бинарников
+CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
+CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
+```
+
+Версия определяется автоматически во время работы через `runtime/debug.ReadBuildInfo()` — ldflags не нужны:
+
+| Способ сборки | Отображаемая версия |
+|---------------|---------------------|
+| `go install ...@v1.1.0` | `v1.1.0` |
+| Локальный клон на тегированном коммите | `v1.1.0 (abcd1234)` |
+| `go run` | `dev` |
+
+### Сборка Docker-образа
+
+Dockerfile использует многоэтапную сборку: builder на `golang:1.25-alpine` (с `libpcap-dev`), создающий CGO-бинарник, который копируется в runtime-образ `alpine:3.21` с разделяемой библиотекой `libpcap`:
+
+```bash
+docker build -f deploy/Dockerfile -t awg-mesh:dev .
 ```
 
 ### Линтинг
@@ -822,18 +787,20 @@ golangci-lint run ./...
 
 ### CI-пайплайн
 
-GitHub Actions запускается на каждый push и pull request:
+GitHub Actions запускается на каждый push и pull request в `master`:
 
 ```
-lint → test → build → docker
+lint → test → build → docker (smoke test + push to GHCR)
 ```
 
-- `lint`: golangci-lint с конфигом проекта
-- `test`: юнит-тесты с детектором гонок
-- `build`: статические бинарники для linux/amd64 и linux/arm64
-- `docker`: мультиарх-образ, публикуемый в `ghcr.io/thebtf/awg-mesh`
+- **lint**: golangci-lint v1.64.0
+- **test**: `CGO_ENABLED=1 go test -race` с проверкой порога покрытия
+- **build**: `CGO_ENABLED=1 go build -trimpath` для обоих бинарников
+- **docker**: многоэтапная сборка образа, smoke test (проверка создания AWG-интерфейса и запуска gRPC-сервера), push в `ghcr.io/thebtf/awg-mesh` на master
 
-Зависимости управляются Dependabot — Go-модули обновляются еженедельно, GitHub Actions ежемесячно.
+## Участие в разработке
+
+См. [CONTRIBUTING.md](CONTRIBUTING.md) для руководства по разработке, соглашений по веткам и требований к pull request'ам.
 
 ## Лицензия
 

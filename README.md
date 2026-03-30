@@ -1,13 +1,18 @@
+<!-- LANG_SWITCHER: English | [Русский](README.ru.md) -->
+
+<!-- BADGE_ROW -->
 [![CI](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fthebtf%2Fawg--mesh-2496ED?logo=docker)](https://ghcr.io/thebtf/awg-mesh)
 
-🌐 English | [Русский](README.ru.md)
-
 # awg-mesh
 
-Docker-native encrypted overlay mesh network built on AmneziaWG — WireGuard with DPI obfuscation, topology-as-code, and zero-touch onboarding.
+Docker-native encrypted overlay mesh network built on AmneziaWG — topology-as-code, two-level ECMP load balancing, and anti-DPI obfuscation in a single 42 MB container.
+
+Managing a multi-region WireGuard mesh by hand means scattered configs, manual key exchange, and no failover. awg-mesh replaces all of that with a single `mesh-topology.yml` file and three CLI commands. You describe your desired network — masters, endpoints, clients — and the system provisions keys, certificates, tunnels, firewall rules, and load balancer entries automatically using native Linux kernel interfaces (netlink, nftables, eBPF) with no subprocess forking.
+
+The traffic model is two-level ECMP: clients connect to a pool of master nodes (ingress), each master maintains AWG tunnels to a pool of endpoint nodes (egress), and traffic is distributed across all live paths with conntrack-based sticky sessions and health-checked failover.
 
 ## Architecture
 
@@ -25,11 +30,12 @@ graph TB
     subgraph Endpoints["Endpoint Nodes"]
         e1["awg-mesh-node\n(endpoint)"]
         e2["awg-mesh-node\n(endpoint)"]
+        e3["awg-mesh-node\n(endpoint)"]
     end
 
     subgraph Clients["Clients"]
         lc["awg-mesh-node\n(client, Linux)"]
-        mk["awg-mesh-node\n(client, MikroTik)"]
+        mk["MikroTik\n(client, .rsc)"]
     end
 
     inet["Internet"]
@@ -38,320 +44,200 @@ graph TB
     ctl -- "gRPC :9090\n(mTLS + token)" --> m2
     ctl -- "gRPC :9090\n(mTLS + token)" --> e1
     ctl -- "gRPC :9090\n(mTLS + token)" --> e2
+    ctl -- "gRPC :9090\n(mTLS + token)" --> e3
 
     m1 -- "AWG tunnels\n(ECMP LB)" --> e1
     m1 -- "AWG tunnels\n(ECMP LB)" --> e2
+    m1 -- "AWG tunnels\n(ECMP LB)" --> e3
     m2 -- "AWG tunnels\n(ECMP LB)" --> e1
     m2 -- "AWG tunnels\n(ECMP LB)" --> e2
+    m2 -- "AWG tunnels\n(ECMP LB)" --> e3
 
-    lc -- "AWG\n(DPI-obfuscated)" --> m1
-    lc -- "AWG\n(DPI-obfuscated)" --> m2
+    lc -- "AWG\n(DPI-obfuscated)\nECMP to masters" --> m1
+    lc -- "AWG\n(DPI-obfuscated)\nECMP to masters" --> m2
     mk -- "AWG\n(DPI-obfuscated)" --> m1
     mk -- "AWG\n(DPI-obfuscated)" --> m2
 
     e1 -- NAT --> inet
     e2 -- NAT --> inet
+    e3 -- NAT --> inet
 ```
 
-## Overview
+## What's New
 
-awg-mesh is a self-hosted encrypted overlay network for teams that need reliable, censorship-resistant connectivity across multiple regions. It is built on [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go) — a WireGuard fork that adds protocol obfuscation to defeat deep packet inspection — and runs entirely in Docker containers with no external dependencies.
+### v1.1.0
 
-The system replaces ad-hoc WireGuard configurations and manual peer management with a declarative topology file and a CLI control plane. You describe your desired mesh in a single YAML file, run three commands, and the network comes up. Key exchange, certificate provisioning, tunnel establishment, and load balancer configuration are all automated.
+- **Idempotent endpoint init** — re-running `endpoint init` is safe; existing tunnels are preserved rather than duplicated.
+- **Overlay route propagation** — overlay IPs are reliably announced across all tunnel interfaces after init.
+- **Pure Go data plane** — 443 lines of `exec.Command` shell-out code removed; all routing and firewall operations go through netlink, nftables, and eBPF directly.
+- **E2E simulation suite** — 8-node Docker simulation (`tests/simulation/`) covering WG handshakes, overlay ping, ECMP nexthop counts, client-to-master connectivity, and mesh-wide status.
 
-Traffic routing follows a two-level ECMP model: clients connect to a pool of master nodes (ingress), each master maintains AWG tunnels to a pool of endpoint nodes (egress), and traffic is distributed across available paths with sticky sessions and health-checked failover. This design provides horizontal scalability on both the ingress and egress layers without a central routing bottleneck.
+### v1.0.0
+
+- **Native routing layer** — WireGuard interface management, route programming, and firewall rules via vishvananda/netlink, google/nftables, and cilium/ebpf. No subprocess execution at runtime.
+- **Router / Firewall / Sysctl interfaces** — clean separation of concerns; each subsystem is independently testable and swappable.
+- **Zero known defects** — all 15 findings from the v0.9.x investigation cycle resolved.
 
 ## Features
 
 **Network**
-- AmneziaWG overlay mesh with anti-DPI obfuscation (WireGuard fork)
-- Two-level ECMP load balancing with sticky sessions
-- Health-checked failover across masters and endpoints
-- Configurable overlay IP addressing with per-role CIDR ranges
+- AmneziaWG overlay mesh with configurable anti-DPI obfuscation (WireGuard fork with junk packets and S/H header randomization)
+- Two-level ECMP load balancing with nftables conntrack sticky sessions
+- Health-checked failover using ICMP probes with WG handshake timestamp as fallback
+- Configurable overlay address space with per-role CIDR ranges and virtual balancer IPs
+- Transport point-to-point addressing (10.255.x.x) allocated automatically per tunnel pair
 
 **Operations**
-- Topology-as-code: single `mesh-topology.yml` as source of truth
-- Three-step onboarding: `prepare` → `deploy` → `init`
-- MikroTik RouterOS `.rsc` script generation for client provisioning
-- Single 42 MB Alpine Docker image — no sidecar containers
+- Topology-as-code: single `mesh-topology.yml` as the only source of truth
+- Three-step onboarding: `prepare` (keygen + compose) → `deploy` (copy to host) → `init` (gRPC activation)
+- MikroTik RouterOS `.rsc` script generation for hardware client provisioning
+- Single 42 MB Alpine Docker image — no sidecar containers, no agents
 
 **Security**
-- gRPC management plane with mTLS + bearer token dual authentication
-- Dynamic certificate hot-reload without service restart
-- Three-tier AWG parameter rotation (junk params / S-H headers / keypair)
-- Protocol family mimicry via gopacket TLS/QUIC traffic capture
+- gRPC management plane with mTLS + bearer token dual authentication (both required)
+- Tokens hashed with bcrypt at rest; rotatable independently of TLS certificates
+- Three-tier AWG parameter rotation: junk params / S-H headers / full keypair
+- TLS/QUIC packet capture via gopacket/libpcap for traffic fingerprint mimicry
+
+**Routing (native kernel)**
+- WireGuard interface lifecycle via vishvananda/netlink — no `ip` subprocess
+- ECMP multipath routes programmed directly into the kernel routing table
+- nftables NAT and conntrack via google/nftables — no `nft` subprocess
+- eBPF TC programs via cilium/ebpf for high-performance packet forwarding
 
 **Observability**
 - Prometheus metrics on `:9091`
-- Structured JSON logging with configurable log level
-- Per-node status reporting via `mesh-ctl status`
+- Structured JSON logging via zerolog with configurable log level
+- Per-node status via `mesh-ctl status`
 
-## Getting Started
+## Use Cases
 
-This section walks through deploying a mesh from scratch: two masters in Russia, four endpoints across Kazakhstan and Poland, and two clients.
+- **Censorship-resistant egress**: route traffic through a pool of egress nodes in different jurisdictions, with automatic failover when one is blocked.
+- **Multi-region branch connectivity**: connect office routers (MikroTik or Linux) to a mesh of master nodes, with ECMP distributing load across masters.
+- **Self-hosted VPN with horizontal scale**: add more master or endpoint nodes to the topology file and re-run `init` — no manual peer wiring.
+- **Anti-DPI environments**: AWG obfuscation parameters rotate on schedule and are fingerprinted against real TLS/QUIC traffic to defeat traffic classifiers.
+
+## Quick Start
+
+This example deploys a minimal mesh: two masters in Russia, two endpoints in Kazakhstan, one Linux client.
+
+```bash
+# 1. Install mesh-ctl on your admin machine
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+export PATH=$PATH:$(go env GOPATH)/bin
+
+# 2. Create your topology file (see Configuration section for all fields)
+cp mesh-topology.example.yml mesh-topology.yml
+# edit mesh-topology.yml with your actual IPs and node names
+
+# 3. Prepare each node (generates keys, token, docker-compose file)
+mesh-ctl master   prepare ru-master-01 -t mesh-topology.yml
+mesh-ctl master   prepare ru-master-02 -t mesh-topology.yml
+mesh-ctl endpoint prepare kz-01        -t mesh-topology.yml
+mesh-ctl endpoint prepare kz-02        -t mesh-topology.yml
+mesh-ctl client   prepare branch-01    -t mesh-topology.yml
+
+# 4. Copy each generated <name>-docker-compose.yml and start containers on each host
+#    (see Deployment section for the full scp + docker compose workflow)
+
+# 5. Initialize the mesh — connects via gRPC and brings up AWG tunnels
+mesh-ctl endpoint init kz-01        -t mesh-topology.yml
+mesh-ctl endpoint init kz-02        -t mesh-topology.yml
+mesh-ctl master   init ru-master-01 -t mesh-topology.yml
+mesh-ctl master   init ru-master-02 -t mesh-topology.yml
+mesh-ctl client   init branch-01    -t mesh-topology.yml
+
+# 6. Verify
+mesh-ctl status -t mesh-topology.yml
+```
+
+## Installation
 
 ### Prerequisites
 
-**On each host that will run a mesh node:**
-- Docker Engine 24+ (or Docker Desktop)
-- Linux kernel with `/dev/net/tun` available (standard on all modern distros)
-- Outbound UDP 51820 and TCP 9090 reachable from your admin machine
-
-**On your admin machine:**
-- Go 1.24+ (to build `mesh-ctl`)
+**Admin machine** (where you run `mesh-ctl`):
+- Go 1.25+
 - Network access to port 9090 on every node host
 
-### Step 1: Install mesh-ctl
+**Each node host**:
+- Docker Engine 24+
+- Linux kernel with `/dev/net/tun` available (standard on all modern distributions)
+- Outbound UDP 51820 and inbound TCP 9090 open
 
-`mesh-ctl` is the CLI you run from your admin workstation to manage the mesh. It does not run on nodes.
-
-**Public repository:**
+### Install mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
 ```
 
-The binary is placed in `$GOPATH/bin` (usually `~/go/bin`). Make sure it is in your `PATH`:
+The binary lands in `$(go env GOPATH)/bin`. Ensure that directory is in your `PATH`:
 
 ```bash
 export PATH=$PATH:$(go env GOPATH)/bin
-```
-
-**Private repository** (requires Git SSH access):
-
-```bash
-git clone git@github.com:thebtf/awg-mesh.git
-cd awg-mesh
-make install    # Linux/macOS
-# Windows (PowerShell):
-go install -trimpath -ldflags "-X main.version=$(git describe --tags --always) -s -w" ./cmd/mesh-ctl
-```
-
-Verify:
-
-```bash
 mesh-ctl version
 ```
 
-On first use, `mesh-ctl` creates its state directory at **`~/.mesh-ctl/`** automatically. This directory holds the mesh CA, per-node tokens, and public keys. You can check the current state at any time:
+On first use, `mesh-ctl` creates `~/.mesh-ctl/` to store the mesh CA, per-node tokens, public keys, and transport allocations. You can inspect this state at any time:
 
 ```bash
-mesh-ctl config show
+mesh-ctl config show -t mesh-topology.yml
 ```
 
-### Step 2: Create your topology file
+### Deploy node containers
 
-Create `mesh-topology.yml` in your working directory. You can start from the [example in the repository](mesh-topology.example.yml) or write one from scratch.
-
-If you cloned the repo:
+`mesh-ctl prepare` generates a `<name>-docker-compose.yml` for each node. Copy it to the target host and start the container:
 
 ```bash
-cp mesh-topology.example.yml mesh-topology.yml
+# Transfer files to the host
+ssh user@185.10.20.30 'sudo mkdir -p /srv/awg-mesh'
+scp ru-master-01-docker-compose.yml user@185.10.20.30:~/
+
+# Start the container
+ssh user@185.10.20.30 'docker compose -f ru-master-01-docker-compose.yml up -d'
 ```
 
-Otherwise, create the file manually. A minimal topology for two masters, two endpoints, and one client:
+The generated compose file includes the correct image, capabilities, port mappings, and startup flags for that node. You can integrate the `awg-mesh-node` service block into your existing infrastructure compose file if preferred — see [Deployment](#deployment).
 
-```yaml
-overlay:
-  space: 172.20.70.0/24
-  physical_mtu: 1500
-  awg_overhead: 80
-  ranges:
-    - name: masters
-      cidr: 172.20.70.0/27
-      balancer_ip: 172.20.70.1
-    - name: endpoints
-      cidr: 172.20.70.32/27
-      balancer_ip: 172.20.70.33
-    - name: clients
-      cidr: 172.20.70.128/25
-
-masters:
-  - name: ru-master-01
-    host: 185.10.20.30
-    overlay_ip: 172.20.70.2
-    listen_port: 51820
-    endpoints:
-      - kz-01
-      - pl-01
-  - name: ru-master-02
-    host: 185.10.20.31
-    overlay_ip: 172.20.70.3
-    listen_port: 51820
-    endpoints:
-      - kz-01
-      - pl-01
-
-endpoints:
-  - name: kz-01
-    host: 195.200.100.10
-    overlay_ip: 172.20.70.34
-    listen_port: 51820
-    region: kz
-  - name: pl-01
-    host: 91.200.50.100
-    overlay_ip: 172.20.70.37
-    listen_port: 51820
-    region: pl
-
-clients:
-  - name: branch-router
-    type: mikrotik
-    overlay_ip: 172.20.70.131
-    masters:
-      - ru-master-01
-      - ru-master-02
-
-capture:
-  domains_file: /config/domains.txt
-  schedule: "0 3 * * *"
-  retention_days: 30
-
-rotation:
-  defaults:
-    tier1_interval: 24h
-    tier2_interval: 168h
-    tier3_interval: 720h
-    preset: aggressive
-```
-
-### Step 3: Prepare nodes
-
-Run `prepare` for each node. This generates AWG keypairs, mTLS certificates, a bearer token, and a Docker Compose service snippet for that node:
+### Verify
 
 ```bash
-# Prepare all masters
-mesh-ctl -t mesh-topology.yml master prepare --name ru-master-01
-mesh-ctl -t mesh-topology.yml master prepare --name ru-master-02
-
-# Prepare all endpoints
-mesh-ctl -t mesh-topology.yml endpoint prepare --name kz-01
-mesh-ctl -t mesh-topology.yml endpoint prepare --name pl-01
-
-# Prepare clients (also generates MikroTik .rsc if type: mikrotik)
-mesh-ctl -t mesh-topology.yml client prepare --name branch-router
+mesh-ctl status -t mesh-topology.yml
 ```
 
-After `prepare`, each node's generated files are stored in `~/.mesh-ctl/<node-name>/`. The compose snippet is at `~/.mesh-ctl/<node-name>/docker-compose.snippet.yml`.
+All nodes should appear `ONLINE` with tunnel counts matching the topology.
 
-### Step 4: Deploy to hosts
+## Upgrading
 
-The generated compose snippet is **not** a standalone compose file. It defines the `awg-mesh-node` service as it should appear inside your existing infrastructure's compose file. Copy the snippet to the target host and integrate it.
-
-**Transfer the config and compose snippet to the host:**
+### Upgrading mesh-ctl
 
 ```bash
-# Create the config directory on the host (default mount path)
-ssh user@185.10.20.30 'sudo mkdir -p /srv/awg-mesh && sudo chown $USER /srv/awg-mesh'
-
-# Copy generated node config (keys, certs, token, topology)
-scp -r ~/.mesh-ctl/ru-master-01/config/ user@185.10.20.30:/srv/awg-mesh/
-
-# Copy the compose snippet for reference
-scp ~/.mesh-ctl/ru-master-01/docker-compose.snippet.yml user@185.10.20.30:~/
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
 ```
 
-**On the host, open your existing `docker-compose.yml` and add the `awg-mesh-node` service.** For example, if your infrastructure compose looks like this:
+The `~/.mesh-ctl/` state directory (CA, tokens, keys, transport allocations) is not affected.
 
-```yaml
-# /home/user/infra/docker-compose.yml  (existing file)
-services:
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
+### Upgrading node containers
 
-  app:
-    image: myapp:latest
-    depends_on:
-      - postgres
-
-  postgres:
-    image: postgres:16
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-volumes:
-  pgdata:
-```
-
-Add the mesh node service by merging in the snippet:
-
-```yaml
-# /home/user/infra/docker-compose.yml  (after adding awg-mesh-node)
-services:
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-
-  app:
-    image: myapp:latest
-    depends_on:
-      - postgres
-
-  postgres:
-    image: postgres:16
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  # --- awg-mesh-node (from mesh-ctl prepare) ---
-  awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:latest
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    volumes:
-      - /srv/awg-mesh:/config
-    ports:
-      - "51820:51820/udp"
-      - "9090:9090"
-      - "9091:9091"
-    command:
-      - --mode=master
-      - --name=ru-master-01
-      - --topology=/config/mesh-topology.yml
-
-volumes:
-  pgdata:
-```
-
-Pull the image and bring up the new service without restarting existing containers:
+Pull the new image and restart. AWG tunnels reconnect in 2–5 seconds:
 
 ```bash
-ssh user@185.10.20.30 'cd ~/infra && docker compose pull awg-mesh-node && docker compose up -d awg-mesh-node'
+# On each node host:
+docker compose -f <name>-docker-compose.yml pull
+docker compose -f <name>-docker-compose.yml up -d
 ```
 
-Repeat for every node host.
-
-### Step 5: Initialize the mesh
-
-Once all containers are running and port 9090 is reachable, run `init` for each node. This connects over gRPC, verifies mTLS + token auth, exchanges peer configurations, and brings up the AWG tunnels:
+For multi-master setups, update one master at a time to maintain connectivity:
 
 ```bash
-mesh-ctl -t mesh-topology.yml master init --name ru-master-01
-mesh-ctl -t mesh-topology.yml master init --name ru-master-02
-mesh-ctl -t mesh-topology.yml endpoint init --name kz-01
-mesh-ctl -t mesh-topology.yml endpoint init --name pl-01
-mesh-ctl -t mesh-topology.yml client init --name branch-router
+# Update Master 1 (ECMP keeps traffic flowing through Master 2)
+ssh master-01 'docker compose -f ru-master-01-docker-compose.yml pull && docker compose -f ru-master-01-docker-compose.yml up -d'
+
+# Wait for Master 1 to come back online
+mesh-ctl status -t mesh-topology.yml
+
+# Then update Master 2
+ssh master-02 'docker compose -f ru-master-02-docker-compose.yml pull && docker compose -f ru-master-02-docker-compose.yml up -d'
 ```
-
-### Step 6: Verify
-
-```bash
-# Check all nodes
-mesh-ctl -t mesh-topology.yml status
-
-# Check a specific node in detail
-mesh-ctl -t mesh-topology.yml status --node ru-master-01
-```
-
-A healthy mesh shows all tunnels up, ECMP paths active, and no healthcheck failures.
 
 ## Deployment
 
@@ -359,44 +245,30 @@ A healthy mesh shows all tunnels up, ECMP paths active, and no healthcheck failu
 
 ```
 ghcr.io/thebtf/awg-mesh:latest
+ghcr.io/thebtf/awg-mesh:v1.1.0
+ghcr.io/thebtf/awg-mesh:<commit-sha>
 ```
 
-- Size: ~42 MB (Alpine base, static Go binary)
+- Size: ~42 MB (Alpine base)
 - Architectures: `linux/amd64`, `linux/arm64`
 - No external runtime dependencies
 
 ### Volume mount
 
-The container expects its configuration at `/config`. Map this to `/srv/awg-mesh` on the host (the default):
+The container expects configuration at `/config`. Map your node's config directory there:
 
 ```
 /srv/awg-mesh  →  /config  (inside container)
 ```
 
-The config directory must contain:
-- `mesh-topology.yml` — the topology file
-- `node.key`, `node.pub` — AWG keypair
-- `node.crt`, `node.key.pem`, `ca.crt` — mTLS certificates
-- `token` — bearer token for gRPC auth
+`mesh-ctl prepare` generates all required files into the compose file's volume binding.
 
-`mesh-ctl prepare` generates all of these. Copy them to `/srv/awg-mesh/` before starting the container.
-
-### Integrating into existing docker-compose
-
-The compose snippet from `mesh-ctl prepare` is a starting point, not a standalone file. The intended workflow is:
-
-1. `mesh-ctl prepare` generates a service block for your node
-2. You copy that service block into your existing infrastructure `docker-compose.yml`
-3. You run `docker compose up -d awg-mesh-node` alongside your other services
-
-This keeps awg-mesh-node on the same Docker network as your application containers and avoids managing a separate compose file per host.
-
-**Minimal service definition** (what you add to your existing compose):
+### Minimal service definition
 
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:latest
+    image: ghcr.io/thebtf/awg-mesh:v1.1.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -428,31 +300,27 @@ Port 9090 must be reachable from your admin machine running `mesh-ctl`.
 
 ### Required capabilities
 
-The container needs Linux capabilities to manage network interfaces:
-
 | Capability | Reason |
 |-----------|--------|
-| `NET_ADMIN` | Create and configure WireGuard/AWG interfaces |
-| `NET_RAW` | gopacket traffic capture for protocol mimicry |
+| `NET_ADMIN` | Create and configure AWG interfaces, program routes, manage nftables |
+| `NET_RAW` | gopacket/libpcap traffic capture for protocol fingerprinting |
 | `/dev/net/tun` | TUN device for overlay network interface |
 
 ### Systemd integration (optional)
 
-If you want the compose stack to start on boot without Docker Desktop, create a systemd unit:
-
 ```ini
-# /etc/systemd/system/infra.service
+# /etc/systemd/system/awg-mesh.service
 [Unit]
-Description=Infrastructure docker-compose stack
+Description=awg-mesh node
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/user/infra
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+WorkingDirectory=/home/user
+ExecStart=/usr/bin/docker compose -f ru-master-01-docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f ru-master-01-docker-compose.yml down
 TimeoutStartSec=0
 
 [Install]
@@ -460,76 +328,14 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now infra.service
+sudo systemctl enable --now awg-mesh.service
 ```
 
-## Updating
-
-### Updating mesh-ctl
-
-**Public repository:**
-
-```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@latest
-```
-
-**From local clone:**
-
-```bash
-cd awg-mesh
-git pull
-make install    # Linux/macOS
-# Windows (PowerShell):
-go install -trimpath -ldflags "-X main.version=$(git describe --tags --always) -s -w" ./cmd/mesh-ctl
-```
-
-Your `~/.mesh-ctl/` state (CA, tokens, node keys) is not affected by updates.
-
-### Updating nodes
-
-Pull the new image and restart the container. AWG tunnels will briefly reconnect (~2-5s):
-
-```bash
-# On each node host:
-docker pull ghcr.io/thebtf/awg-mesh:latest
-docker compose restart awg-mesh-node
-```
-
-Or with zero-downtime on multi-master setups — update one master at a time:
-
-```bash
-# Master 1 (MikroTik ECMP keeps traffic flowing through Master 2):
-ssh master-01 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
-# Wait for Master 1 to come back:
-mesh-ctl status
-# Then Master 2:
-ssh master-02 'docker pull ghcr.io/thebtf/awg-mesh:latest && docker compose restart awg-mesh-node'
-```
-
-Configuration at `/srv/awg-mesh` persists across restarts. TLS certificates, keypairs, and tokens are preserved.
-
-### Version pinning
-
-To pin a specific version instead of `latest`:
-
-```yaml
-services:
-  awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:v0.1.0   # pin to release tag
-```
-
-Available tags:
-- `latest` — most recent build from master
-- `v0.1.0` — release tag (recommended for production)
-- `<commit-sha>` — specific commit (for debugging)
-
-## Topology Configuration
+## Configuration
 
 `mesh-topology.yml` is the single source of truth for the entire mesh. All `mesh-ctl` commands read from this file.
 
 ### overlay
-
-Global network parameters:
 
 ```yaml
 overlay:
@@ -544,227 +350,332 @@ overlay:
       cidr: 172.20.70.32/27
       balancer_ip: 172.20.70.33
     - name: clients
-      cidr: 172.20.70.128/25  # no balancer_ip for leaf nodes
+      cidr: 172.20.70.128/25  # leaf nodes — no balancer_ip needed
 ```
 
-The overlay MTU is computed as `physical_mtu - awg_overhead`. Set `physical_mtu` to your physical link's MTU; `awg_overhead` accounts for AWG headers, UDP, and IP encapsulation.
+Overlay MTU = `physical_mtu - awg_overhead`. Set `physical_mtu` to your physical link MTU.
 
 ### masters
 
-Nodes that accept client connections and forward traffic to endpoints:
-
 ```yaml
 masters:
-  - name: ru-master-01        # unique name, used in all mesh-ctl commands
-    host: 185.10.20.30        # public IP of the host running this node
+  - name: ru-master-01        # unique name used in all mesh-ctl commands
+    host: 185.10.20.30        # public IP — used by mesh-ctl for gRPC connections
+    peer_host: 192.168.50.10  # optional: WG peering address when it differs from host
+                              #   (e.g. Docker simulation with internal network IPs)
     overlay_ip: 172.20.70.2   # assigned overlay IP (from masters.cidr range)
     listen_port: 51820         # AWG listen port
+    grpc_port: 9090            # optional: gRPC port override (default: 9090)
     endpoints:                 # which endpoint nodes this master connects to
       - kz-01
       - kz-02
       - pl-01
 ```
 
-### endpoints
+`peer_host` is used when the address that WireGuard peers use to reach this node differs from the address `mesh-ctl` uses for gRPC management. This is common in Docker simulations where internal container IPs are used for data-plane peering while `localhost` with mapped ports is used for management.
 
-Egress nodes that provide NAT to the internet:
+### endpoints
 
 ```yaml
 endpoints:
   - name: kz-01
-    host: 195.200.100.10
+    host: 195.200.100.10      # public IP — used by mesh-ctl for gRPC connections
+    peer_host: 192.168.50.20  # optional: WG peering address (see peer_host above)
     overlay_ip: 172.20.70.34
     listen_port: 51820
-    region: kz               # optional region tag for grouping
+    grpc_port: 9090            # optional: gRPC port override
+    region: kz                 # optional region tag (informational)
 ```
 
 ### clients
 
-Leaf nodes that connect to masters:
-
 ```yaml
 clients:
   - name: branch-router
-    type: mikrotik            # linux | mikrotik
+    type: linux                # linux | mikrotik
+    host: 203.0.113.5          # management host for gRPC (linux clients)
     overlay_ip: 172.20.70.131
+    grpc_port: 9090            # optional: gRPC port override
     masters:
-      - ru-master-01          # which masters this client connects to
+      - ru-master-01           # which masters this client connects to
       - ru-master-02
 ```
 
-For `type: mikrotik`, `mesh-ctl client prepare` generates a `.rsc` script ready to import on the RouterOS device.
+For `type: mikrotik`, `mesh-ctl client prepare` generates a `.rsc` script ready to paste into a RouterOS terminal. No `host` or `grpc_port` required for MikroTik clients — they are provisioned offline.
 
 ### capture
 
-Controls the protocol mimicry subsystem (master nodes only):
+Controls TLS/QUIC fingerprint sampling used for AWG protocol mimicry (master nodes only):
 
 ```yaml
 capture:
-  domains_file: /config/domains.txt  # list of domains to sample TLS/QUIC from
-  schedule: "0 3 * * *"              # cron: refresh fingerprints daily at 3am
-  retention_days: 30                 # how long to keep captured fingerprint data
+  domains_file: /config/domains.txt  # list of domains to sample from
+  schedule: "24h"                     # refresh interval (duration or cron expression)
+  retention_days: 30                  # how long to keep captured data
 ```
 
 ### rotation
 
-AWG parameter rotation schedule:
+AWG obfuscation parameter rotation schedule:
 
 ```yaml
 rotation:
   defaults:
-    tier1_interval: 24h     # rotate junk packet parameters every 24h
-    tier2_interval: 168h    # rotate S/H obfuscation headers weekly
-    tier3_interval: 720h    # full keypair rotation monthly
+    tier1_interval: 24h     # rotate junk packet parameters
+    tier2_interval: 168h    # rotate S1/H1/S2/H2 header bytes
+    tier3_interval: 720h    # full AWG keypair rotation
     preset: aggressive      # obfuscation parameter preset
 ```
 
 ### transport
 
-Point-to-point addressing for WireGuard tunnels. Each master↔endpoint link gets a unique /30 subnet from this pool. mesh-ctl allocates automatically — nodes never self-assign transport addresses.
+Point-to-point addressing for WireGuard tunnel interfaces. Allocated automatically by `mesh-ctl` — you do not assign these manually:
 
 ```yaml
 transport:
-  pool: 10.255.0.0/16         # address pool for tunnel point-to-point links
-  prefix_length: 30            # /30 = 4 IPs per tunnel (2 usable: master + endpoint side)
+  pool: 10.255.0.0/16      # address pool for tunnel point-to-point links
+  prefix_length: 30         # /30 = 4 IPs per tunnel (2 usable: master-side + endpoint-side)
 ```
-
-**How it works:**
-- Overlay IPs (172.20.70.x) live on loopback — they are the user-visible addresses
-- Transport IPs (10.255.x.x) live on WireGuard interfaces — they are invisible plumbing
-- Master routes overlay destinations through transport next-hops: `172.20.70.34 via 10.255.0.2 dev wg-kz-01`
-- ECMP balancer IPs use weighted transport nexthops for load distribution
-- Healthcheck pings transport peer IP to verify tunnel health
-- On node restart, transport state is reconstructed from `/config/transport.yml`
 
 Transport allocations are stored in `~/.mesh-ctl/transport.yml` and visible via `mesh-ctl config show`.
 
+## Usage
+
+### Common workflows
+
+**Initial mesh deployment:**
+
+```bash
+# Prepare all nodes (generates keys, tokens, docker-compose files)
+mesh-ctl master   prepare ru-master-01 -t mesh-topology.yml
+mesh-ctl master   prepare ru-master-02 -t mesh-topology.yml
+mesh-ctl endpoint prepare kz-01        -t mesh-topology.yml
+mesh-ctl endpoint prepare pl-01        -t mesh-topology.yml
+mesh-ctl client   prepare branch-01    -t mesh-topology.yml
+
+# Deploy containers (copy compose files to hosts, start containers)
+# ...see Deployment section...
+
+# Initialize — run endpoints before masters so masters can exchange peer keys
+mesh-ctl endpoint init kz-01        -t mesh-topology.yml
+mesh-ctl endpoint init pl-01        -t mesh-topology.yml
+mesh-ctl master   init ru-master-01 -t mesh-topology.yml
+mesh-ctl master   init ru-master-02 -t mesh-topology.yml
+mesh-ctl client   init branch-01    -t mesh-topology.yml
+```
+
+**Check mesh status:**
+
+```bash
+mesh-ctl status -t mesh-topology.yml
+mesh-ctl status --node ru-master-01 -t mesh-topology.yml
+```
+
+**Rotate AWG parameters:**
+
+```bash
+mesh-ctl rotate --tier 1 -t mesh-topology.yml   # junk params (no tunnel restart)
+mesh-ctl rotate --tier 2 -t mesh-topology.yml   # S/H headers (brief re-handshake)
+mesh-ctl rotate --tier 3 -t mesh-topology.yml   # full keypair (tunnel re-establishment)
+```
+
+**Rotate bearer tokens:**
+
+```bash
+mesh-ctl token rotate -t mesh-topology.yml
+mesh-ctl token rotate --node ru-master-01 -t mesh-topology.yml
+```
+
+**Refresh protocol fingerprints:**
+
+```bash
+mesh-ctl capture refresh -t mesh-topology.yml
+```
+
 ## Node Modes
 
-All modes run from the same binary: `awg-mesh-node`. The mode is selected with `--mode`.
+All three modes run from the same binary (`awg-mesh-node`). The mode is selected with `--mode`.
 
 | Mode | Role | Key Responsibilities |
 |------|------|----------------------|
-| `master` | Ingress + routing | Accepts client connections, maintains AWG tunnels to endpoints, ECMP load balancing, healthcheck, traffic capture |
+| `master` | Ingress + routing | Accepts client AWG connections, maintains tunnels to endpoints, programs ECMP routes, health-checks endpoints, runs capture loop |
 | `endpoint` | Egress + NAT | AWG server accepting tunnels from masters, NAT to internet, overlay IP assignment |
-| `client` | Leaf node | Tunnels to masters, overlay routing, MikroTik `.rsc` generation |
+| `client` | Leaf node | AWG tunnels to masters, ECMP route to masters balancer IP, overlay routing |
 
-**Binary flags**
+### Node binary flags
 
 ```
---mode          string   Node operating mode: master|endpoint|client (required)
+--mode          string   Node operating mode: master|endpoint|client (default: master)
 --name          string   Node name matching topology entry (required)
 --overlay-ip    string   Overlay IP address for this node (e.g., 172.20.70.2)
 --listen-port   int      AWG/WireGuard UDP listen port (default: 51820)
---config-dir    string   Directory for keys, certs, and runtime state (default: /config)
---topology      string   Path to mesh-topology.yml (no default — pass explicitly or omit to receive config via gRPC Init)
+--config-dir    string   Directory for keys, certs, token, and runtime state (default: /config)
+--topology      string   Path to mesh-topology.yml (optional — node can receive config via gRPC Init)
 --log-level     string   Logging verbosity: debug|info|warn|error (default: info)
 --metrics-addr  string   Prometheus metrics listen address (default: :9091)
 ```
 
 ## CLI Reference
 
-`mesh-ctl` runs on your admin workstation and communicates with nodes over gRPC.
+`mesh-ctl` runs on your admin workstation. It communicates with nodes over gRPC (mTLS + token).
 
 **Global flags:**
 
 ```
--t, --topology string    Path to mesh-topology.yml (default: mesh-topology.yml)
-    --config-dir string  mesh-ctl state directory: certs, tokens, session data (default: ~/.mesh-ctl)
+-t, --topology    string   Path to mesh-topology.yml (default: mesh-topology.yml)
+    --config-dir  string   mesh-ctl state directory (default: ~/.mesh-ctl)
 ```
 
-### Node Lifecycle
+### Node lifecycle
 
 ```bash
-# Master node
-mesh-ctl master prepare --name <name>   # generate keys, certs, token, compose snippet
-mesh-ctl master init    --name <name>   # connect via gRPC and activate the node
-mesh-ctl master remove  --name <name>   # gracefully decommission
+# Master nodes
+mesh-ctl master prepare <name>   # generate keys, token, docker-compose file
+mesh-ctl master init    <name>   # activate via gRPC: issue certs, exchange peers, bring up tunnels
+mesh-ctl master remove  <name>   # tear down all tunnels from this master
 
-# Endpoint node
-mesh-ctl endpoint prepare --name <name>
-mesh-ctl endpoint init    --name <name>
-mesh-ctl endpoint remove  --name <name>
+# Endpoint nodes
+mesh-ctl endpoint prepare <name>
+mesh-ctl endpoint init    <name>
+mesh-ctl endpoint remove  <name>
 
-# Client node
-mesh-ctl client prepare --name <name>   # generate config + MikroTik .rsc (if applicable)
-mesh-ctl client init    --name <name>
-mesh-ctl client remove  --name <name>
+# Client nodes
+mesh-ctl client prepare <name>   # generates linux config or MikroTik .rsc
+mesh-ctl client init    <name>
+mesh-ctl client remove  <name>
 ```
 
-### Status and Monitoring
+### Status and monitoring
 
 ```bash
-mesh-ctl status                         # mesh-wide status table
-mesh-ctl status --node <name>           # single node detail
+mesh-ctl status                   # mesh-wide status table (all nodes)
+mesh-ctl status --node <name>     # single node detail
 ```
-
-### Token Management
-
-```bash
-mesh-ctl token rotate                   # rotate bearer tokens on all nodes
-mesh-ctl token rotate --node <name>     # rotate on a specific node
-```
-
-### AWG Parameter Rotation
-
-```bash
-mesh-ctl rotate --tier 1                # rotate junk header parameters
-mesh-ctl rotate --tier 2                # rotate S/H obfuscation headers
-mesh-ctl rotate --tier 3                # full keypair rotation
-mesh-ctl rotate --tier 3 --node <name> # keypair rotation on one node
-```
-
-### Traffic Capture (Protocol Mimicry)
-
-```bash
-mesh-ctl capture refresh                         # refresh live TLS/QUIC fingerprint capture
-mesh-ctl capture schedule --cron "0 4 * * *"    # schedule automatic refresh
-mesh-ctl capture domains --list                  # show domains used for fingerprinting
-```
-
-### Overlay IP Management
-
-```bash
-mesh-ctl ip list                        # list all assigned overlay IPs
-mesh-ctl ip range --set 10.100.0.0/16  # configure overlay address range
-```
-
-### Utility
-
-```bash
-mesh-ctl version                        # show client and connected node versions
-```
-
-## Security
-
-### Transport and authentication
-
-The gRPC management plane on `:9090` requires both mTLS and a bearer token. A connection is rejected if either credential is missing or invalid.
-
-- **mTLS**: each node holds a unique certificate signed by the mesh CA. `mesh-ctl prepare` issues node certs automatically. Certificates are hot-reloaded on SIGHUP — no restart required.
-- **Bearer token**: rotated independently from TLS certs. Use `mesh-ctl token rotate` to issue new tokens without disrupting data-plane tunnels.
 
 ### AWG parameter rotation
 
-AmneziaWG extends WireGuard with obfuscation fields that make traffic unidentifiable to DPI systems. `awg-mesh` automates rotation across three tiers:
+```bash
+mesh-ctl rotate --tier 1                    # rotate junk packet count/sizes
+mesh-ctl rotate --tier 2                    # rotate S1/H1/S2/H2 obfuscation headers
+mesh-ctl rotate --tier 3                    # full keypair rotation
+mesh-ctl rotate --tier 3 --node <name>     # keypair rotation on one node
+```
 
-| Tier | What rotates | Impact |
-|------|-------------|--------|
-| 1 | Junk packet count / sizes | Minimal — no tunnel restart |
+### Token management
+
+```bash
+mesh-ctl token rotate                       # rotate bearer tokens on all nodes
+mesh-ctl token rotate --node <name>        # rotate on a specific node
+```
+
+### Traffic capture (protocol mimicry)
+
+```bash
+mesh-ctl capture refresh                              # refresh TLS/QUIC fingerprints now
+mesh-ctl capture schedule --cron "0 4 * * *"         # schedule automatic refresh
+mesh-ctl capture domains --list                       # list domains used for sampling
+```
+
+### Overlay IP management
+
+```bash
+mesh-ctl ip list                            # list all assigned overlay IPs
+mesh-ctl ip range --set 10.100.0.0/16      # configure overlay address range
+```
+
+### Configuration
+
+```bash
+mesh-ctl config show                        # show current mesh-ctl state
+mesh-ctl version                            # show mesh-ctl version
+```
+
+## Architecture
+
+### Routing layer
+
+The data plane runs entirely through native Linux kernel interfaces — no subprocess execution at runtime:
+
+```mermaid
+graph LR
+    subgraph awg-mesh-node
+        A[Node core] --> B[Router\nnetlink]
+        A --> C[Firewall\nnftables]
+        A --> D[eBPF TC\ncilium/ebpf]
+        A --> E[AWG UAPI\namneziawg-go]
+    end
+
+    B -->|ip link / ip route| K[Linux kernel\nrouting table]
+    C -->|nf_tables| K
+    D -->|tc filter| K
+    E -->|UAPI socket| W[AWG kernel module]
+```
+
+- **Router (netlink)**: creates WireGuard interfaces, programs ECMP multipath routes, manages transport point-to-point links via `vishvananda/netlink` — zero `ip` subprocess calls.
+- **Firewall (nftables)**: configures NAT masquerade, conntrack for sticky sessions, and packet mark rules via `google/nftables` — zero `nft` subprocess calls.
+- **eBPF TC**: high-performance packet forwarding programs loaded via `cilium/ebpf`.
+- **AWG UAPI**: peer configuration, key exchange, and obfuscation parameters via the AmneziaWG UAPI socket (`amneziawg-go` imported as a library, not a subprocess).
+
+### gRPC management plane
+
+All control-plane operations go through a gRPC server on `:9090`. The 14 RPCs include:
+
+- `Init` — provision node with certs, config, and overlay IP
+- `AddTunnel` / `RemoveTunnel` — manage master→endpoint AWG tunnels
+- `AddPeer` / `RemovePeer` — manage peer entries on endpoint nodes
+- `RotateParams` — trigger AWG parameter rotation by tier
+- `GetStatus` — return node health, tunnel state, and peer info
+- `RotateToken` — issue a new bearer token
+- `RefreshCapture` — trigger live TLS/QUIC fingerprint sampling
+
+### ECMP load balancing
+
+```
+Client → balancer_ip (172.20.70.1)
+             ↓  nftables conntrack (sticky)
+       ┌─────┴─────┐
+    master-01    master-02   (ECMP nexthops in routing table)
+       ↓ ECMP         ↓ ECMP
+    ┌──┴──┐        ┌──┴──┐
+  kz-01 pl-01    kz-01 pl-01  (endpoint pool per master)
+```
+
+Each master programs a multipath ECMP route for the endpoints balancer IP with one nexthop per live endpoint. Healthcheck failures remove the failing nexthop; recovery adds it back — no restart required.
+
+### WG handshake health fallback
+
+Primary healthcheck: ICMP ping to the transport peer IP. Fallback: WireGuard handshake timestamp — if the last handshake was within the threshold, the peer is considered live even if ICMP is blocked.
+
+## Security
+
+### Authentication
+
+The gRPC management port (`:9090`) requires **both** mTLS and a bearer token. A connection is rejected if either credential is absent or invalid.
+
+- **mTLS**: each node holds a unique certificate signed by the mesh CA. `mesh-ctl prepare` generates the CA on first use and issues node certificates at `init` time. Certificates are hot-reloaded on `SIGHUP` — no container restart required.
+- **Bearer token**: a random token generated at `prepare` time, hashed with bcrypt and stored at `/config/mesh.token`. The plaintext is kept only in `~/.mesh-ctl/nodes/<name>/`. Rotate independently with `mesh-ctl token rotate`.
+
+### AWG parameter rotation
+
+AmneziaWG extends WireGuard with obfuscation fields that make tunnel traffic unidentifiable to DPI systems:
+
+| Tier | What rotates | Tunnel impact |
+|------|-------------|---------------|
+| 1 | Junk packet count and sizes | None — live update |
 | 2 | S1/H1/S2/H2 header bytes | Brief re-handshake |
-| 3 | WireGuard keypair | Full tunnel re-establishment |
+| 3 | AWG keypair | Full tunnel re-establishment |
 
-Schedule rotation with `mesh-ctl rotate` or configure automatic schedules per tier in `mesh-topology.yml`.
+Schedule rotation via `mesh-ctl rotate` or configure automatic intervals in `mesh-topology.yml` under `rotation.defaults`.
 
 ### Protocol mimicry
 
-Masters run a gopacket-based capture loop that samples real TLS ClientHello and QUIC Initial packets from configured domains. Captured fingerprints are applied to AWG obfuscation parameters, making tunnel traffic statistically resemble ordinary HTTPS/QUIC flows.
+Master nodes run a gopacket/libpcap capture loop that samples real TLS ClientHello and QUIC Initial packets from configured domains. Captured fingerprints are applied to AWG obfuscation parameters, making tunnel traffic statistically resemble ordinary HTTPS/QUIC flows.
 
 ## Observability
 
 ### Prometheus metrics
 
-Each node exposes metrics on `:9091/metrics`.
+Each node exposes metrics at `:9091/metrics`.
 
 | Metric | Description |
 |--------|-------------|
@@ -778,42 +689,94 @@ Each node exposes metrics on `:9091/metrics`.
 
 ### Logging
 
-All components log structured JSON to stdout. Set `--log-level debug` for full tunnel negotiation traces. Pipe to your log aggregator (Loki, CloudWatch, Datadog) via standard Docker log drivers.
+All components log structured JSON to stdout via zerolog. Pipe to your log aggregator using standard Docker log drivers.
 
 ```bash
-# Follow logs for a specific node
+# Filter error-level events from a running node
 docker logs -f awg-mesh-master | jq 'select(.level == "error")'
 ```
 
-## Development
+Set `--log-level debug` for full tunnel negotiation and routing traces.
 
-### Prerequisites
+## Testing
 
-- Go 1.25+
-- Docker (for integration tests)
-- `golangci-lint` v2
-
-### Build
+### Unit and integration tests
 
 ```bash
-# Local binary
-go build -o bin/awg-mesh-node ./cmd/awg-mesh-node
-go build -o bin/mesh-ctl      ./cmd/mesh-ctl
+# Install libpcap development headers (required for gopacket CGO build)
+sudo apt-get install -y libpcap-dev   # Debian/Ubuntu
+sudo apk add libpcap-dev              # Alpine
 
-# Static binary (matches Docker image)
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -ldflags="-s -w" -o bin/awg-mesh-node ./cmd/awg-mesh-node
+# Run unit tests with race detector
+CGO_ENABLED=1 go test -race ./...
 
-# Docker image
-docker build -t awg-mesh:dev .
+# Run with coverage
+CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
 ```
 
-### Test
+The CI pipeline enforces a 40% coverage floor.
+
+### E2E simulation
+
+The `tests/simulation/` directory contains an 8-node Docker simulation:
+
+| Node | Mode | Name |
+|------|------|------|
+| Master | master | ru-01, ru-02 |
+| Endpoint | endpoint | kz-01, kz-02, kz-03, pl-01, us-01 |
+| Client | client | client-01 |
+
+The simulation uses an internal Docker network (`192.168.50.0/24`) for AWG data-plane peering, with mapped ports on `localhost` for gRPC management. This is where the `peer_host` field is exercised — each node's `host` is `127.0.0.1` (gRPC) while `peer_host` is the container's internal IP (WG peering).
+
+**Run the E2E suite:**
 
 ```bash
-go test ./...                    # unit tests
-go test -tags integration ./...  # unit + integration tests
-go test -race ./...              # race detector
+cd tests/simulation
+AWG_E2E=1 go test -tags e2e -v -timeout 300s .
+```
+
+The test runner (`TestE2EFullMesh`) executes five subtests in sequence:
+
+| Subtest | Verifies |
+|---------|---------|
+| `WGHandshake` | Each master has 6 WG interfaces up (5 endpoints + 1 client) |
+| `OverlayPing` | Master can ping all endpoint overlay IPs |
+| `ECMP` | Master has ≥4 ECMP nexthops; client has 2 nexthops to master balancer |
+| `ClientToMaster` | Client reaches master transport and overlay IPs |
+| `Status` | All 7 non-client nodes appear `ONLINE` in `mesh-ctl status` |
+
+The `AWG_E2E=1` guard prevents accidental execution in CI. Docker must be running with the compose stack in `tests/simulation/` available.
+
+## Development
+
+### Build from source
+
+> **Important:** `CGO_ENABLED=1` is required. The project uses gopacket/libpcap for packet capture, which requires CGO. `CGO_ENABLED=0` builds will fail.
+
+```bash
+# Install system dependency
+sudo apt-get install -y libpcap-dev   # Debian/Ubuntu
+
+# Build both binaries
+CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
+CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
+```
+
+Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()` — no ldflags required:
+
+| How built | Version shown |
+|-----------|--------------|
+| `go install ...@v1.1.0` | `v1.1.0` |
+| Local clone at tagged commit | `v1.1.0 (abcd1234)` |
+| `go run` | `dev` |
+
+### Docker image build
+
+The Dockerfile uses a multi-stage build: `golang:1.25-alpine` builder (with `libpcap-dev`) producing a CGO binary, copied into an `alpine:3.21` runtime image with the `libpcap` shared library:
+
+```bash
+docker build -f deploy/Dockerfile -t awg-mesh:dev .
 ```
 
 ### Lint
@@ -824,18 +787,20 @@ golangci-lint run ./...
 
 ### CI pipeline
 
-GitHub Actions runs on every push and pull request:
+GitHub Actions runs on every push and pull request to `master`:
 
 ```
-lint → test → build → docker
+lint → test → build → docker (smoke test + push to GHCR)
 ```
 
-- `lint`: golangci-lint with project config
-- `test`: unit tests with race detector
-- `build`: static binaries for linux/amd64 and linux/arm64
-- `docker`: multi-arch image pushed to `ghcr.io/thebtf/awg-mesh`
+- **lint**: golangci-lint v1.64.0
+- **test**: `CGO_ENABLED=1 go test -race` with coverage threshold enforcement
+- **build**: `CGO_ENABLED=1 go build -trimpath` for both binaries
+- **docker**: multi-stage image build, smoke test (verifies AWG interface creation and gRPC server startup), push to `ghcr.io/thebtf/awg-mesh` on master
 
-Dependencies are managed by Dependabot — Go modules updated weekly, GitHub Actions updated monthly.
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, branch conventions, and pull request requirements.
 
 ## License
 
