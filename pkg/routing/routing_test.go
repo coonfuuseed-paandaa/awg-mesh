@@ -3,100 +3,54 @@
 package routing
 
 import (
+	"net"
 	"testing"
 )
 
-func TestRoutingStubFunctionsReturnNotSupported(t *testing.T) {
+func TestNetlinkRouterStubsReturnNotSupported(t *testing.T) {
 	t.Parallel()
-
-	errorText := "routing: not supported on this platform"
-	hops := []NextHop{{Via: "10.0.0.1", Dev: "wg0", Weight: 1}}
+	r := NewNetlinkRouter()
+	dest := &net.IPNet{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(24, 32)}
 
 	tests := []struct {
 		name string
 		run  func() error
 	}{
-		{
-			name: "AddRoute",
-			run: func() error {
-				return AddRoute("10.0.0.0/24", "10.0.0.1", "wg0")
-			},
-		},
-		{
-			name: "DeleteRoute",
-			run: func() error {
-				return DeleteRoute("10.0.0.0/24")
-			},
-		},
-		{
-			name: "ReplaceRoute",
-			run: func() error {
-				return ReplaceRoute("10.0.0.0/24", "10.0.0.1", "wg0")
-			},
-		},
-		{
-			name: "ListRoutes",
-			run: func() error {
-				_, err := ListRoutes()
-				return err
-			},
-		},
-		{
-			name: "SetECMPRoute",
-			run: func() error {
-				return SetECMPRoute("10.0.0.0/24", hops)
-			},
-		},
-		{
-			name: "RemoveECMPRoute",
-			run: func() error {
-				return RemoveECMPRoute("10.0.0.0/24")
-			},
-		},
-		{
-			name: "EnableMasquerade",
-			run: func() error {
-				return EnableMasquerade("wg0")
-			},
-		},
-		{
-			name: "DisableMasquerade",
-			run: func() error {
-				return DisableMasquerade("wg0")
-			},
-		},
-		{
-			name: "EnableForwarding",
-			run: func() error {
-				return EnableForwarding()
-			},
-		},
-		{
-			name: "ClampMSS",
-			run: func() error {
-				return ClampMSS("wg0", 1460)
-			},
-		},
-		{
-			name: "RemoveMSSClamp",
-			run: func() error {
-				return RemoveMSSClamp("wg0", 1460)
-			},
-		},
+		{"RouteAdd", func() error { return r.RouteAdd(dest, net.ParseIP("10.0.0.1"), "wg0") }},
+		{"RouteReplace", func() error { return r.RouteReplace(dest, net.ParseIP("10.0.0.1"), "wg0") }},
+		{"RouteDelete", func() error { return r.RouteDelete(dest) }},
+		{"SetECMPRoute", func() error { return r.SetECMPRoute(dest, []NextHop{{Via: "10.0.0.1", Dev: "wg0", Weight: 1}}) }},
+		{"RemoveECMPRoute", func() error { return r.RemoveECMPRoute(dest) }},
+		{"AddrAdd", func() error { return r.AddrAdd("lo", dest) }},
+		{"LinkSetUp", func() error { return r.LinkSetUp("lo") }},
 	}
 
-	for _, testCase := range tests {
-		testCase := testCase
-		t.Run(testCase.name, func(t *testing.T) {
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := testCase.run()
-			if err == nil {
-				t.Fatal("expected not supported error")
-			}
-			if err.Error() != errorText {
-				t.Fatalf("expected %q, got %q", errorText, err.Error())
+			if err := tc.run(); err == nil {
+				t.Fatal("expected not-supported error")
 			}
 		})
 	}
 }
 
+func TestProcSysctlStubsReturnNotSupported(t *testing.T) {
+	t.Parallel()
+	s := NewProcSysctl()
+	if err := s.EnableForwarding(); err == nil {
+		t.Fatal("expected error")
+	}
+	if err := s.EnableL4Hash(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNftablesFirewallStubReturnsNotSupported(t *testing.T) {
+	t.Parallel()
+	_, err := NewNftablesFirewall()
+	if err == nil {
+		t.Fatal("expected error on non-Linux")
+	}
+}

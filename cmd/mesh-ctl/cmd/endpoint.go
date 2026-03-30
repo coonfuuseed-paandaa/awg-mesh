@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -263,22 +264,54 @@ func newEndpointInitCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
 				}
 
+				tunnelExists := false
 				if addErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q failed: %v\n", master.Name, addErr)
-					continue
+					if strings.Contains(addErr.Error(), "already exists") {
+						tunnelExists = true
+					} else {
+						fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q failed: %v\n", master.Name, addErr)
+						continue
+					}
 				}
 
-				if !addResp.Success {
+				if !tunnelExists && (addResp == nil || !addResp.Success) {
 					fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q failed: %s\n", master.Name, "[RPC failure]")
 					continue
 				}
 
-				fmt.Printf("Added tunnel for endpoint %q on master %q.\n", ep.Name, master.Name)
+				if tunnelExists {
+					fmt.Printf("Tunnel for endpoint %q on master %q already exists.\n", ep.Name, master.Name)
+				} else {
+					fmt.Printf("Added tunnel for endpoint %q on master %q.\n", ep.Name, master.Name)
+				}
+
+				// Get master's public key — from response or from disk.
+				var masterPubKey []byte
+				if addResp != nil {
+					masterPubKey = addResp.MasterPublicKey
+				}
+				if len(masterPubKey) == 0 {
+					pubkeyPath := filepath.Join(nodeDir(configDir, master.Name), "pubkey")
+					masterPubKey, _ = os.ReadFile(pubkeyPath)
+				}
+				if len(masterPubKey) == 0 {
+					fmt.Fprintf(os.Stderr, "warning: master %q public key not available, skipping peer setup\n", master.Name)
+					continue
+				}
+
+				// AllowedIPs: transport /30 + all overlay ranges (so endpoints can
+				// receive client traffic forwarded by masters).
+				allowedIPs := []string{allocation.Subnet.String()}
+				for _, nr := range topo.Overlay.Ranges {
+					if nr.CIDR != "" {
+						allowedIPs = append(allowedIPs, nr.CIDR)
+					}
+				}
 
 				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				peerResp, peerErr := selfClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
-					PublicKey:           addResp.MasterPublicKey,
-					AllowedIps:          []string{allocation.Subnet.String()},
+					PublicKey:           masterPubKey,
+					AllowedIps:          allowedIPs,
 					EndpointHost:        master.PeerAddr(),
 					PersistentKeepalive: 25,
 					TransportSubnet:     allocation.Subnet.String(),

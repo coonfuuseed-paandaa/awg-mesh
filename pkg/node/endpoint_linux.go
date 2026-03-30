@@ -65,13 +65,7 @@ func (e *EndpointRunner) createInterface() error {
 	}
 	fw, fwErr := routing.NewNftablesFirewall()
 	if fwErr != nil {
-		e.node.logger.Warn().Err(fwErr).Msg("nftables unavailable, falling back to iptables")
-		if err := routing.EnableMasquerade("eth0"); err != nil {
-			e.node.logger.Warn().Err(err).Msg("failed to enable masquerade on eth0")
-		}
-		if err := routing.ClampMSSToPMTU(); err != nil {
-			e.node.logger.Warn().Err(err).Msg("failed to enable TCP MSS clamping")
-		}
+		e.node.logger.Error().Err(fwErr).Msg("nftables unavailable — firewall rules not applied")
 	} else {
 		if err := fw.SetupNAT("eth0"); err != nil {
 			e.node.logger.Warn().Err(err).Msg("nftables: failed to enable masquerade")
@@ -100,6 +94,29 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) e
 		e.node.logger.Warn().Err(err).
 			Str("local_ip", trimmedLocalIP).
 			Msg("transport IP may already be assigned")
+	}
+
+	// Add overlay routes through this master — endpoint needs to route
+	// client traffic back through the master's WG tunnel.
+	trimmedPeerIP := strings.TrimSpace(peerIP)
+	if trimmedPeerIP != "" && e.node.topology != nil {
+		router := routing.NewNetlinkRouter()
+		for _, nr := range e.node.topology.Overlay.Ranges {
+			if nr.CIDR == "" {
+				continue
+			}
+			_, cidrNet, parseErr := net.ParseCIDR(nr.CIDR)
+			if parseErr != nil {
+				continue
+			}
+			// Skip the endpoint's own range (already reachable locally).
+			if cidrNet.Contains(net.ParseIP(e.node.config.OverlayIP)) {
+				continue
+			}
+			if err := router.RouteReplace(cidrNet, net.ParseIP(trimmedPeerIP), endpointInterfaceName); err != nil {
+				e.node.logger.Debug().Err(err).Str("cidr", nr.CIDR).Msg("overlay route may already exist")
+			}
+		}
 	}
 
 	e.node.logger.Info().

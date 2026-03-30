@@ -103,9 +103,12 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 
 	if endpointTransportIP != "" && strings.TrimSpace(tunnel.OverlayIP) != "" {
 		overlayCIDR := normalizeTransportOverlayRoute(tunnel.OverlayIP)
-		if err := routing.AddRoute(overlayCIDR, endpointTransportIP, tunnel.InterfaceName); err != nil {
-			_ = iface.Close()
-			return fmt.Errorf("add overlay route for tunnel %q: %w", tunnel.Name, err)
+		if _, destNet, parseErr := net.ParseCIDR(overlayCIDR); parseErr == nil {
+			router := routing.NewNetlinkRouter()
+			if err := router.RouteAdd(destNet, net.ParseIP(endpointTransportIP), tunnel.InterfaceName); err != nil {
+				_ = iface.Close()
+				return fmt.Errorf("add overlay route for tunnel %q: %w", tunnel.Name, err)
+			}
 		}
 	}
 
@@ -122,6 +125,13 @@ func (m *MasterRunner) rebuildECMP(balancerIP string) {
 	}
 
 	cidr := balancerIP + "/32"
+	_, destNet, _ := net.ParseCIDR(cidr)
+	if destNet == nil {
+		return
+	}
+
+	router := routing.NewNetlinkRouter()
+
 	m.mu.RLock()
 	nexthops := make([]routing.NextHop, 0, len(m.tunnels))
 	for _, t := range m.tunnels {
@@ -136,7 +146,7 @@ func (m *MasterRunner) rebuildECMP(balancerIP string) {
 	m.mu.RUnlock()
 
 	if len(nexthops) == 0 {
-		if err := routing.RemoveECMPRoute(cidr); err != nil {
+		if err := router.RemoveECMPRoute(destNet); err != nil {
 			m.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to remove ECMP route")
 			return
 		}
@@ -144,7 +154,7 @@ func (m *MasterRunner) rebuildECMP(balancerIP string) {
 		return
 	}
 
-	if err := routing.SetECMPRoute(cidr, nexthops); err != nil {
+	if err := router.SetECMPRoute(destNet, nexthops); err != nil {
 		m.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to rebuild ECMP route")
 		return
 	}
@@ -156,8 +166,11 @@ func (m *MasterRunner) removeOverlayRoute(overlayIP string) {
 		return
 	}
 	cidr := normalizeTransportOverlayRoute(overlayIP)
-	if err := routing.DeleteRoute(cidr); err != nil {
-		m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to remove overlay route")
+	if _, destNet, parseErr := net.ParseCIDR(cidr); parseErr == nil {
+		router := routing.NewNetlinkRouter()
+		if err := router.RouteDelete(destNet); err != nil {
+			m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to remove overlay route")
+		}
 	}
 }
 
@@ -166,8 +179,11 @@ func (m *MasterRunner) restoreOverlayRoute(overlayIP, endpointTransportIP, inter
 		return
 	}
 	cidr := normalizeTransportOverlayRoute(overlayIP)
-	if err := routing.ReplaceRoute(cidr, endpointTransportIP, interfaceName); err != nil {
-		m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to restore overlay route")
+	if _, destNet, parseErr := net.ParseCIDR(cidr); parseErr == nil {
+		router := routing.NewNetlinkRouter()
+		if err := router.RouteReplace(destNet, net.ParseIP(endpointTransportIP), interfaceName); err != nil {
+			m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to restore overlay route")
+		}
 	}
 }
 

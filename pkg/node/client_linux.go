@@ -462,14 +462,17 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 
 func (c *ClientRunner) updateDefaultRoute(links []*transportLink) error {
 	nexthops := buildClientNexthops(links)
+	router := routing.NewNetlinkRouter()
+	defaultDst := &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}
+
 	if len(nexthops) == 0 {
-		if err := routing.RemoveECMPRoute("default"); err != nil {
+		if err := router.RemoveECMPRoute(defaultDst); err != nil {
 			return fmt.Errorf("remove default ECMP route: %w", err)
 		}
 		return nil
 	}
 
-	if err := routing.SetECMPRoute("default", nexthops); err != nil {
+	if err := router.SetECMPRoute(defaultDst, nexthops); err != nil {
 		return fmt.Errorf("set default ECMP route: %w", err)
 	}
 	return nil
@@ -552,37 +555,50 @@ func (c *ClientRunner) rebuildECMP(balancerIP string) error {
 	}
 	c.platformState.mu.Unlock()
 
+	router := routing.NewNetlinkRouter()
+	_, destNet, _ := net.ParseCIDR(cidr)
+
 	if len(nexthops) == 0 {
-		if err := routing.DisableStickyECMP(cidr); err != nil {
-			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to disable sticky ECMP rules")
+		fw, fwErr := routing.NewNftablesFirewall()
+		if fwErr == nil {
+			fw.DisableStickyECMP(cidr)
 		}
-		if err := routing.RemoveECMPRoute(cidr); err != nil {
-			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to remove client ECMP route")
-			return fmt.Errorf("remove client ECMP route for %s: %w", balancerIP, err)
+		if destNet != nil {
+			if err := router.RemoveECMPRoute(destNet); err != nil {
+				c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to remove client ECMP route")
+				return fmt.Errorf("remove client ECMP route for %s: %w", balancerIP, err)
+			}
 		}
 		c.node.logger.Info().Str("balancer_ip", balancerIP).Msg("client ECMP route removed")
 		return nil
 	}
 
-	if err := routing.SetECMPRoute(cidr, nexthops); err != nil {
-		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to set client ECMP route")
-		return fmt.Errorf("set client ECMP route for %s: %w", balancerIP, err)
-	}
-
-	// Also route the entire overlay space through the same ECMP nexthops
-	// so the client can reach master overlay IPs (not just the balancer).
-	if c.node.topology != nil && c.node.topology.Overlay.Space != "" {
-		if err := routing.SetECMPRoute(c.node.topology.Overlay.Space, nexthops); err != nil {
-			c.node.logger.Warn().Str("overlay", c.node.topology.Overlay.Space).Err(err).Msg("failed to set overlay space ECMP route")
+	if destNet != nil {
+		if err := router.SetECMPRoute(destNet, nexthops); err != nil {
+			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to set client ECMP route")
+			return fmt.Errorf("set client ECMP route for %s: %w", balancerIP, err)
 		}
 	}
 
-	if err := routing.EnableStickyECMP(cidr); err != nil {
-		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to enable sticky ECMP rules")
-		return fmt.Errorf("enable sticky ECMP for %s: %w", balancerIP, err)
+	// Also route the entire overlay space through the same ECMP nexthops.
+	if c.node.topology != nil && c.node.topology.Overlay.Space != "" {
+		if _, overlayNet, parseErr := net.ParseCIDR(c.node.topology.Overlay.Space); parseErr == nil {
+			if err := router.SetECMPRoute(overlayNet, nexthops); err != nil {
+				c.node.logger.Warn().Str("overlay", c.node.topology.Overlay.Space).Err(err).Msg("failed to set overlay space ECMP route")
+			}
+		}
 	}
 
-	if err := routing.EnableL4Hash(); err != nil {
+	fw, fwErr := routing.NewNftablesFirewall()
+	if fwErr == nil {
+		if err := fw.EnableStickyECMP(cidr); err != nil {
+			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to enable sticky ECMP rules")
+			return fmt.Errorf("enable sticky ECMP for %s: %w", balancerIP, err)
+		}
+	}
+
+	sysctl := routing.NewProcSysctl()
+	if err := sysctl.EnableL4Hash(); err != nil {
 		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to enable L4 hash")
 		return fmt.Errorf("enable L4 hash: %w", err)
 	}

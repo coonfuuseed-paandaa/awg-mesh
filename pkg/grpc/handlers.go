@@ -637,7 +637,8 @@ func (h *AgentHandler) GetRoutes(_ context.Context, _ *proto.Empty) (*proto.Rout
 		return nil, status.Error(codes.Unimplemented, "routes are supported only on linux")
 	}
 
-	routes, err := routing.ListRoutes()
+	router := routing.NewNetlinkRouter()
+	routes, err := router.ListRoutes()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list routes: %v", err)
 	}
