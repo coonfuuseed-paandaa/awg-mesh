@@ -2,9 +2,9 @@ name: build
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 jobs:
   lint:
@@ -101,13 +101,22 @@ jobs:
           echo "Smoke test passed"
 
       - name: Push to GHCR
-        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           docker tag awg-mesh-node:ci ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
           docker tag awg-mesh-node:ci ghcr.io/coonfuuseed-paandaa/awg-mesh:${{ github.sha }}
           docker push ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
           docker push ghcr.io/coonfuuseed-paandaa/awg-mesh:${{ github.sha }}
+
+      - name: Push to Docker Hub
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+          docker tag awg-mesh-node:ci ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh:latest
+          docker tag awg-mesh-node:ci ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh:${{ github.sha }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh:${{ github.sha }}
     permissions:
       contents: read
       packages: write
