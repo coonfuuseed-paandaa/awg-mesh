@@ -1,4 +1,4 @@
-<!-- LANG_SWITCHER: English | [Русский](README.ru.md) -->
+**English** | [Русский](README.ru.md)
 
 <!-- BADGE_ROW -->
 [![CI](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml)
