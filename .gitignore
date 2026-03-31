@@ -38,3 +38,5 @@ rename-check.tmp
 TECHNICAL_DEBT.md
 .mesh-ctl-e2e/
 *-docker-compose.yml
+.audit*
+audit_*
