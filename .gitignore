@@ -37,3 +37,4 @@ rename-check.tmp
 /.gomodcache/
 TECHNICAL_DEBT.md
 .mesh-ctl-e2e/
+*-docker-compose.yml
