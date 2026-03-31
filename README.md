@@ -65,6 +65,17 @@ graph TB
 
 ## What's New
 
+### v1.2.0
+
+- **Smart Client** — single container replaces N per-region AWG containers with DSCP-based policy routing. Router marks traffic with DSCP, container reads DSCP field and routes to the correct endpoint via policy routing tables.
+- **Embedded DNS server** — client containers serve A and PTR records for the overlay zone via miekg/dns. `dig kz-01.mesh.zone @client` returns the overlay IP. Non-zone queries are forwarded to an upstream DNS server.
+- **Router config generation** — `mesh-ctl routing generate` produces platform-specific configs:
+  - `--platform mikrotik`: RouterOS `.rsc` script with `/ip/firewall/mangle` DSCP rules and routing tables
+  - `--platform linux`: shell script with `iptables -t mangle` DSCP marking and `ip rule`/`ip route` entries
+  - `--platform generic`: JSON with DSCP map and fallback overlay-IP static routes for routers without DSCP support
+- **Master exit mode** — masters with `exit: true` in topology enable masquerade, acting as VPN exit points (one fewer hop vs routing through an endpoint).
+- **DSCP teardown on shutdown** — nftables DSCP rules and ip rules are cleaned up when the client shuts down.
+
 ### v1.1.0
 
 - **Idempotent endpoint init** — re-running `endpoint init` is safe; existing tunnels are preserved rather than duplicated.
@@ -86,6 +97,13 @@ graph TB
 - Health-checked failover using ICMP probes with WG handshake timestamp as fallback
 - Configurable overlay address space with per-role CIDR ranges and virtual balancer IPs
 - Transport point-to-point addressing (10.255.x.x) allocated automatically per tunnel pair
+
+**Smart Client (v1.2.0)**
+- DSCP-based policy routing: router marks traffic with DSCP values (1-63), client reads IP DSCP field via nftables → sets fwmark → ip rule routes to per-policy routing table
+- Embedded DNS server for overlay zone: A records (`node.mesh.zone` → overlay IP), PTR records (reverse lookup), upstream forwarding for non-zone queries
+- Router config generation: `mesh-ctl routing generate` for MikroTik `.rsc`, Linux shell, and generic JSON
+- Master exit mode: `exit: true` enables direct internet egress via masquerade — no endpoint hop required
+- Fallback overlay-IP routing for consumer routers without DSCP support
 
 **Operations**
 - Topology-as-code: single `mesh-topology.yml` as the only source of truth
@@ -116,6 +134,7 @@ graph TB
 - **Multi-region branch connectivity**: connect office routers (MikroTik or Linux) to a mesh of master nodes, with ECMP distributing load across masters.
 - **Self-hosted VPN with horizontal scale**: add more master or endpoint nodes to the topology file and re-run `init` — no manual peer wiring.
 - **Anti-DPI environments**: AWG obfuscation parameters rotate on schedule and are fingerprinted against real TLS/QUIC traffic to defeat traffic classifiers.
+- **MikroTik single-container VPN**: replace 5+ AWG containers (one per region) with a single smart client container. DSCP marks on the router select which endpoint each traffic flow reaches — 33 manual mangle rules and 10 routing tables replaced by one topology file and `mesh-ctl routing generate`.
 
 ## Quick Start
 
@@ -123,7 +142,7 @@ This example deploys a minimal mesh: two masters in Russia, two endpoints in Kaz
 
 ```bash
 # 1. Install mesh-ctl on your admin machine
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Create your topology file (see Configuration section for all fields)
@@ -167,7 +186,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Install mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 The binary lands in `$(go env GOPATH)/bin`. Ensure that directory is in your `PATH`:
@@ -211,7 +230,7 @@ All nodes should appear `ONLINE` with tunnel counts matching the topology.
 ### Upgrading mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 The `~/.mesh-ctl/` state directory (CA, tokens, keys, transport allocations) is not affected.
@@ -245,7 +264,7 @@ ssh master-02 'docker compose -f ru-master-02-docker-compose.yml pull && docker 
 
 ```
 ghcr.io/thebtf/awg-mesh:latest
-ghcr.io/thebtf/awg-mesh:v1.1.0
+ghcr.io/thebtf/awg-mesh:v1.2.0
 ghcr.io/thebtf/awg-mesh:<commit-sha>
 ```
 
@@ -268,7 +287,7 @@ The container expects configuration at `/config`. Map your node's config directo
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:v1.1.0
+    image: ghcr.io/thebtf/awg-mesh:v1.2.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -370,6 +389,7 @@ masters:
       - kz-01
       - kz-02
       - pl-01
+    exit: true                 # optional: enable direct internet egress (masquerade)
 ```
 
 `peer_host` is used when the address that WireGuard peers use to reach this node differs from the address `mesh-ctl` uses for gRPC management. This is common in Docker simulations where internal container IPs are used for data-plane peering while `localhost` with mapped ports is used for management.
@@ -392,13 +412,29 @@ endpoints:
 ```yaml
 clients:
   - name: branch-router
-    type: linux                # linux | mikrotik
+    type: linux                # linux | mikrotik | generic
     host: 203.0.113.5          # management host for gRPC (linux clients)
     overlay_ip: 172.20.70.131
     grpc_port: 9090            # optional: gRPC port override
     masters:
       - ru-master-01           # which masters this client connects to
       - ru-master-02
+
+    # Smart Client: DSCP-based policy routing (optional, v1.2.0+)
+    routing_policies:
+      - name: vpn-kz           # policy name (used in generated router configs)
+        dscp: 10               # DSCP value (1-63) — router marks traffic with this
+        targets: [kz-01]       # endpoint or exit-master names to route through
+      - name: vpn-us
+        dscp: 20
+        targets: [us-01]
+      # DSCP 0 (default) → ECMP across all endpoints
+
+    # Embedded DNS server (optional, v1.2.0+)
+    dns:
+      zone: mesh.zone          # overlay DNS zone name
+      listen: "0.0.0.0:53"     # bind address (default: 0.0.0.0:53)
+      upstream: "1.1.1.1"      # forward non-zone queries here
 ```
 
 For `type: mikrotik`, `mesh-ctl client prepare` generates a `.rsc` script ready to paste into a RouterOS terminal. No `host` or `grpc_port` required for MikroTik clients — they are provisioned offline.
@@ -545,6 +581,27 @@ mesh-ctl client init    <name>
 mesh-ctl client remove  <name>
 ```
 
+### Router config generation (v1.2.0)
+
+```bash
+# Generate MikroTik RouterOS .rsc script
+mesh-ctl routing generate --platform mikrotik -t mesh-topology.yml
+
+# Generate Linux iptables/ip rule shell script
+mesh-ctl routing generate --platform linux -t mesh-topology.yml
+
+# Generate generic JSON (with fallback overlay-IP routes)
+mesh-ctl routing generate --platform generic -t mesh-topology.yml
+
+# Target a specific client (defaults to first client in topology)
+mesh-ctl routing generate --platform mikrotik --client home-router -t mesh-topology.yml
+```
+
+The generated config maps each routing policy's DSCP value to the appropriate platform commands:
+- **MikroTik**: `/ip/firewall/mangle` rules with `change-dscp` action + `/ip/route` entries
+- **Linux**: `iptables -t mangle` DSCP marking + `ip rule add fwmark N lookup TABLE` + `ip route`
+- **Generic JSON**: `dscp_map[]` entries + `fallback_routes[]` with per-overlay-IP static routes
+
 ### Status and monitoring
 
 ```bash
@@ -627,6 +684,26 @@ All control-plane operations go through a gRPC server on `:9090`. The 14 RPCs in
 - `GetStatus` — return node health, tunnel state, and peer info
 - `RotateToken` — issue a new bearer token
 - `RefreshCapture` — trigger live TLS/QUIC fingerprint sampling
+
+### DSCP policy routing (v1.2.0)
+
+```
+Router (MikroTik/Linux)        Client container              Master            Endpoint
+  │                              │                            │                  │
+  │ 1. address-list match        │                            │                  │
+  │ 2. set DSCP=10               │                            │                  │
+  │ 3. route to client gateway   │                            │                  │
+  │ ─────────────────────────────>│                            │                  │
+  │                              │ 4. nftables: DSCP→fwmark   │                  │
+  │                              │ 5. ip rule: fwmark→table   │                  │
+  │                              │ 6. table: default via WG   │                  │
+  │                              │ ─────────────────────────────>                │
+  │                              │                            │ 7. overlay route │
+  │                              │                            │ ───────────────────>
+  │                              │                            │                  │ 8. NAT → internet
+```
+
+DSCP values 1-63 map to individual routing policies. DSCP 0 (default) uses the existing ECMP path across all endpoints.
 
 ### ECMP load balancing
 
@@ -767,8 +844,8 @@ Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()`
 
 | How built | Version shown |
 |-----------|--------------|
-| `go install ...@v1.1.0` | `v1.1.0` |
-| Local clone at tagged commit | `v1.1.0 (abcd1234)` |
+| `go install ...@v1.2.0` | `v1.2.0` |
+| Local clone at tagged commit | `v1.2.0 (abcd1234)` |
 | `go run` | `dev` |
 
 ### Docker image build

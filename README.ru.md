@@ -65,6 +65,17 @@ graph TB
 
 ## Что нового
 
+### v1.2.0
+
+- **Smart Client** — один контейнер заменяет N отдельных AWG-контейнеров по регионам с помощью policy routing на основе DSCP. Роутер маркирует трафик значением DSCP, контейнер читает поле DSCP и маршрутизирует поток в нужный endpoint через соответствующие таблицы политик.
+- **Встроенный DNS-сервер** — клиентские контейнеры отдают A- и PTR-записи для overlay-зоны через miekg/dns. `dig kz-01.mesh.zone @client` возвращает overlay IP. Запросы вне зоны проксируются на вышестоящий DNS-сервер.
+- **Генерация конфига роутера** — `mesh-ctl routing generate` создаёт платформо-специфичные конфиги:
+  - `--platform mikrotik`: RouterOS `.rsc`-скрипт с правилами DSCP в `/ip/firewall/mangle` и таблицами маршрутизации
+  - `--platform linux`: shell-скрипт с маркировкой DSCP через `iptables -t mangle` и правилами `ip rule`/`ip route`
+  - `--platform generic`: JSON с картой DSCP и резервными статическими overlay-IP маршрутами для роутеров без поддержки DSCP
+- **Master в режиме exit** — master с `exit: true` в топологии включает masquerade и работает как точка выхода VPN (на один хоп меньше по сравнению с маршрутизацией через endpoint).
+- **Очистка DSCP при завершении** — nftables DSCP-правила и ip rules удаляются при остановке клиента.
+
 ### v1.1.0
 
 - **Идемпотентная инициализация endpoint** — повторный запуск `endpoint init` безопасен: существующие туннели сохраняются, а не дублируются.
@@ -86,6 +97,13 @@ graph TB
 - Failover по результатам ICMP-проб с временной меткой WG-хендшейка в качестве запасного варианта
 - Настраиваемое overlay-адресное пространство с диапазонами CIDR по ролям и виртуальными IP балансировщика
 - Транспортная point-to-point адресация (10.255.x.x) выделяется автоматически для каждой пары туннелей
+
+**Smart Client (v1.2.0)**
+- Policy routing на основе DSCP: роутер маркирует трафик значениями DSCP (1-63), клиент читает поле IP DSCP через nftables → устанавливает fwmark → ip rule направляет трафик в отдельную таблицу маршрутизации
+- Встроенный DNS-сервер для overlay-зоны: A-записи (`node.mesh.zone` → overlay IP), PTR-записи (обратный поиск), проксирование запросов вне зоны на вышестоящий DNS
+- Генерация конфига роутера: `mesh-ctl routing generate` для MikroTik `.rsc`, Linux shell и generic JSON
+- Master в режиме exit: `exit: true` включает прямой интернет-egress через masquerade — без лишнего хопа через endpoint
+- Резервная маршрутизация по overlay-IP для потребительских роутеров без поддержки DSCP
 
 **Эксплуатация**
 - Топология как код: единственный `mesh-topology.yml` как источник истины
@@ -116,6 +134,7 @@ graph TB
 - **Межрегиональное корпоративное подключение**: соединение офисных роутеров (MikroTik или Linux) с сетью master-узлов, ECMP распределяет нагрузку между ними.
 - **Self-hosted VPN с горизонтальным масштабированием**: добавьте master- или endpoint-узлы в файл топологии и перезапустите `init` — никакой ручной настройки пиров.
 - **Среды с анти-DPI**: параметры обфускации AWG ротируются по расписанию и калибруются по реальному TLS/QUIC-трафику для обхода классификаторов трафика.
+- **MikroTik — один контейнер вместо нескольких**: замените 5+ AWG-контейнеров (по одному на регион) единым smart client-контейнером. DSCP-метки на роутере выбирают, через какой endpoint пойдёт каждый поток — 33 ручных mangle-правила и 10 таблиц маршрутизации заменяются одним файлом топологии и командой `mesh-ctl routing generate`.
 
 ## Быстрый старт
 
@@ -123,7 +142,7 @@ graph TB
 
 ```bash
 # 1. Установите mesh-ctl на своей машине администратора
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Создайте файл топологии (все поля описаны в разделе Конфигурация)
@@ -167,7 +186,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Установка mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 Бинарник окажется в `$(go env GOPATH)/bin`. Убедитесь, что эта директория есть в `PATH`:
@@ -211,7 +230,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Обновление mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.1.0
+go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 Директория состояния `~/.mesh-ctl/` (CA, токены, ключи, транспортные выделения) не затрагивается.
@@ -245,7 +264,7 @@ ssh master-02 'docker compose -f ru-master-02-docker-compose.yml pull && docker 
 
 ```
 ghcr.io/thebtf/awg-mesh:latest
-ghcr.io/thebtf/awg-mesh:v1.1.0
+ghcr.io/thebtf/awg-mesh:v1.2.0
 ghcr.io/thebtf/awg-mesh:<commit-sha>
 ```
 
@@ -268,7 +287,7 @@ ghcr.io/thebtf/awg-mesh:<commit-sha>
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:v1.1.0
+    image: ghcr.io/thebtf/awg-mesh:v1.2.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -370,6 +389,7 @@ masters:
       - kz-01
       - kz-02
       - pl-01
+    exit: true                 # опционально: включить прямой интернет-egress (masquerade)
 ```
 
 `peer_host` используется, когда адрес, по которому WireGuard-пиры достигают этот узел, отличается от адреса, который `mesh-ctl` использует для gRPC-управления. Типичный случай — Docker-симуляции, где внутренние IP контейнеров используются для data-plane пиринга, а `localhost` с проброшенными портами — для управления.
@@ -392,13 +412,29 @@ endpoints:
 ```yaml
 clients:
   - name: branch-router
-    type: linux                # linux | mikrotik
+    type: linux                # linux | mikrotik | generic
     host: 203.0.113.5          # management-хост для gRPC (Linux-клиенты)
     overlay_ip: 172.20.70.131
     grpc_port: 9090            # опционально: переопределение gRPC-порта
     masters:
       - ru-master-01           # к каким master'ам подключается этот клиент
       - ru-master-02
+
+    # Smart Client: policy routing на основе DSCP (опционально, v1.2.0+)
+    routing_policies:
+      - name: vpn-kz           # имя политики (используется в генерируемых конфигах роутера)
+        dscp: 10               # значение DSCP (1-63) — роутер маркирует этим значением трафик
+        targets: [kz-01]       # имена endpoint'ов или exit-master'ов для маршрутизации
+      - name: vpn-us
+        dscp: 20
+        targets: [us-01]
+      # DSCP 0 (по умолчанию) → ECMP по всем endpoint'ам
+
+    # Встроенный DNS-сервер (опционально, v1.2.0+)
+    dns:
+      zone: mesh.zone          # имя overlay DNS-зоны
+      listen: "0.0.0.0:53"     # адрес привязки (по умолчанию: 0.0.0.0:53)
+      upstream: "1.1.1.1"      # сюда проксируются запросы вне зоны
 ```
 
 Для `type: mikrotik` команда `mesh-ctl client prepare` генерирует `.rsc`-скрипт, готовый для вставки в терминал RouterOS. Для MikroTik-клиентов поля `host` и `grpc_port` не нужны — они провизируются офлайн.
@@ -545,6 +581,27 @@ mesh-ctl client init    <name>
 mesh-ctl client remove  <name>
 ```
 
+### Генерация конфига роутера (v1.2.0)
+
+```bash
+# Генерация RouterOS .rsc-скрипта для MikroTik
+mesh-ctl routing generate --platform mikrotik -t mesh-topology.yml
+
+# Генерация Linux shell-скрипта с iptables/ip rule
+mesh-ctl routing generate --platform linux -t mesh-topology.yml
+
+# Генерация generic JSON (с резервными overlay-IP маршрутами)
+mesh-ctl routing generate --platform generic -t mesh-topology.yml
+
+# Указать конкретного клиента (по умолчанию — первый клиент в топологии)
+mesh-ctl routing generate --platform mikrotik --client home-router -t mesh-topology.yml
+```
+
+Сгенерированный конфиг сопоставляет значение DSCP каждой политики маршрутизации с командами конкретной платформы:
+- **MikroTik**: правила `/ip/firewall/mangle` с действием `change-dscp` + записи `/ip/route`
+- **Linux**: маркировка DSCP через `iptables -t mangle` + `ip rule add fwmark N lookup TABLE` + `ip route`
+- **Generic JSON**: записи `dscp_map[]` + `fallback_routes[]` со статическими маршрутами по overlay-IP
+
 ### Статус и мониторинг
 
 ```bash
@@ -627,6 +684,26 @@ graph LR
 - `GetStatus` — возврат состояния здоровья узла, туннелей и информации о пирах
 - `RotateToken` — выпуск нового bearer-токена
 - `RefreshCapture` — запуск живого захвата TLS/QUIC fingerprint
+
+### Policy routing на основе DSCP (v1.2.0)
+
+```
+Router (MikroTik/Linux)        Client container              Master            Endpoint
+  │                              │                            │                  │
+  │ 1. address-list match        │                            │                  │
+  │ 2. set DSCP=10               │                            │                  │
+  │ 3. route to client gateway   │                            │                  │
+  │ ─────────────────────────────>│                            │                  │
+  │                              │ 4. nftables: DSCP→fwmark   │                  │
+  │                              │ 5. ip rule: fwmark→table   │                  │
+  │                              │ 6. table: default via WG   │                  │
+  │                              │ ─────────────────────────────>                │
+  │                              │                            │ 7. overlay route │
+  │                              │                            │ ───────────────────>
+  │                              │                            │                  │ 8. NAT → internet
+```
+
+Значения DSCP 1-63 соответствуют отдельным политикам маршрутизации. DSCP 0 (по умолчанию) использует существующий ECMP-путь через все endpoint'ы.
 
 ### ECMP-балансировка нагрузки
 
@@ -767,8 +844,8 @@ CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
 
 | Способ сборки | Отображаемая версия |
 |---------------|---------------------|
-| `go install ...@v1.1.0` | `v1.1.0` |
-| Локальный клон на тегированном коммите | `v1.1.0 (abcd1234)` |
+| `go install ...@v1.2.0` | `v1.2.0` |
+| Локальный клон на тегированном коммите | `v1.2.0 (abcd1234)` |
 | `go run` | `dev` |
 
 ### Сборка Docker-образа

@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-03-31
+
+### Added
+- Smart Client — DSCP-based policy routing: single container replaces N per-region AWG containers
+- Embedded DNS server (miekg/dns) — A/PTR records for overlay zone, upstream forwarding, hot-update
+- `mesh-ctl routing generate` command — generates platform-specific router configurations:
+  - MikroTik `.rsc` scripts with mangle rules, routing table creation, VPN routes
+  - Linux shell scripts with iptables DSCP marking, ip rule, ip route (numeric table IDs)
+  - Generic JSON with DSCP map and fallback overlay-IP static routes
+- Master exit mode — `exit: true` in topology enables masquerade for direct VPN egress
+- Topology extension: `routing_policies`, `dns`, `exit` fields in mesh-topology.yml
+- DSCP teardown on client shutdown — nftables rules and ip rules cleaned up gracefully
+- Fallback overlay-IP routes in generic JSON for routers without DSCP support
+
+### Changed
+- DNS server reuses forwarding client (prevents per-request socket allocation)
+- MikroTik .rsc scripts now include `/routing/table add` for RouterOS v7 compatibility
+
+### Fixed
+- DSCP per-table routes now populated from transport state at startup
+- Linux script uses numeric table IDs (100+DSCP) matching kernel-side implementation
+- Zone builder skips IPv6 addresses (A/PTR records support IPv4 only)
+- Empty DNS zone rejected at creation time (fail-fast instead of silent normalization)
+
+---
+
 ## [1.1.0] — 2026-03-30
 
 ### Added
@@ -232,7 +258,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/thebtf/awg-mesh/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/thebtf/awg-mesh/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/thebtf/awg-mesh/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/thebtf/awg-mesh/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/thebtf/awg-mesh/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/thebtf/awg-mesh/compare/v0.8.0...v0.9.0
