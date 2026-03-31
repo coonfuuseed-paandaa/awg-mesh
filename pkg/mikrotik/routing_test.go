@@ -9,13 +9,13 @@ import (
 
 func TestGenerateRoutingRSC(t *testing.T) {
 	client := topology.ClientNode{
-		Name:      "home-router",
+		Name:      "my-router",
 		Type:      "mikrotik",
 		OverlayIP: "172.20.70.131",
-		Masters:   []string{"ru-01"},
+		Masters:   []string{"master-01"},
 		RoutingPolicies: []topology.RoutingPolicy{
-			{Name: "vpn-kz", DSCP: 10, Targets: []string{"kz-01"}},
-			{Name: "vpn-us", DSCP: 20, Targets: []string{"us-01"}},
+			{Name: "vpn-asia", DSCP: 10, Targets: []string{"node-asia-01"}},
+			{Name: "vpn-americas", DSCP: 20, Targets: []string{"node-us-01"}},
 		},
 	}
 
@@ -30,13 +30,13 @@ func TestGenerateRoutingRSC(t *testing.T) {
 	if !strings.Contains(script, "new-dscp=20") {
 		t.Error("script should contain new-dscp=20")
 	}
-	if !strings.Contains(script, "vpn-kz-conn") {
-		t.Error("script should contain connection mark vpn-kz-conn")
+	if !strings.Contains(script, "vpn-asia-conn") {
+		t.Error("script should contain connection mark vpn-asia-conn")
 	}
 	if !strings.Contains(script, "gateway=172.33.23.100") {
 		t.Error("script should contain gateway address")
 	}
-	if !strings.Contains(script, "home-router") {
+	if !strings.Contains(script, "my-router") {
 		t.Error("script should contain client name")
 	}
 }

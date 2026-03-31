@@ -68,7 +68,7 @@ graph TB
 ### v1.2.0
 
 - **Smart Client** — single container replaces N per-region AWG containers with DSCP-based policy routing. Router marks traffic with DSCP, container reads DSCP field and routes to the correct endpoint via policy routing tables.
-- **Embedded DNS server** — client containers serve A and PTR records for the overlay zone via miekg/dns. `dig kz-01.mesh.zone @client` returns the overlay IP. Non-zone queries are forwarded to an upstream DNS server.
+- **Embedded DNS server** — client containers serve A and PTR records for the overlay zone via miekg/dns. `dig node-asia-01.mesh.zone @client` returns the overlay IP. Non-zone queries are forwarded to an upstream DNS server.
 - **Router config generation** — `mesh-ctl routing generate` produces platform-specific configs:
   - `--platform mikrotik`: RouterOS `.rsc` script with `/ip/firewall/mangle` DSCP rules and routing tables
   - `--platform linux`: shell script with `iptables -t mangle` DSCP marking and `ip rule`/`ip route` entries
@@ -150,21 +150,21 @@ cp mesh-topology.example.yml mesh-topology.yml
 # edit mesh-topology.yml with your actual IPs and node names
 
 # 3. Prepare each node (generates keys, token, docker-compose file)
-mesh-ctl master   prepare ru-master-01 -t mesh-topology.yml
-mesh-ctl master   prepare ru-master-02 -t mesh-topology.yml
-mesh-ctl endpoint prepare kz-01        -t mesh-topology.yml
-mesh-ctl endpoint prepare kz-02        -t mesh-topology.yml
-mesh-ctl client   prepare branch-01    -t mesh-topology.yml
+mesh-ctl master   prepare master-01 -t mesh-topology.yml
+mesh-ctl master   prepare master-02 -t mesh-topology.yml
+mesh-ctl endpoint prepare node-asia-01        -t mesh-topology.yml
+mesh-ctl endpoint prepare node-asia-02        -t mesh-topology.yml
+mesh-ctl client   prepare my-router    -t mesh-topology.yml
 
 # 4. Copy each generated <name>-docker-compose.yml and start containers on each host
 #    (see Deployment section for the full scp + docker compose workflow)
 
 # 5. Initialize the mesh — connects via gRPC and brings up AWG tunnels
-mesh-ctl endpoint init kz-01        -t mesh-topology.yml
-mesh-ctl endpoint init kz-02        -t mesh-topology.yml
-mesh-ctl master   init ru-master-01 -t mesh-topology.yml
-mesh-ctl master   init ru-master-02 -t mesh-topology.yml
-mesh-ctl client   init branch-01    -t mesh-topology.yml
+mesh-ctl endpoint init node-asia-01        -t mesh-topology.yml
+mesh-ctl endpoint init node-asia-02        -t mesh-topology.yml
+mesh-ctl master   init master-01 -t mesh-topology.yml
+mesh-ctl master   init master-02 -t mesh-topology.yml
+mesh-ctl client   init my-router    -t mesh-topology.yml
 
 # 6. Verify
 mesh-ctl status -t mesh-topology.yml
@@ -208,11 +208,11 @@ mesh-ctl config show -t mesh-topology.yml
 
 ```bash
 # Transfer files to the host
-ssh user@185.10.20.30 'sudo mkdir -p /srv/awg-mesh'
-scp ru-master-01-docker-compose.yml user@185.10.20.30:~/
+ssh user@198.51.100.10 'sudo mkdir -p /srv/awg-mesh'
+scp master-01-docker-compose.yml user@198.51.100.10:~/
 
 # Start the container
-ssh user@185.10.20.30 'docker compose -f ru-master-01-docker-compose.yml up -d'
+ssh user@198.51.100.10 'docker compose -f master-01-docker-compose.yml up -d'
 ```
 
 The generated compose file includes the correct image, capabilities, port mappings, and startup flags for that node. You can integrate the `awg-mesh-node` service block into your existing infrastructure compose file if preferred — see [Deployment](#deployment).
@@ -249,13 +249,13 @@ For multi-master setups, update one master at a time to maintain connectivity:
 
 ```bash
 # Update Master 1 (ECMP keeps traffic flowing through Master 2)
-ssh master-01 'docker compose -f ru-master-01-docker-compose.yml pull && docker compose -f ru-master-01-docker-compose.yml up -d'
+ssh master-01 'docker compose -f master-01-docker-compose.yml pull && docker compose -f master-01-docker-compose.yml up -d'
 
 # Wait for Master 1 to come back online
 mesh-ctl status -t mesh-topology.yml
 
 # Then update Master 2
-ssh master-02 'docker compose -f ru-master-02-docker-compose.yml pull && docker compose -f ru-master-02-docker-compose.yml up -d'
+ssh master-02 'docker compose -f master-02-docker-compose.yml pull && docker compose -f master-02-docker-compose.yml up -d'
 ```
 
 ## Deployment
@@ -302,7 +302,7 @@ services:
       - "9091:9091"          # Prometheus metrics
     command:
       - --mode=master         # or endpoint / client
-      - --name=ru-master-01  # must match topology entry
+      - --name=master-01  # must match topology entry
       - --topology=/config/mesh-topology.yml
 ```
 
@@ -338,8 +338,8 @@ Requires=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/home/user
-ExecStart=/usr/bin/docker compose -f ru-master-01-docker-compose.yml up -d
-ExecStop=/usr/bin/docker compose -f ru-master-01-docker-compose.yml down
+ExecStart=/usr/bin/docker compose -f master-01-docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f master-01-docker-compose.yml down
 TimeoutStartSec=0
 
 [Install]
@@ -378,17 +378,17 @@ Overlay MTU = `physical_mtu - awg_overhead`. Set `physical_mtu` to your physical
 
 ```yaml
 masters:
-  - name: ru-master-01        # unique name used in all mesh-ctl commands
-    host: 185.10.20.30        # public IP — used by mesh-ctl for gRPC connections
+  - name: master-01        # unique name used in all mesh-ctl commands
+    host: 198.51.100.10        # public IP — used by mesh-ctl for gRPC connections
     peer_host: 192.168.50.10  # optional: WG peering address when it differs from host
                               #   (e.g. Docker simulation with internal network IPs)
     overlay_ip: 172.20.70.2   # assigned overlay IP (from masters.cidr range)
     listen_port: 51820         # AWG listen port
     grpc_port: 9090            # optional: gRPC port override (default: 9090)
     endpoints:                 # which endpoint nodes this master connects to
-      - kz-01
-      - kz-02
-      - pl-01
+      - node-asia-01
+      - node-asia-02
+      - node-eu-01
     exit: true                 # optional: enable direct internet egress (masquerade)
 ```
 
@@ -398,36 +398,36 @@ masters:
 
 ```yaml
 endpoints:
-  - name: kz-01
-    host: 195.200.100.10      # public IP — used by mesh-ctl for gRPC connections
+  - name: node-asia-01
+    host: 203.0.113.10      # public IP — used by mesh-ctl for gRPC connections
     peer_host: 192.168.50.20  # optional: WG peering address (see peer_host above)
     overlay_ip: 172.20.70.34
     listen_port: 51820
     grpc_port: 9090            # optional: gRPC port override
-    region: kz                 # optional region tag (informational)
+    region: asia                 # optional region tag (informational)
 ```
 
 ### clients
 
 ```yaml
 clients:
-  - name: branch-router
+  - name: my-router
     type: linux                # linux | mikrotik | generic
-    host: 203.0.113.5          # management host for gRPC (linux clients)
+    host: 203.0.113.50          # management host for gRPC (linux clients)
     overlay_ip: 172.20.70.131
     grpc_port: 9090            # optional: gRPC port override
     masters:
-      - ru-master-01           # which masters this client connects to
-      - ru-master-02
+      - master-01           # which masters this client connects to
+      - master-02
 
     # Smart Client: DSCP-based policy routing (optional, v1.2.0+)
     routing_policies:
-      - name: vpn-kz           # policy name (used in generated router configs)
+      - name: vpn-asia           # policy name (used in generated router configs)
         dscp: 10               # DSCP value (1-63) — router marks traffic with this
-        targets: [kz-01]       # endpoint or exit-master names to route through
-      - name: vpn-us
+        targets: [node-asia-01]       # endpoint or exit-master names to route through
+      - name: vpn-americas
         dscp: 20
-        targets: [us-01]
+        targets: [node-us-01]
       # DSCP 0 (default) → ECMP across all endpoints
 
     # Embedded DNS server (optional, v1.2.0+)
@@ -483,28 +483,28 @@ Transport allocations are stored in `~/.mesh-ctl/transport.yml` and visible via 
 
 ```bash
 # Prepare all nodes (generates keys, tokens, docker-compose files)
-mesh-ctl master   prepare ru-master-01 -t mesh-topology.yml
-mesh-ctl master   prepare ru-master-02 -t mesh-topology.yml
-mesh-ctl endpoint prepare kz-01        -t mesh-topology.yml
-mesh-ctl endpoint prepare pl-01        -t mesh-topology.yml
-mesh-ctl client   prepare branch-01    -t mesh-topology.yml
+mesh-ctl master   prepare master-01 -t mesh-topology.yml
+mesh-ctl master   prepare master-02 -t mesh-topology.yml
+mesh-ctl endpoint prepare node-asia-01        -t mesh-topology.yml
+mesh-ctl endpoint prepare node-eu-01        -t mesh-topology.yml
+mesh-ctl client   prepare my-router    -t mesh-topology.yml
 
 # Deploy containers (copy compose files to hosts, start containers)
 # ...see Deployment section...
 
 # Initialize — run endpoints before masters so masters can exchange peer keys
-mesh-ctl endpoint init kz-01        -t mesh-topology.yml
-mesh-ctl endpoint init pl-01        -t mesh-topology.yml
-mesh-ctl master   init ru-master-01 -t mesh-topology.yml
-mesh-ctl master   init ru-master-02 -t mesh-topology.yml
-mesh-ctl client   init branch-01    -t mesh-topology.yml
+mesh-ctl endpoint init node-asia-01        -t mesh-topology.yml
+mesh-ctl endpoint init node-eu-01        -t mesh-topology.yml
+mesh-ctl master   init master-01 -t mesh-topology.yml
+mesh-ctl master   init master-02 -t mesh-topology.yml
+mesh-ctl client   init my-router    -t mesh-topology.yml
 ```
 
 **Check mesh status:**
 
 ```bash
 mesh-ctl status -t mesh-topology.yml
-mesh-ctl status --node ru-master-01 -t mesh-topology.yml
+mesh-ctl status --node master-01 -t mesh-topology.yml
 ```
 
 **Rotate AWG parameters:**
@@ -519,7 +519,7 @@ mesh-ctl rotate --tier 3 -t mesh-topology.yml   # full keypair (tunnel re-establ
 
 ```bash
 mesh-ctl token rotate -t mesh-topology.yml
-mesh-ctl token rotate --node ru-master-01 -t mesh-topology.yml
+mesh-ctl token rotate --node master-01 -t mesh-topology.yml
 ```
 
 **Refresh protocol fingerprints:**
@@ -594,7 +594,7 @@ mesh-ctl routing generate --platform linux -t mesh-topology.yml
 mesh-ctl routing generate --platform generic -t mesh-topology.yml
 
 # Target a specific client (defaults to first client in topology)
-mesh-ctl routing generate --platform mikrotik --client home-router -t mesh-topology.yml
+mesh-ctl routing generate --platform mikrotik --client my-router -t mesh-topology.yml
 ```
 
 The generated config maps each routing policy's DSCP value to the appropriate platform commands:
@@ -714,7 +714,7 @@ Client → balancer_ip (172.20.70.1)
     master-01    master-02   (ECMP nexthops in routing table)
        ↓ ECMP         ↓ ECMP
     ┌──┴──┐        ┌──┴──┐
-  kz-01 pl-01    kz-01 pl-01  (endpoint pool per master)
+  node-asia-01 node-eu-01    node-asia-01 node-eu-01  (endpoint pool per master)
 ```
 
 Each master programs a multipath ECMP route for the endpoints balancer IP with one nexthop per live endpoint. Healthcheck failures remove the failing nexthop; recovery adds it back — no restart required.
@@ -800,8 +800,8 @@ The `tests/simulation/` directory contains an 8-node Docker simulation:
 
 | Node | Mode | Name |
 |------|------|------|
-| Master | master | ru-01, ru-02 |
-| Endpoint | endpoint | kz-01, kz-02, kz-03, pl-01, us-01 |
+| Master | master | master-01, master-02 |
+| Endpoint | endpoint | node-asia-01, node-asia-02, node-asia-03, node-eu-01, node-us-01 |
 | Client | client | client-01 |
 
 The simulation uses an internal Docker network (`192.168.50.0/24`) for AWG data-plane peering, with mapped ports on `localhost` for gRPC management. This is where the `peer_host` field is exercised — each node's `host` is `127.0.0.1` (gRPC) while `peer_host` is the container's internal IP (WG peering).

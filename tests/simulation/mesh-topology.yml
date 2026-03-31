@@ -1,6 +1,6 @@
 # AWG Mesh Simulation Topology
 # Uses localhost with mapped ports for mesh-ctl access from Windows host
-# gRPC ports: ru-01=19090, ru-02=29090, kz-01=39090, kz-02=49090, kz-03=59090, pl-01=69090, us-01=79090
+# gRPC ports: master-01=19090, master-02=29090, node-asia-01=39090, node-asia-02=49090, node-asia-03=59090, node-eu-01=69090, node-us-01=79090
 # AWG ports: mapped to 1x820 range
 
 overlay:
@@ -18,58 +18,58 @@ overlay:
       cidr: 172.20.70.128/25
 
 masters:
-  - name: ru-01
+  - name: master-01
     host: 127.0.0.1
     peer_host: 192.168.50.10
     overlay_ip: 172.20.70.2
     listen_port: 51820
     grpc_port: 19090
     endpoints:
-      - kz-01
-      - kz-02
-      - kz-03
-      - us-01
-      - pl-01
+      - node-asia-01
+      - node-asia-02
+      - node-asia-03
+      - node-us-01
+      - node-eu-01
 
-  - name: ru-02
+  - name: master-02
     host: 127.0.0.1
     peer_host: 192.168.50.11
     overlay_ip: 172.20.70.3
     listen_port: 51820
     grpc_port: 29090
     endpoints:
-      - kz-01
-      - kz-02
-      - kz-03
-      - us-01
-      - pl-01
+      - node-asia-01
+      - node-asia-02
+      - node-asia-03
+      - node-us-01
+      - node-eu-01
 
 endpoints:
-  - name: kz-01
+  - name: node-asia-01
     host: 127.0.0.1
     peer_host: 192.168.50.20
     overlay_ip: 172.20.70.34
     listen_port: 51820
     grpc_port: 39090
-    region: kz
+    region: asia
 
-  - name: kz-02
+  - name: node-asia-02
     host: 127.0.0.1
     peer_host: 192.168.50.21
     overlay_ip: 172.20.70.35
     listen_port: 51820
     grpc_port: 49090
-    region: kz
+    region: asia
 
-  - name: kz-03
+  - name: node-asia-03
     host: 127.0.0.1
     peer_host: 192.168.50.22
     overlay_ip: 172.20.70.36
     listen_port: 51820
     grpc_port: 59090
-    region: kz
+    region: asia
 
-  - name: pl-01
+  - name: node-eu-01
     host: 127.0.0.1
     peer_host: 192.168.50.30
     overlay_ip: 172.20.70.37
@@ -77,13 +77,13 @@ endpoints:
     grpc_port: 16090
     region: pl
 
-  - name: us-01
+  - name: node-us-01
     host: 127.0.0.1
     peer_host: 192.168.50.31
     overlay_ip: 172.20.70.38
     listen_port: 51820
     grpc_port: 17090
-    region: us
+    region: americas
 
 clients:
   - name: client-01
@@ -92,8 +92,8 @@ clients:
     overlay_ip: 172.20.70.131
     grpc_port: 18090
     masters:
-      - ru-01
-      - ru-02
+      - master-01
+      - master-02
 
 capture:
   domains_file: domains.txt

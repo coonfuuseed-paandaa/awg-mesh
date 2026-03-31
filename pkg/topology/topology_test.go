@@ -33,7 +33,7 @@ func TestLoadTopology(t *testing.T) {
 		"    host: e1.example",
 		"    overlay_ip: 10.0.1.20",
 		"    listen_port: 51820",
-		"    region: eu",
+		"    region: europe",
 		"clients:",
 		"  - name: c1",
 		"    type: desktop",

@@ -20,24 +20,24 @@ All 7 containers start with gRPC listening + AWG interfaces + overlay IPs on loo
 
 ```bash
 # Prepare all nodes (generates tokens + docker-compose snippets)
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name kz-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name kz-02
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name kz-03
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name pl-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name us-01
-mesh-ctl -t tests/simulation/mesh-topology.yml master prepare --name ru-01
-mesh-ctl -t tests/simulation/mesh-topology.yml master prepare --name ru-02
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-asia-01
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-asia-02
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-asia-03
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-eu-01
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-us-01
+mesh-ctl -t tests/simulation/mesh-topology.yml master prepare --name master-01
+mesh-ctl -t tests/simulation/mesh-topology.yml master prepare --name master-02
 
 # Initialize endpoints (exchange certs, allocate transport, set up tunnels)
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name kz-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name kz-02
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name kz-03
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name pl-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name us-01
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-asia-01
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-asia-02
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-asia-03
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-eu-01
+mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-us-01
 
 # Initialize masters (exchange certs, create tunnels to all endpoints)
-mesh-ctl -t tests/simulation/mesh-topology.yml master init --name ru-01
-mesh-ctl -t tests/simulation/mesh-topology.yml master init --name ru-02
+mesh-ctl -t tests/simulation/mesh-topology.yml master init --name master-01
+mesh-ctl -t tests/simulation/mesh-topology.yml master init --name master-02
 ```
 
 ## Verify
@@ -50,17 +50,17 @@ mesh-ctl -t tests/simulation/mesh-topology.yml status
 mesh-ctl config show
 
 # Ping overlay IPs from master to endpoint (inside container)
-docker exec ru-01 ping -c 3 172.20.70.34    # master → kz-01
-docker exec ru-01 ping -c 3 172.20.70.37    # master → pl-01
+docker exec master-01 ping -c 3 172.20.70.34    # master → node-asia-01
+docker exec master-01 ping -c 3 172.20.70.37    # master → node-eu-01
 
 # Check WireGuard interfaces on master
-docker exec ru-01 cat /proc/net/dev | grep wg
+docker exec master-01 cat /proc/net/dev | grep wg
 
 # Check loopback overlay IP
-docker exec kz-01 ip addr show lo | grep 172.20
+docker exec node-asia-01 ip addr show lo | grep 172.20
 
 # Check ECMP routes on master
-docker exec ru-01 ip route show | grep 172.20.70
+docker exec master-01 ip route show | grep 172.20.70
 ```
 
 ## Cleanup
@@ -73,7 +73,7 @@ docker compose -f tests/simulation/docker-compose.yml down -v
 
 ```
                     ┌──────────┐    ┌──────────┐
-                    │  ru-01   │    │  ru-02   │
+                    │  master-01   │    │  master-02   │
                     │ .50.10   │    │ .50.11   │
                     │ master   │    │ master   │
                     └────┬─────┘    └────┬─────┘
@@ -81,7 +81,7 @@ docker compose -f tests/simulation/docker-compose.yml down -v
         ┌────────┬───────┼───────┬───────┼───────┐
         ▼        ▼       ▼       ▼       ▼       ▼
    ┌────────┐┌────────┐┌────────┐┌────────┐┌────────┐
-   │ kz-01  ││ kz-02  ││ kz-03  ││ pl-01  ││ us-01  │
+   │ node-asia-01  ││ node-asia-02  ││ node-asia-03  ││ node-eu-01  ││ node-us-01  │
    │ .50.20 ││ .50.21 ││ .50.22 ││ .50.30 ││ .50.31 │
    │endpoint││endpoint││endpoint││endpoint││endpoint│
    └────────┘└────────┘└────────┘└────────┘└────────┘

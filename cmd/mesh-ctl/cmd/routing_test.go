@@ -19,34 +19,34 @@ overlay:
     - name: default
       cidr: "172.20.70.0/24"
 masters:
-  - name: ru-01
+  - name: master-01
     host: 1.2.3.4
     overlay_ip: 172.20.70.10
     listen_port: 51820
-    endpoints: [kz-01]
+    endpoints: [node-asia-01]
 endpoints:
-  - name: kz-01
+  - name: node-asia-01
     host: 5.6.7.8
     overlay_ip: 172.20.70.34
     listen_port: 51820
-    region: kz
-  - name: us-01
+    region: asia
+  - name: node-us-01
     host: 9.10.11.12
     overlay_ip: 172.20.70.38
     listen_port: 51820
-    region: us
+    region: americas
 clients:
-  - name: home-router
+  - name: my-router
     type: mikrotik
     overlay_ip: 172.20.70.131
-    masters: [ru-01]
+    masters: [master-01]
     routing_policies:
-      - name: vpn-kz
+      - name: vpn-asia
         dscp: 10
-        targets: [kz-01]
-      - name: vpn-us
+        targets: [node-asia-01]
+      - name: vpn-americas
         dscp: 20
-        targets: [us-01]
+        targets: [node-us-01]
 transport:
   pool: "10.200.0.0/16"
   prefix_length: 30
@@ -64,7 +64,7 @@ transport:
 			root := NewRootCommand("test")
 			root.SetArgs([]string{"routing", "generate",
 				"--platform", platform,
-				"--client", "home-router",
+				"--client", "my-router",
 				"-t", topoPath,
 			})
 			if err := root.Execute(); err != nil {
@@ -79,8 +79,8 @@ func TestLinuxRoutingGenerate(t *testing.T) {
 		Name:      "test-router",
 		OverlayIP: "172.20.70.131",
 		RoutingPolicies: []topology.RoutingPolicy{
-			{Name: "vpn-kz", DSCP: 10, Targets: []string{"kz-01"}},
-			{Name: "vpn-us", DSCP: 20, Targets: []string{"us-01"}},
+			{Name: "vpn-asia", DSCP: 10, Targets: []string{"node-asia-01"}},
+			{Name: "vpn-americas", DSCP: 20, Targets: []string{"node-us-01"}},
 		},
 	}
 
@@ -121,27 +121,27 @@ func TestGenericRoutingFallback(t *testing.T) {
 overlay:
   space: "172.20.0.0/16"
 masters:
-  - name: ru-01
+  - name: master-01
     host: 1.2.3.4
     overlay_ip: 172.20.70.10
     listen_port: 51820
-    endpoints: [kz-01]
+    endpoints: [node-asia-01]
     exit: true
 endpoints:
-  - name: kz-01
+  - name: node-asia-01
     host: 5.6.7.8
     overlay_ip: 172.20.70.34
     listen_port: 51820
-    region: kz
+    region: asia
 clients:
-  - name: home-router
+  - name: my-router
     type: generic
     overlay_ip: 172.20.70.131
-    masters: [ru-01]
+    masters: [master-01]
     routing_policies:
-      - name: vpn-kz
+      - name: vpn-asia
         dscp: 10
-        targets: [kz-01]
+        targets: [node-asia-01]
 transport:
   pool: "10.200.0.0/16"
   prefix_length: 30
@@ -161,7 +161,7 @@ transport:
 
 	root.SetArgs([]string{"routing", "generate",
 		"--platform", "generic",
-		"--client", "home-router",
+		"--client", "my-router",
 		"-t", topoPath,
 	})
 	err := root.Execute()
@@ -185,8 +185,8 @@ transport:
 	if !strings.Contains(jsonOutput, "172.20.70.10") {
 		t.Error("generic JSON should contain exit master overlay IP 172.20.70.10")
 	}
-	if !strings.Contains(jsonOutput, "kz-01") {
-		t.Error("generic JSON should reference endpoint kz-01")
+	if !strings.Contains(jsonOutput, "node-asia-01") {
+		t.Error("generic JSON should reference endpoint node-asia-01")
 	}
 }
 
@@ -195,7 +195,7 @@ func TestRoutingGenerateNoClient(t *testing.T) {
 overlay:
   space: "172.20.0.0/16"
 masters:
-  - name: ru-01
+  - name: master-01
     host: 1.2.3.4
     overlay_ip: 172.20.70.10
     listen_port: 51820

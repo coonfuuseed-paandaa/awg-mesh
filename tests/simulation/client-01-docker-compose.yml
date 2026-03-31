@@ -12,7 +12,7 @@ services:
       - MESH_TOKEN=3df1e23901e34c056474c07d28289957d10de6b890e34ab0632aadf13f3de8d6
       - MESH_MODE=client
       - MESH_OVERLAY_IP=172.20.70.131
-      - MESH_MASTERS=ru-01,ru-02
+      - MESH_MASTERS=master-01,master-02
     volumes:
       - /etc/awg-mesh:/etc/awg-mesh
       - /var/lib/awg-mesh:/var/lib/awg-mesh

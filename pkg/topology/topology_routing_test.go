@@ -18,32 +18,32 @@ overlay:
       balancer_ip: "172.20.70.1"
 
 masters:
-  - name: ru-01
+  - name: master-01
     host: 1.2.3.4
     overlay_ip: 172.20.70.10
     listen_port: 51820
-    endpoints: [kz-01]
+    endpoints: [node-asia-01]
     exit: true
 
 endpoints:
-  - name: kz-01
+  - name: node-asia-01
     host: 5.6.7.8
     overlay_ip: 172.20.70.34
     listen_port: 51820
-    region: kz
+    region: asia
 
 clients:
-  - name: home-router
+  - name: my-router
     type: mikrotik
     overlay_ip: 172.20.70.131
-    masters: [ru-01]
+    masters: [master-01]
     routing_policies:
-      - name: vpn-kz
+      - name: vpn-asia
         dscp: 10
-        targets: [kz-01]
-      - name: vpn-ru-direct
+        targets: [node-asia-01]
+      - name: vpn-direct
         dscp: 50
-        targets: [ru-01]
+        targets: [master-01]
     dns:
       zone: mesh.zone
       listen: "0.0.0.0:53"
@@ -66,37 +66,37 @@ transport:
 	}
 
 	// Verify master exit field
-	master := topo.FindMaster("ru-01")
+	master := topo.FindMaster("master-01")
 	if master == nil {
-		t.Fatal("master ru-01 not found")
+		t.Fatal("master master-01 not found")
 	}
 	if !master.Exit {
-		t.Error("master ru-01 should have exit=true")
+		t.Error("master master-01 should have exit=true")
 	}
 
 	// Verify client routing policies
-	client := topo.FindClient("home-router")
+	client := topo.FindClient("my-router")
 	if client == nil {
-		t.Fatal("client home-router not found")
+		t.Fatal("client my-router not found")
 	}
 	if len(client.RoutingPolicies) != 2 {
 		t.Fatalf("expected 2 routing policies, got %d", len(client.RoutingPolicies))
 	}
 
 	policy := client.RoutingPolicies[0]
-	if policy.Name != "vpn-kz" {
-		t.Errorf("expected policy name vpn-kz, got %s", policy.Name)
+	if policy.Name != "vpn-asia" {
+		t.Errorf("expected policy name vpn-asia, got %s", policy.Name)
 	}
 	if policy.DSCP != 10 {
 		t.Errorf("expected DSCP 10, got %d", policy.DSCP)
 	}
-	if len(policy.Targets) != 1 || policy.Targets[0] != "kz-01" {
-		t.Errorf("expected targets [kz-01], got %v", policy.Targets)
+	if len(policy.Targets) != 1 || policy.Targets[0] != "node-asia-01" {
+		t.Errorf("expected targets [node-asia-01], got %v", policy.Targets)
 	}
 
 	policy2 := client.RoutingPolicies[1]
-	if policy2.Name != "vpn-ru-direct" {
-		t.Errorf("expected policy name vpn-ru-direct, got %s", policy2.Name)
+	if policy2.Name != "vpn-direct" {
+		t.Errorf("expected policy name vpn-direct, got %s", policy2.Name)
 	}
 	if policy2.DSCP != 50 {
 		t.Errorf("expected DSCP 50, got %d", policy2.DSCP)
@@ -122,7 +122,7 @@ func TestTopologyMasterExitDefault(t *testing.T) {
 overlay:
   space: "172.20.0.0/16"
 masters:
-  - name: ru-01
+  - name: master-01
     host: 1.2.3.4
     overlay_ip: 172.20.70.10
     listen_port: 51820
@@ -142,9 +142,9 @@ transport:
 		t.Fatalf("LoadTopology: %v", err)
 	}
 
-	master := topo.FindMaster("ru-01")
+	master := topo.FindMaster("master-01")
 	if master == nil {
-		t.Fatal("master ru-01 not found")
+		t.Fatal("master master-01 not found")
 	}
 	if master.Exit {
 		t.Error("master exit should default to false")
@@ -156,7 +156,7 @@ func TestTopologyClientWithoutRoutingPolicies(t *testing.T) {
 overlay:
   space: "172.20.0.0/16"
 masters:
-  - name: ru-01
+  - name: master-01
     host: 1.2.3.4
     overlay_ip: 172.20.70.10
     listen_port: 51820
@@ -165,7 +165,7 @@ clients:
   - name: basic-client
     type: generic
     overlay_ip: 172.20.70.131
-    masters: [ru-01]
+    masters: [master-01]
 transport:
   pool: "10.200.0.0/16"
   prefix_length: 30

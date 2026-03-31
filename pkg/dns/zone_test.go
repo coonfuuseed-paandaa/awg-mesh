@@ -6,8 +6,8 @@ import (
 
 func TestBuildZoneRecords(t *testing.T) {
 	nodes := map[string]string{
-		"kz-01": "172.20.70.34",
-		"us-01": "172.20.70.38",
+		"node-asia-01": "172.20.70.34",
+		"node-us-01": "172.20.70.38",
 	}
 
 	records := BuildZoneRecords("mesh.zone", nodes)
@@ -27,18 +27,18 @@ func TestBuildZoneRecords(t *testing.T) {
 		}
 	}
 
-	if ip, ok := aRecords["kz-01.mesh.zone."]; !ok || ip != "172.20.70.34" {
-		t.Errorf("expected A record for kz-01.mesh.zone. = 172.20.70.34, got %q", ip)
+	if ip, ok := aRecords["node-asia-01.mesh.zone."]; !ok || ip != "172.20.70.34" {
+		t.Errorf("expected A record for node-asia-01.mesh.zone. = 172.20.70.34, got %q", ip)
 	}
-	if ip, ok := aRecords["us-01.mesh.zone."]; !ok || ip != "172.20.70.38" {
-		t.Errorf("expected A record for us-01.mesh.zone. = 172.20.70.38, got %q", ip)
+	if ip, ok := aRecords["node-us-01.mesh.zone."]; !ok || ip != "172.20.70.38" {
+		t.Errorf("expected A record for node-us-01.mesh.zone. = 172.20.70.38, got %q", ip)
 	}
 
-	if name, ok := ptrRecords["34.70.20.172.in-addr.arpa."]; !ok || name != "kz-01.mesh.zone." {
-		t.Errorf("expected PTR for 34.70.20.172 = kz-01.mesh.zone., got %q", name)
+	if name, ok := ptrRecords["34.70.20.172.in-addr.arpa."]; !ok || name != "node-asia-01.mesh.zone." {
+		t.Errorf("expected PTR for 34.70.20.172 = node-asia-01.mesh.zone., got %q", name)
 	}
-	if name, ok := ptrRecords["38.70.20.172.in-addr.arpa."]; !ok || name != "us-01.mesh.zone." {
-		t.Errorf("expected PTR for 38.70.20.172 = us-01.mesh.zone., got %q", name)
+	if name, ok := ptrRecords["38.70.20.172.in-addr.arpa."]; !ok || name != "node-us-01.mesh.zone." {
+		t.Errorf("expected PTR for 38.70.20.172 = node-us-01.mesh.zone., got %q", name)
 	}
 }
 

@@ -13,39 +13,39 @@ overlay:
       cidr: 172.20.70.128/25
 
 masters:
-  - name: ru-master-01
-    host: 185.10.20.30
+  - name: master-01
+    host: 198.51.100.10
     overlay_ip: 172.20.70.2
     listen_port: 51820
     endpoints:
-      - kz-01
-      - kz-02
-      - pl-01
-  - name: ru-master-02
-    host: 185.10.20.31
+      - node-asia-01
+      - node-asia-02
+      - node-eu-01
+  - name: master-02
+    host: 198.51.100.11
     overlay_ip: 172.20.70.3
     listen_port: 51820
     endpoints:
-      - kz-03
-      - pl-01
+      - node-asia-03
+      - node-eu-01
 
 endpoints:
-  - name: kz-01
-    host: 195.200.100.10
+  - name: node-asia-01
+    host: 203.0.113.10
     overlay_ip: 172.20.70.34
     listen_port: 51820
-    region: kz
-  - name: kz-02
-    host: 195.200.100.11
+    region: asia
+  - name: node-asia-02
+    host: 203.0.113.11
     overlay_ip: 172.20.70.35
     listen_port: 51820
-    region: kz
-  - name: kz-03
-    host: 195.200.100.12
+    region: asia
+  - name: node-asia-03
+    host: 203.0.113.12
     overlay_ip: 172.20.70.36
     listen_port: 51820
-    region: kz
-  - name: pl-01
+    region: asia
+  - name: node-eu-01
     host: 91.200.50.100
     overlay_ip: 172.20.70.37
     listen_port: 51820
@@ -56,13 +56,13 @@ clients:
     type: linux
     overlay_ip: 172.20.70.130
     masters:
-      - ru-master-01
-      - ru-master-02
-  - name: branch-router
+      - master-01
+      - master-02
+  - name: my-router
     type: mikrotik
     overlay_ip: 172.20.70.131
     masters:
-      - ru-master-01
+      - master-01
 
 capture:
   domains_file: domains.txt   # local file on admin PC, distributed to masters via gRPC

@@ -395,7 +395,7 @@ func TestTransportStatePreservesOverlayAndBalancerIP(t *testing.T) {
 		OverlayIP: "172.20.70.2",
 		Tunnels: []TunnelTransport{
 			{
-				Name:            "kz-01",
+				Name:            "node-asia-01",
 				OverlayIP:       "172.20.70.34",
 				TransportIP:     "10.255.0.1",
 				PeerTransportIP: "10.255.0.2",

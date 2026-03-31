@@ -35,7 +35,7 @@ func startTestServer(t *testing.T, records []Record) (string, func()) {
 
 func TestDNSServerARecord(t *testing.T) {
 	records := BuildZoneRecords("mesh.zone", map[string]string{
-		"kz-01": "172.20.70.34",
+		"node-asia-01": "172.20.70.34",
 	})
 
 	addr, cancel := startTestServer(t, records)
@@ -43,7 +43,7 @@ func TestDNSServerARecord(t *testing.T) {
 
 	client := &mdns.Client{Net: "udp"}
 	msg := new(mdns.Msg)
-	msg.SetQuestion("kz-01.mesh.zone.", mdns.TypeA)
+	msg.SetQuestion("node-asia-01.mesh.zone.", mdns.TypeA)
 
 	resp, _, err := client.Exchange(msg, addr)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestDNSServerARecord(t *testing.T) {
 
 func TestDNSServerPTR(t *testing.T) {
 	records := BuildZoneRecords("mesh.zone", map[string]string{
-		"kz-01": "172.20.70.34",
+		"node-asia-01": "172.20.70.34",
 	})
 
 	addr, cancel := startTestServer(t, records)
@@ -88,14 +88,14 @@ func TestDNSServerPTR(t *testing.T) {
 	if !ok {
 		t.Fatal("expected PTR record")
 	}
-	if ptr.Ptr != "kz-01.mesh.zone." {
-		t.Errorf("expected kz-01.mesh.zone., got %s", ptr.Ptr)
+	if ptr.Ptr != "node-asia-01.mesh.zone." {
+		t.Errorf("expected node-asia-01.mesh.zone., got %s", ptr.Ptr)
 	}
 }
 
 func TestDNSServerUpdateRecords(t *testing.T) {
 	records := BuildZoneRecords("mesh.zone", map[string]string{
-		"kz-01": "172.20.70.34",
+		"node-asia-01": "172.20.70.34",
 	})
 
 	srv := NewServer("mesh.zone", "127.0.0.1:0", "1.1.1.1:53", records)
@@ -117,14 +117,14 @@ func TestDNSServerUpdateRecords(t *testing.T) {
 
 	// Update records
 	newRecords := BuildZoneRecords("mesh.zone", map[string]string{
-		"kz-01": "172.20.70.34",
-		"us-01": "172.20.70.38",
+		"node-asia-01": "172.20.70.34",
+		"node-us-01": "172.20.70.38",
 	})
 	srv.UpdateRecords(newRecords)
 
 	client := &mdns.Client{Net: "udp"}
 	msg := new(mdns.Msg)
-	msg.SetQuestion("us-01.mesh.zone.", mdns.TypeA)
+	msg.SetQuestion("node-us-01.mesh.zone.", mdns.TypeA)
 
 	resp, _, err := client.Exchange(msg, addr)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestDNSServerUpdateRecords(t *testing.T) {
 
 func TestDNSServerNonexistentRecord(t *testing.T) {
 	records := BuildZoneRecords("mesh.zone", map[string]string{
-		"kz-01": "172.20.70.34",
+		"node-asia-01": "172.20.70.34",
 	})
 
 	addr, cancel := startTestServer(t, records)

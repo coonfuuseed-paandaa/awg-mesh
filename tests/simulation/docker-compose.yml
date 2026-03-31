@@ -2,14 +2,14 @@
 # 2 masters + 5 endpoints, all with gRPC port mapping for mesh-ctl access
 
 services:
-  ru-01:
+  master-01:
     image: awg-mesh-node:transport
-    container_name: ru-01
-    hostname: ru-01
+    container_name: master-01
+    hostname: master-01
     restart: unless-stopped
     privileged: true
     volumes:
-      - ru-01-config:/config
+      - master-01-config:/config
       - ./mesh-topology.yml:/config/mesh-topology.yml:ro
     networks:
       mesh-sim:
@@ -18,16 +18,16 @@ services:
       - "19090:9090"
       - "19091:9091"
       - "11820:51820/udp"
-    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode master --name ru-01 --overlay-ip 172.20.70.2 --listen-port 51820 --topology /config/mesh-topology.yml"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode master --name master-01 --overlay-ip 172.20.70.2 --listen-port 51820 --topology /config/mesh-topology.yml"]
 
-  ru-02:
+  master-02:
     image: awg-mesh-node:transport
-    container_name: ru-02
-    hostname: ru-02
+    container_name: master-02
+    hostname: master-02
     restart: unless-stopped
     privileged: true
     volumes:
-      - ru-02-config:/config
+      - master-02-config:/config
       - ./mesh-topology.yml:/config/mesh-topology.yml:ro
     networks:
       mesh-sim:
@@ -36,16 +36,16 @@ services:
       - "29090:9090"
       - "29091:9091"
       - "21820:51820/udp"
-    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode master --name ru-02 --overlay-ip 172.20.70.3 --listen-port 51820 --topology /config/mesh-topology.yml"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode master --name master-02 --overlay-ip 172.20.70.3 --listen-port 51820 --topology /config/mesh-topology.yml"]
 
-  kz-01:
+  node-asia-01:
     image: awg-mesh-node:transport
-    container_name: kz-01
-    hostname: kz-01
+    container_name: node-asia-01
+    hostname: node-asia-01
     restart: unless-stopped
     privileged: true
     volumes:
-      - kz-01-config:/config
+      - node-asia-01-config:/config
       - ./mesh-topology.yml:/config/mesh-topology.yml:ro
     networks:
       mesh-sim:
@@ -53,16 +53,16 @@ services:
     ports:
       - "39090:9090"
       - "31820:51820/udp"
-    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-01 --overlay-ip 172.20.70.34 --listen-port 51820 --topology /config/mesh-topology.yml"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name node-asia-01 --overlay-ip 172.20.70.34 --listen-port 51820 --topology /config/mesh-topology.yml"]
 
-  kz-02:
+  node-asia-02:
     image: awg-mesh-node:transport
-    container_name: kz-02
-    hostname: kz-02
+    container_name: node-asia-02
+    hostname: node-asia-02
     restart: unless-stopped
     privileged: true
     volumes:
-      - kz-02-config:/config
+      - node-asia-02-config:/config
       - ./mesh-topology.yml:/config/mesh-topology.yml:ro
     networks:
       mesh-sim:
@@ -70,16 +70,16 @@ services:
     ports:
       - "49090:9090"
       - "41820:51820/udp"
-    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-02 --overlay-ip 172.20.70.35 --listen-port 51820 --topology /config/mesh-topology.yml"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name node-asia-02 --overlay-ip 172.20.70.35 --listen-port 51820 --topology /config/mesh-topology.yml"]
 
-  kz-03:
+  node-asia-03:
     image: awg-mesh-node:transport
-    container_name: kz-03
-    hostname: kz-03
+    container_name: node-asia-03
+    hostname: node-asia-03
     restart: unless-stopped
     privileged: true
     volumes:
-      - kz-03-config:/config
+      - node-asia-03-config:/config
       - ./mesh-topology.yml:/config/mesh-topology.yml:ro
     networks:
       mesh-sim:
@@ -87,16 +87,16 @@ services:
     ports:
       - "59090:9090"
       - "51821:51820/udp"
-    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name kz-03 --overlay-ip 172.20.70.36 --listen-port 51820 --topology /config/mesh-topology.yml"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name node-asia-03 --overlay-ip 172.20.70.36 --listen-port 51820 --topology /config/mesh-topology.yml"]
 
-  pl-01:
+  node-eu-01:
     image: awg-mesh-node:transport
-    container_name: pl-01
-    hostname: pl-01
+    container_name: node-eu-01
+    hostname: node-eu-01
     restart: unless-stopped
     privileged: true
     volumes:
-      - pl-01-config:/config
+      - node-eu-01-config:/config
       - ./mesh-topology.yml:/config/mesh-topology.yml:ro
     networks:
       mesh-sim:
@@ -104,16 +104,16 @@ services:
     ports:
       - "16090:9090"
       - "16820:51820/udp"
-    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name pl-01 --overlay-ip 172.20.70.37 --listen-port 51820 --topology /config/mesh-topology.yml"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name node-eu-01 --overlay-ip 172.20.70.37 --listen-port 51820 --topology /config/mesh-topology.yml"]
 
-  us-01:
+  node-us-01:
     image: awg-mesh-node:transport
-    container_name: us-01
-    hostname: us-01
+    container_name: node-us-01
+    hostname: node-us-01
     restart: unless-stopped
     privileged: true
     volumes:
-      - us-01-config:/config
+      - node-us-01-config:/config
       - ./mesh-topology.yml:/config/mesh-topology.yml:ro
     networks:
       mesh-sim:
@@ -121,7 +121,7 @@ services:
     ports:
       - "17090:9090"
       - "17820:51820/udp"
-    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name us-01 --overlay-ip 172.20.70.38 --listen-port 51820 --topology /config/mesh-topology.yml"]
+    entrypoint: ["sh", "-c", "[ -f /config/mesh.token ] || echo test-hash > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name node-us-01 --overlay-ip 172.20.70.38 --listen-port 51820 --topology /config/mesh-topology.yml"]
 
   client-01:
     image: awg-mesh-node:transport
@@ -148,11 +148,11 @@ networks:
         - subnet: 192.168.50.0/24
 
 volumes:
-  ru-01-config:
-  ru-02-config:
-  kz-01-config:
-  kz-02-config:
-  kz-03-config:
-  pl-01-config:
-  us-01-config:
+  master-01-config:
+  master-02-config:
+  node-asia-01-config:
+  node-asia-02-config:
+  node-asia-03-config:
+  node-eu-01-config:
+  node-us-01-config:
   client-01-config:

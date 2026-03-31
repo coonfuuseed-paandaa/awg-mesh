@@ -8,7 +8,7 @@ import (
 
 // Record represents a DNS A or PTR record for the overlay zone.
 type Record struct {
-	Name  string // FQDN (e.g., "kz-01.mesh.zone.")
+	Name  string // FQDN (e.g., "node-asia-01.mesh.zone.")
 	Type  string // "A" or "PTR"
 	Value string // IP for A, FQDN for PTR
 }

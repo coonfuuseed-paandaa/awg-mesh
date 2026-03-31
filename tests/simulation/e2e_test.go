@@ -52,16 +52,16 @@ func setup(t *testing.T) {
 	os.RemoveAll(cfgDir)
 
 	// Prepare all nodes
-	for _, n := range []string{"ru-01", "ru-02"} {
+	for _, n := range []string{"master-01", "master-02"} {
 		run(t, meshCtl, "master", "prepare", n, "-t", topo, "--config-dir", cfgDir)
 	}
-	for _, n := range []string{"kz-01", "kz-02", "kz-03", "pl-01", "us-01"} {
+	for _, n := range []string{"node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01"} {
 		run(t, meshCtl, "endpoint", "prepare", n, "-t", topo, "--config-dir", cfgDir)
 	}
 	run(t, meshCtl, "client", "prepare", "client-01", "-t", topo, "--config-dir", cfgDir)
 
 	// Deploy tokens
-	nodes := []string{"ru-01", "ru-02", "kz-01", "kz-02", "kz-03", "pl-01", "us-01", "client-01"}
+	nodes := []string{"master-01", "master-02", "node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01", "client-01"}
 	for _, node := range nodes {
 		tokenPath := fmt.Sprintf("%s/nodes/%s/mesh.token", cfgDir, node)
 		hash, err := os.ReadFile(tokenPath)
@@ -79,13 +79,13 @@ func setup(t *testing.T) {
 func initAll(t *testing.T) {
 	t.Helper()
 
-	for _, n := range []string{"kz-01", "kz-02", "kz-03", "pl-01", "us-01"} {
+	for _, n := range []string{"node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01"} {
 		out := run(t, meshCtl, "endpoint", "init", n, "-t", topo, "--config-dir", cfgDir)
 		if !strings.Contains(out, "initialized successfully") {
 			t.Fatalf("endpoint %s init failed: %s", n, out)
 		}
 	}
-	for _, n := range []string{"ru-01", "ru-02"} {
+	for _, n := range []string{"master-01", "master-02"} {
 		run(t, meshCtl, "master", "init", n, "-t", topo, "--config-dir", cfgDir)
 	}
 	out := run(t, meshCtl, "client", "init", "client-01", "-t", topo, "--config-dir", cfgDir)
@@ -97,10 +97,10 @@ func initAll(t *testing.T) {
 
 func testWGHandshake(t *testing.T) {
 	// Verify master has 6 WG interfaces (5 endpoints + 1 client)
-	out := dockerExec(t, "ru-01", "ip -br link | grep -c wg")
+	out := dockerExec(t, "master-01", "ip -br link | grep -c wg")
 	count := strings.TrimSpace(out)
 	if count != "6" {
-		t.Fatalf("ru-01 expected 6 WG interfaces, got %s", count)
+		t.Fatalf("master-01 expected 6 WG interfaces, got %s", count)
 	}
 
 	// Verify client has 2 WG interfaces
@@ -111,9 +111,9 @@ func testWGHandshake(t *testing.T) {
 	}
 
 	// All WG interfaces should be UP
-	out = dockerExec(t, "ru-01", "ip -br link | grep wg | grep -v UP | wc -l")
+	out = dockerExec(t, "master-01", "ip -br link | grep wg | grep -v UP | wc -l")
 	if strings.TrimSpace(out) != "0" {
-		t.Fatalf("some WG interfaces on ru-01 are not UP")
+		t.Fatalf("some WG interfaces on master-01 are not UP")
 	}
 }
 
@@ -121,21 +121,21 @@ func testOverlayPing(t *testing.T) {
 	// Master → all endpoints
 	endpoints := []string{"172.20.70.34", "172.20.70.35", "172.20.70.36", "172.20.70.37", "172.20.70.38"}
 	for _, ep := range endpoints {
-		out := dockerExec(t, "ru-01", fmt.Sprintf("ping -c 1 -W 3 %s", ep))
+		out := dockerExec(t, "master-01", fmt.Sprintf("ping -c 1 -W 3 %s", ep))
 		if !strings.Contains(out, "1 packets received") {
-			t.Errorf("ru-01 → %s: ping failed: %s", ep, out)
+			t.Errorf("master-01 → %s: ping failed: %s", ep, out)
 		}
 	}
 }
 
 func testECMP(t *testing.T) {
 	// Master ECMP: 172.20.70.33 should have at least 4 nexthops (5th may still be converging)
-	out := dockerExec(t, "ru-01", "ip route show 172.20.70.33")
+	out := dockerExec(t, "master-01", "ip route show 172.20.70.33")
 	nexthopCount := strings.Count(out, "nexthop")
 	if nexthopCount < 4 {
-		t.Fatalf("ru-01 ECMP expected >=4 nexthops, got %d: %s", nexthopCount, out)
+		t.Fatalf("master-01 ECMP expected >=4 nexthops, got %d: %s", nexthopCount, out)
 	}
-	t.Logf("ru-01 ECMP: %d nexthops", nexthopCount)
+	t.Logf("master-01 ECMP: %d nexthops", nexthopCount)
 
 	// Client ECMP: 172.20.70.1 should have 2 nexthops
 	out = dockerExec(t, "client-01", "ip route show 172.20.70.1")
@@ -149,23 +149,23 @@ func testClientToMaster(t *testing.T) {
 	// Client → master transport
 	out := dockerExec(t, "client-01", "ping -c 1 -W 3 10.255.0.41")
 	if !strings.Contains(out, "1 packets received") {
-		t.Errorf("client → ru-01 transport failed: %s", out)
+		t.Errorf("client → master-01 transport failed: %s", out)
 	}
 
 	// Client → master overlay
 	out = dockerExec(t, "client-01", "ping -c 1 -W 3 172.20.70.2")
 	if !strings.Contains(out, "1 packets received") {
-		t.Errorf("client → ru-01 overlay failed: %s", out)
+		t.Errorf("client → master-01 overlay failed: %s", out)
 	}
 	out = dockerExec(t, "client-01", "ping -c 1 -W 3 172.20.70.3")
 	if !strings.Contains(out, "1 packets received") {
-		t.Errorf("client → ru-02 overlay failed: %s", out)
+		t.Errorf("client → master-02 overlay failed: %s", out)
 	}
 }
 
 func testStatus(t *testing.T) {
 	out := run(t, meshCtl, "status", "-t", topo, "--config-dir", cfgDir)
-	for _, node := range []string{"ru-01", "ru-02", "kz-01", "kz-02", "kz-03", "pl-01", "us-01"} {
+	for _, node := range []string{"master-01", "master-02", "node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01"} {
 		if !strings.Contains(out, node) {
 			t.Errorf("status missing node %s", node)
 		}
