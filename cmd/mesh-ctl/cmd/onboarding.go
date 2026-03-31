@@ -12,9 +12,9 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/thebtf/awg-mesh/pkg/topology"
-	"github.com/thebtf/awg-mesh/pkg/transport"
-	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 )
 
 //go:embed templates/*.tmpl

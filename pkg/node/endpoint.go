@@ -3,10 +3,10 @@ package node
 import (
 	"context"
 	"fmt"
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	"time"
 
-	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 )
 
 // EndpointRunner runs node logic for endpoint mode.

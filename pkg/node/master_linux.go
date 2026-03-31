@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
-	"github.com/thebtf/awg-mesh/pkg/routing"
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 type masterTunnelPlatformState struct {

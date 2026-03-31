@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
-	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
-	"github.com/thebtf/awg-mesh/pkg/topology"
-	proto "github.com/thebtf/awg-mesh/proto"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 )
 
 func newEndpointCommand() *cobra.Command {
@@ -84,7 +84,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 				Name:       ep.Name,
 				Host:       ep.Host,
 				OverlayIP:  ep.OverlayIP,
-				Image:      "ghcr.io/thebtf/awg-mesh:latest",
+				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
 				ListenPort: ep.ListenPort,
 				Token:      token,
 			}

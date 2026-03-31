@@ -1,4 +1,4 @@
-module github.com/thebtf/awg-mesh
+module github.com/coonfuuseed-paandaa/awg-mesh
 
 go 1.25.0
 

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/thebtf/awg-mesh/pkg/awggen"
-	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
+	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 )
 
 const captureInterfaceName = "any"

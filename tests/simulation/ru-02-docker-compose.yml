@@ -1,0 +1,18 @@
+services:
+  awg-mesh-node:
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
+    network_mode: host
+    restart: always
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      - MESH_TOKEN=21059a715626e3fed304c4e5f42399a1758ff02f72b3d1dbe84b5349d69868c5
+      - MESH_MODE=master
+      - MESH_OVERLAY_IP=172.20.70.3
+      - MESH_LISTEN_PORT=51820
+    volumes:
+      - /etc/awg-mesh:/etc/awg-mesh
+      - /var/lib/awg-mesh:/var/lib/awg-mesh

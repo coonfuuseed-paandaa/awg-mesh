@@ -1,0 +1,3333 @@
+{
+  "statistics": {
+    "detectionDate": "2026-03-28T16:24:54.940Z",
+    "formats": {
+      "markdown": {
+        "sources": {
+          "tests/simulation/README.md": {
+            "lines": 87,
+            "tokens": 547,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "tests/integration/README.md": {
+            "lines": 75,
+            "tokens": 669,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 162,
+          "tokens": 1216,
+          "sources": 2,
+          "clones": 0,
+          "duplicatedLines": 0,
+          "duplicatedTokens": 0,
+          "percentage": 0,
+          "percentageTokens": 0,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "yaml": {
+        "sources": {
+          "tests/simulation/mesh-topology.yml": {
+            "lines": 103,
+            "tokens": 564,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "tests/simulation/docker-compose.yml": {
+            "lines": 132,
+            "tokens": 937,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "tests/integration/docker-compose.yml": {
+            "lines": 52,
+            "tokens": 337,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 287,
+          "tokens": 1838,
+          "sources": 3,
+          "clones": 0,
+          "duplicatedLines": 0,
+          "duplicatedTokens": 0,
+          "percentage": 0,
+          "percentageTokens": 0,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "go": {
+        "sources": {
+          "tests/integration/setup_test.go": {
+            "lines": 161,
+            "tokens": 1415,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/uapi_test.go": {
+            "lines": 485,
+            "tokens": 4440,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 51,
+            "duplicatedTokens": 382,
+            "percentage": 10.52,
+            "percentageTokens": 8.6,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/uapi.go": {
+            "lines": 416,
+            "tokens": 4222,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/types.go": {
+            "lines": 80,
+            "tokens": 480,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/keygen_test.go": {
+            "lines": 183,
+            "tokens": 1658,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/keygen.go": {
+            "lines": 88,
+            "tokens": 762,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/interface.go": {
+            "lines": 126,
+            "tokens": 1034,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/config_test.go": {
+            "lines": 432,
+            "tokens": 4268,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/wg/config.go": {
+            "lines": 272,
+            "tokens": 2932,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/transport/state_test.go": {
+            "lines": 112,
+            "tokens": 1101,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/transport/state.go": {
+            "lines": 129,
+            "tokens": 1254,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/transport/allocator_test.go": {
+            "lines": 142,
+            "tokens": 1365,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/transport/allocator.go": {
+            "lines": 137,
+            "tokens": 1299,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/topology/validate_test.go": {
+            "lines": 139,
+            "tokens": 1328,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/topology/validate.go": {
+            "lines": 170,
+            "tokens": 1931,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/topology/topology_test.go": {
+            "lines": 169,
+            "tokens": 1818,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 15,
+            "duplicatedTokens": 102,
+            "percentage": 8.88,
+            "percentageTokens": 5.61,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/topology/topology.go": {
+            "lines": 230,
+            "tokens": 1842,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/topology/ranges_test.go": {
+            "lines": 198,
+            "tokens": 1947,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 24,
+            "duplicatedTokens": 234,
+            "percentage": 12.12,
+            "percentageTokens": 12.02,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/topology/ranges.go": {
+            "lines": 153,
+            "tokens": 1487,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/tls/token_test.go": {
+            "lines": 101,
+            "tokens": 929,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/tls/token.go": {
+            "lines": 64,
+            "tokens": 584,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/tls/cert_test.go": {
+            "lines": 157,
+            "tokens": 1611,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 13,
+            "duplicatedTokens": 128,
+            "percentage": 8.28,
+            "percentageTokens": 7.95,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/tls/cert.go": {
+            "lines": 99,
+            "tokens": 927,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/tls/ca_test.go": {
+            "lines": 191,
+            "tokens": 2010,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 13,
+            "duplicatedTokens": 128,
+            "percentage": 6.81,
+            "percentageTokens": 6.37,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/tls/ca.go": {
+            "lines": 180,
+            "tokens": 1944,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/validate.go": {
+            "lines": 29,
+            "tokens": 243,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/stubs.go": {
+            "lines": 65,
+            "tokens": 510,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/routing_test.go": {
+            "lines": 100,
+            "tokens": 785,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/route.go": {
+            "lines": 108,
+            "tokens": 1083,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 24,
+            "duplicatedTokens": 302,
+            "percentage": 22.22,
+            "percentageTokens": 27.89,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/nat.go": {
+            "lines": 45,
+            "tokens": 431,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/mss.go": {
+            "lines": 64,
+            "tokens": 556,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/ecmp.go": {
+            "lines": 59,
+            "tokens": 521,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/routing/connmark.go": {
+            "lines": 97,
+            "tokens": 923,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/rotation/tier3.go": {
+            "lines": 67,
+            "tokens": 605,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/rotation/tier2.go": {
+            "lines": 137,
+            "tokens": 1382,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/rotation/tier1.go": {
+            "lines": 72,
+            "tokens": 630,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/rotation/rotation_test.go": {
+            "lines": 425,
+            "tokens": 4767,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/transport_state.go": {
+            "lines": 71,
+            "tokens": 657,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/overlay_other_test.go": {
+            "lines": 16,
+            "tokens": 130,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/overlay_other.go": {
+            "lines": 16,
+            "tokens": 94,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/overlay_linux_test.go": {
+            "lines": 22,
+            "tokens": 194,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/overlay_linux.go": {
+            "lines": 47,
+            "tokens": 475,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/node.go": {
+            "lines": 126,
+            "tokens": 1011,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/mtu_test.go": {
+            "lines": 31,
+            "tokens": 368,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/mtu.go": {
+            "lines": 14,
+            "tokens": 100,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/metrics_test.go": {
+            "lines": 109,
+            "tokens": 922,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/metrics.go": {
+            "lines": 110,
+            "tokens": 877,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/master_other.go": {
+            "lines": 43,
+            "tokens": 386,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 10,
+            "duplicatedTokens": 99,
+            "percentage": 23.26,
+            "percentageTokens": 25.65,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/master_linux.go": {
+            "lines": 367,
+            "tokens": 3932,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 10,
+            "duplicatedTokens": 99,
+            "percentage": 2.72,
+            "percentageTokens": 2.52,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/master.go": {
+            "lines": 400,
+            "tokens": 4076,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 24,
+            "duplicatedTokens": 298,
+            "percentage": 6,
+            "percentageTokens": 7.31,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/health_test.go": {
+            "lines": 49,
+            "tokens": 403,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/health.go": {
+            "lines": 112,
+            "tokens": 889,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/grpc.go": {
+            "lines": 92,
+            "tokens": 699,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/endpoint_other.go": {
+            "lines": 44,
+            "tokens": 380,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/endpoint_linux.go": {
+            "lines": 214,
+            "tokens": 2233,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 28,
+            "duplicatedTokens": 254,
+            "percentage": 13.08,
+            "percentageTokens": 11.37,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/endpoint.go": {
+            "lines": 115,
+            "tokens": 1139,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/config_test.go": {
+            "lines": 375,
+            "tokens": 3781,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 36,
+            "duplicatedTokens": 394,
+            "percentage": 9.6,
+            "percentageTokens": 10.42,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/config.go": {
+            "lines": 122,
+            "tokens": 1157,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/client_other.go": {
+            "lines": 59,
+            "tokens": 539,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 10,
+            "duplicatedTokens": 101,
+            "percentage": 16.95,
+            "percentageTokens": 18.74,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/client_linux.go": {
+            "lines": 622,
+            "tokens": 6511,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 38,
+            "duplicatedTokens": 355,
+            "percentage": 6.11,
+            "percentageTokens": 5.45,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/client.go": {
+            "lines": 84,
+            "tokens": 802,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/capture_scheduler.go": {
+            "lines": 96,
+            "tokens": 750,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/capture_other.go": {
+            "lines": 8,
+            "tokens": 40,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/node/capture_linux.go": {
+            "lines": 43,
+            "tokens": 337,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/mikrotik/templates_test.go": {
+            "lines": 151,
+            "tokens": 1606,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/mikrotik/templates.go": {
+            "lines": 261,
+            "tokens": 2203,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/mikrotik/commands_test.go": {
+            "lines": 129,
+            "tokens": 1260,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/mikrotik/commands.go": {
+            "lines": 166,
+            "tokens": 1468,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/logging/logging_test.go": {
+            "lines": 108,
+            "tokens": 1116,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/logging/logging.go": {
+            "lines": 60,
+            "tokens": 470,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/grpc/server.go": {
+            "lines": 309,
+            "tokens": 2778,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 42,
+            "duplicatedTokens": 388,
+            "percentage": 13.59,
+            "percentageTokens": 13.97,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/grpc/interfaces.go": {
+            "lines": 80,
+            "tokens": 579,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/grpc/handlers.go": {
+            "lines": 772,
+            "tokens": 8658,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 48,
+            "duplicatedTokens": 544,
+            "percentage": 6.22,
+            "percentageTokens": 6.28,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/grpc/client.go": {
+            "lines": 132,
+            "tokens": 1159,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 20,
+            "duplicatedTokens": 244,
+            "percentage": 15.15,
+            "percentageTokens": 21.05,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/presets_test.go": {
+            "lines": 63,
+            "tokens": 577,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 12,
+            "duplicatedTokens": 117,
+            "percentage": 19.05,
+            "percentageTokens": 20.28,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/presets.go": {
+            "lines": 86,
+            "tokens": 836,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/mtu_test.go": {
+            "lines": 104,
+            "tokens": 872,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 18,
+            "duplicatedTokens": 140,
+            "percentage": 17.31,
+            "percentageTokens": 16.06,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/mtu.go": {
+            "lines": 49,
+            "tokens": 387,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/ispec_test.go": {
+            "lines": 176,
+            "tokens": 1830,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 18,
+            "duplicatedTokens": 140,
+            "percentage": 10.23,
+            "percentageTokens": 7.65,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/ispec.go": {
+            "lines": 359,
+            "tokens": 3640,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/generator_test.go": {
+            "lines": 194,
+            "tokens": 2294,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 37,
+            "duplicatedTokens": 362,
+            "percentage": 19.07,
+            "percentageTokens": 15.78,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/generator.go": {
+            "lines": 351,
+            "tokens": 3710,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 9,
+            "duplicatedTokens": 108,
+            "percentage": 2.56,
+            "percentageTokens": 2.91,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/families_test.go": {
+            "lines": 82,
+            "tokens": 770,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 12,
+            "duplicatedTokens": 117,
+            "percentage": 14.63,
+            "percentageTokens": 15.19,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/families.go": {
+            "lines": 135,
+            "tokens": 967,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/capture_other.go": {
+            "lines": 33,
+            "tokens": 195,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "pkg/awggen/capture.go": {
+            "lines": 236,
+            "tokens": 2254,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/token.go": {
+            "lines": 101,
+            "tokens": 919,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 39,
+            "duplicatedTokens": 434,
+            "percentage": 38.61,
+            "percentageTokens": 47.23,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/status.go": {
+            "lines": 112,
+            "tokens": 1199,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/rotate.go": {
+            "lines": 300,
+            "tokens": 3122,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 20,
+            "duplicatedTokens": 200,
+            "percentage": 6.67,
+            "percentageTokens": 6.41,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/root.go": {
+            "lines": 57,
+            "tokens": 459,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/onboarding.go": {
+            "lines": 143,
+            "tokens": 1463,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/master.go": {
+            "lines": 372,
+            "tokens": 3730,
+            "sources": 1,
+            "clones": 25,
+            "duplicatedLines": 383,
+            "duplicatedTokens": 3986,
+            "percentage": 102.96,
+            "percentageTokens": 106.86,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/ip.go": {
+            "lines": 392,
+            "tokens": 3732,
+            "sources": 1,
+            "clones": 9,
+            "duplicatedLines": 110,
+            "duplicatedTokens": 1001,
+            "percentage": 28.06,
+            "percentageTokens": 26.82,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/endpoint.go": {
+            "lines": 374,
+            "tokens": 3732,
+            "sources": 1,
+            "clones": 16,
+            "duplicatedLines": 252,
+            "duplicatedTokens": 2618,
+            "percentage": 67.38,
+            "percentageTokens": 70.15,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/config.go": {
+            "lines": 114,
+            "tokens": 1048,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/client.go": {
+            "lines": 497,
+            "tokens": 4958,
+            "sources": 1,
+            "clones": 15,
+            "duplicatedLines": 208,
+            "duplicatedTokens": 2159,
+            "percentage": 41.85,
+            "percentageTokens": 43.55,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/cmd/capture.go": {
+            "lines": 256,
+            "tokens": 2397,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 18,
+            "duplicatedTokens": 204,
+            "percentage": 7.03,
+            "percentageTokens": 8.51,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/mesh-ctl/main.go": {
+            "lines": 64,
+            "tokens": 467,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "cmd/awg-mesh-node/main.go": {
+            "lines": 163,
+            "tokens": 1205,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 16270,
+          "tokens": 157966,
+          "sources": 99,
+          "clones": 56,
+          "duplicatedLines": 771,
+          "duplicatedTokens": 7819,
+          "percentage": 4.74,
+          "percentageTokens": 4.95,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      }
+    },
+    "total": {
+      "lines": 16719,
+      "tokens": 161020,
+      "sources": 104,
+      "clones": 56,
+      "duplicatedLines": 771,
+      "duplicatedTokens": 7819,
+      "percentage": 4.61,
+      "percentageTokens": 4.86,
+      "newDuplicatedLines": 0,
+      "newClones": 0
+    }
+  },
+  "duplicates": [
+    {
+      "format": "go",
+      "lines": 16,
+      "fragment": ")\r\n\t\t\t\t}\r\n\t\t\t\treturn\r\n\t\t\t}\r\n\r\n\t\t\tif err == nil {\r\n\t\t\t\tt.Fatalf(\"expected error, got nil\")\r\n\t\t\t}\r\n\t\t\tif !strings.Contains(err.Error(), tt.expectError) {\r\n\t\t\t\tt.Fatalf(\"expected error containing %q, got %v\", tt.expectError, err)\r\n\t\t\t}\r\n\t\t})\r\n\t}\r\n}\r\n\r\nfunc TestFindNodeHelpers",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\topology\\topology_test.go",
+        "start": 76,
+        "end": 91,
+        "startLoc": {
+          "line": 76,
+          "column": 8,
+          "position": 687
+        },
+        "endLoc": {
+          "line": 91,
+          "column": 20,
+          "position": 789
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\wg\\uapi_test.go",
+        "start": 272,
+        "end": 287,
+        "startLoc": {
+          "line": 272,
+          "column": 4,
+          "position": 2449
+        },
+        "endLoc": {
+          "line": 287,
+          "column": 22,
+          "position": 2551
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": "(t *testing.T) {\r\n\tt.Parallel()\r\n\r\n\tcaCert, caKey, err := GenerateCA(\"mesh-ca\")\r\n\tif err != nil {\r\n\t\tt.Fatalf(\"GenerateCA returned error: %v\", err)\r\n\t}\r\n\r\n\tdir := t.TempDir()\r\n\tif err := SaveCA(dir, caCert, caKey); err != nil {\r\n\t\tt.Fatalf(\"SaveCA returned error: %v\", err)\r\n\t}\r\n\r\n\tloadedCert",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\tls\\ca_test.go",
+        "start": 76,
+        "end": 89,
+        "startLoc": {
+          "line": 76,
+          "column": 15,
+          "position": 689
+        },
+        "endLoc": {
+          "line": 89,
+          "column": 11,
+          "position": 817
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\tls\\cert_test.go",
+        "start": 54,
+        "end": 67,
+        "startLoc": {
+          "line": 54,
+          "column": 15,
+          "position": 499
+        },
+        "endLoc": {
+          "line": 67,
+          "column": 5,
+          "position": 627
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": "(dest string, via string, dev string) error {\r\n\tif dest != \"default\" {\r\n\t\tif err := validateCIDR(dest); err != nil {\r\n\t\t\treturn err\r\n\t\t}\r\n\t}\r\n\tif err := validateIP(via); err != nil {\r\n\t\treturn err\r\n\t}\r\n\tif err := validateInterface(dev); err != nil {\r\n\t\treturn err\r\n\t}\r\n\tout, err := exec.Command(\"ip\", \"route\", \"replace\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\routing\\route.go",
+        "start": 53,
+        "end": 65,
+        "startLoc": {
+          "line": 53,
+          "column": 13,
+          "position": 465
+        },
+        "endLoc": {
+          "line": 65,
+          "column": 10,
+          "position": 616
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\routing\\route.go",
+        "start": 19,
+        "end": 31,
+        "startLoc": {
+          "line": 19,
+          "column": 9,
+          "position": 75
+        },
+        "endLoc": {
+          "line": 31,
+          "column": 6,
+          "position": 226
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": "}\r\n\r\nfunc (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost string) error {\r\n\tif m == nil || m.node == nil {\r\n\t\treturn fmt.Errorf(\"master runner node is required\")\r\n\t}\r\n\tif tunnel == nil {\r\n\t\treturn fmt.Errorf(\"master tunnel is required\")\r\n\t}\r\n\r\n\tprivateKey",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\node\\master_linux.go",
+        "start": 18,
+        "end": 28,
+        "startLoc": {
+          "line": 18,
+          "column": 1,
+          "position": 70
+        },
+        "endLoc": {
+          "line": 28,
+          "column": 11,
+          "position": 169
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\node\\master_other.go",
+        "start": 11,
+        "end": 21,
+        "startLoc": {
+          "line": 11,
+          "column": 2,
+          "position": 38
+        },
+        "endLoc": {
+          "line": 21,
+          "column": 2,
+          "position": 137
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": "{\r\n\ttunnels := m.listMasterTunnels()\r\n\tinfos := make([]grpcserver.TunnelInfo, 0, len(tunnels))\r\n\tfor _, tunnel := range tunnels {\r\n\t\tinfos = append(infos, grpcserver.TunnelInfo{\r\n\t\t\tName:          tunnel.Name,\r\n\t\t\tOverlayIP:     tunnel.OverlayIP,\r\n\t\t\tHealthy:       tunnel.Healthy,\r\n\t\t\tWeight:        tunnel.Weight,\r\n\t\t\tPeerPublicKey: append([]byte(nil), tunnel.PeerPublicKey[:]...),\r\n\t\t})\r\n\t}\r\n\treturn grpcserver",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\node\\master.go",
+        "start": 305,
+        "end": 317,
+        "startLoc": {
+          "line": 305,
+          "column": 2,
+          "position": 3080
+        },
+        "endLoc": {
+          "line": 317,
+          "column": 11,
+          "position": 3229
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\node\\master.go",
+        "start": 290,
+        "end": 302,
+        "startLoc": {
+          "line": 290,
+          "column": 2,
+          "position": 2906
+        },
+        "endLoc": {
+          "line": 302,
+          "column": 6,
+          "position": 3055
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": "{node: &Node{config: NodeConfig{ConfigDir: dir}}}\r\n\tgotPub, err := runner.GetPublicKey()\r\n\tif err != nil {\r\n\t\tt.Fatalf(\"GetPublicKey: %v\", err)\r\n\t}\r\n\tif gotPub != expectedPub {\r\n\t\tt.Fatalf(\"key mismatch: got %s, want %s\", gotPub, expectedPub)\r\n\t}\r\n}\r\n\r\nfunc TestGetPublicKeyClient",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\node\\config_test.go",
+        "start": 349,
+        "end": 359,
+        "startLoc": {
+          "line": 349,
+          "column": 15,
+          "position": 3495
+        },
+        "endLoc": {
+          "line": 359,
+          "column": 23,
+          "position": 3597
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\node\\config_test.go",
+        "start": 330,
+        "end": 340,
+        "startLoc": {
+          "line": 330,
+          "column": 13,
+          "position": 3304
+        },
+        "endLoc": {
+          "line": 340,
+          "column": 25,
+          "position": 3406
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 9,
+      "fragment": "{node: &Node{config: NodeConfig{ConfigDir: dir}}}\r\n\tgotPub, err := runner.GetPublicKey()\r\n\tif err != nil {\r\n\t\tt.Fatalf(\"GetPublicKey: %v\", err)\r\n\t}\r\n\tif gotPub != expectedPub {\r\n\t\tt.Fatalf(\"key mismatch: got %s, want %s\", gotPub, expectedPub)\r\n\t}\r\n}",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\node\\config_test.go",
+        "start": 368,
+        "end": 376,
+        "startLoc": {
+          "line": 368,
+          "column": 13,
+          "position": 3686
+        },
+        "endLoc": {
+          "line": 376,
+          "column": 2,
+          "position": 3781
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\node\\config_test.go",
+        "start": 330,
+        "end": 338,
+        "startLoc": {
+          "line": 330,
+          "column": 13,
+          "position": 3304
+        },
+        "endLoc": {
+          "line": 338,
+          "column": 2,
+          "position": 3399
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": "}\r\n\r\nfunc (c *ClientRunner) createInterfaces(ctx context.Context) error {\r\n\tif ctx == nil {\r\n\t\treturn fmt.Errorf(\"context is required\")\r\n\t}\r\n\tif c == nil || c.node == nil {\r\n\t\treturn fmt.Errorf(\"client runner node is required\")\r\n\t}\r\n\r\n\tc.node.logger.Info",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\node\\client_linux.go",
+        "start": 37,
+        "end": 47,
+        "startLoc": {
+          "line": 37,
+          "column": 1,
+          "position": 181
+        },
+        "endLoc": {
+          "line": 47,
+          "column": 5,
+          "position": 282
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\node\\client_other.go",
+        "start": 12,
+        "end": 22,
+        "startLoc": {
+          "line": 12,
+          "column": 2,
+          "position": 44
+        },
+        "endLoc": {
+          "line": 22,
+          "column": 5,
+          "position": 145
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 29,
+      "fragment": ")\r\n\t}\r\n\r\n\tkey, err := wg.NewKey(publicKey)\r\n\tif err != nil {\r\n\t\treturn fmt.Errorf(\"parse peer public key: %w\", err)\r\n\t}\r\n\r\n\tpeerCfg := wg.PeerConfig{\r\n\t\tPublicKey:         key,\r\n\t\tReplaceAllowedIPs: true,\r\n\t}\r\n\r\n\tif len(presharedKey) == 32 {\r\n\t\tpsk, err := wg.NewKey(presharedKey)\r\n\t\tif err == nil {\r\n\t\t\tpeerCfg.PresharedKey = &psk\r\n\t\t}\r\n\t}\r\n\r\n\tfor _, cidr := range allowedIPs {\r\n\t\t_, ipNet, err := net.ParseCIDR(strings.TrimSpace(cidr))\r\n\t\tif err != nil {\r\n\t\t\treturn fmt.Errorf(\"parse allowed IP %q: %w\", cidr, err)\r\n\t\t}\r\n\t\tpeerCfg.AllowedIPs = append(peerCfg.AllowedIPs, *ipNet)\r\n\t}\r\n\r\n\tresolvedEndpointHost",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\node\\client_linux.go",
+        "start": 131,
+        "end": 159,
+        "startLoc": {
+          "line": 131,
+          "column": 24,
+          "position": 1282
+        },
+        "endLoc": {
+          "line": 159,
+          "column": 21,
+          "position": 1536
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\node\\endpoint_linux.go",
+        "start": 166,
+        "end": 189,
+        "startLoc": {
+          "line": 166,
+          "column": 40,
+          "position": 1672
+        },
+        "endLoc": {
+          "line": 189,
+          "column": 3,
+          "position": 1916
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 7,
+      "fragment": "(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Logger) (*Server, error) {\r\n\ttokenHash, err := pkgtls.LoadTokenHash(cfg.TokenHashPath)\r\n\tif err != nil {\r\n\t\treturn nil, fmt.Errorf(\"grpc server: load token hash: %w\", err)\r\n\t}\r\n\r\n\tprovider",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\grpc\\server.go",
+        "start": 108,
+        "end": 114,
+        "startLoc": {
+          "line": 108,
+          "column": 17,
+          "position": 767
+        },
+        "endLoc": {
+          "line": 114,
+          "column": 9,
+          "position": 852
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\grpc\\server.go",
+        "start": 86,
+        "end": 92,
+        "startLoc": {
+          "line": 86,
+          "column": 18,
+          "position": 580
+        },
+        "endLoc": {
+          "line": 92,
+          "column": 3,
+          "position": 665
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 16,
+      "fragment": "}\r\n\r\n\tgs := grpc.NewServer(\r\n\t\tgrpc.Creds(credentials.NewTLS(tlsConfig)),\r\n\t\tgrpc.ChainUnaryInterceptor(makeUnaryAuthInterceptor(tokenHash, logger)),\r\n\t)\r\n\tproto.RegisterAwgAgentServer(gs, handler)\r\n\r\n\treturn &Server{\r\n\t\tgrpcServer: gs,\r\n\t\tconfig:     cfg,\r\n\t\tlogger:     logger,\r\n\t}, nil\r\n}\r\n\r\ntype",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\grpc\\server.go",
+        "start": 122,
+        "end": 137,
+        "startLoc": {
+          "line": 122,
+          "column": 2,
+          "position": 933
+        },
+        "endLoc": {
+          "line": 137,
+          "column": 5,
+          "position": 1042
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\grpc\\server.go",
+        "start": 68,
+        "end": 84,
+        "startLoc": {
+          "line": 68,
+          "column": 2,
+          "position": 460
+        },
+        "endLoc": {
+          "line": 84,
+          "column": 79,
+          "position": 571
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ", error) {\r\n\tif req == nil {\r\n\t\treturn nil, status.Error(codes.InvalidArgument, \"request is required\")\r\n\t}\r\n\tif h.tunnelMgr == nil {\r\n\t\treturn nil, status.Error(codes.Unimplemented, \"tunnel management not available in this mode\")\r\n\t}\r\n\r\n\ttunnelName := strings.TrimSpace(req.GetName())\r\n\tif tunnelName == \"\" {\r\n\t\treturn nil, status.Error(codes.InvalidArgument, \"name is required\")\r\n\t}\r\n\r\n\tif",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\grpc\\handlers.go",
+        "start": 263,
+        "end": 276,
+        "startLoc": {
+          "line": 263,
+          "column": 21,
+          "position": 2747
+        },
+        "endLoc": {
+          "line": 276,
+          "column": 3,
+          "position": 2884
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\grpc\\handlers.go",
+        "start": 199,
+        "end": 212,
+        "startLoc": {
+          "line": 199,
+          "column": 18,
+          "position": 2089
+        },
+        "endLoc": {
+          "line": 212,
+          "column": 13,
+          "position": 2226
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 12,
+      "fragment": ", error) {\r\n\tif req == nil {\r\n\t\treturn nil, status.Error(codes.InvalidArgument, \"request is required\")\r\n\t}\r\n\tif h.peerMgr == nil {\r\n\t\treturn nil, status.Error(codes.Unimplemented, \"peer management not available in this mode\")\r\n\t}\r\n\tif len(req.GetPublicKey()) == 0 {\r\n\t\treturn nil, status.Error(codes.InvalidArgument, \"public_key is required\")\r\n\t}\r\n\r\n\tif err := h.peerMgr.RemovePeer",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\grpc\\handlers.go",
+        "start": 488,
+        "end": 499,
+        "startLoc": {
+          "line": 488,
+          "column": 19,
+          "position": 5283
+        },
+        "endLoc": {
+          "line": 499,
+          "column": 11,
+          "position": 5418
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\grpc\\handlers.go",
+        "start": 323,
+        "end": 334,
+        "startLoc": {
+          "line": 323,
+          "column": 16,
+          "position": 3479
+        },
+        "endLoc": {
+          "line": 334,
+          "column": 8,
+          "position": 3614
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": "tlsCfg := &tls.Config{\r\n\t\t\tInsecureSkipVerify: true, //nolint:gosec // pre-Init bootstrap, token authenticates\r\n\t\t\tMinVersion:         tls.VersionTLS13,\r\n\t\t}\r\n\t\tconn, err = grpc.NewClient(\r\n\t\t\tcfg.Target,\r\n\t\t\tgrpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),\r\n\t\t\tgrpc.WithPerRPCCredentials(&tokenCredentials{token: cfg.Token, insecure: true}),\r\n\t\t)\r\n\t\tif err != nil {\r\n\t\t\treturn nil, fmt.Errorf(\"grpc client: dial (token, insecure) %s: %w\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\grpc\\client.go",
+        "start": 86,
+        "end": 96,
+        "startLoc": {
+          "line": 86,
+          "column": 3,
+          "position": 746
+        },
+        "endLoc": {
+          "line": 96,
+          "column": 45,
+          "position": 868
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\grpc\\client.go",
+        "start": 41,
+        "end": 51,
+        "startLoc": {
+          "line": 41,
+          "column": 3,
+          "position": 238
+        },
+        "endLoc": {
+          "line": 51,
+          "column": 44,
+          "position": 360
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": "(tt.input)\r\n\t\t\tif tt.expectError != \"\" {\r\n\t\t\t\tif err == nil {\r\n\t\t\t\t\tt.Fatalf(\"expected error, got nil\")\r\n\t\t\t\t}\r\n\t\t\t\tif !strings.Contains(err.Error(), tt.expectError) {\r\n\t\t\t\t\tt.Fatalf(\"expected error containing %q, got %v\", tt.expectError, err)\r\n\t\t\t\t}\r\n\t\t\t\treturn\r\n\t\t\t}\r\n\r\n\t\t\tif err != nil {\r\n\t\t\t\tt.Fatalf(\"GetPreset returned error: %v\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\awggen\\presets_test.go",
+        "start": 28,
+        "end": 40,
+        "startLoc": {
+          "line": 28,
+          "column": 10,
+          "position": 252
+        },
+        "endLoc": {
+          "line": 40,
+          "column": 31,
+          "position": 369
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\topology\\ranges_test.go",
+        "start": 47,
+        "end": 59,
+        "startLoc": {
+          "line": 47,
+          "column": 11,
+          "position": 374
+        },
+        "endLoc": {
+          "line": 59,
+          "column": 32,
+          "position": 491
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 19,
+      "fragment": ")\r\n\t\t\tif tt.expectError == \"\" {\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\tt.Fatalf(\"expected no error, got %v\", err)\r\n\t\t\t\t}\r\n\t\t\t\treturn\r\n\t\t\t}\r\n\r\n\t\t\tif err == nil {\r\n\t\t\t\tt.Fatalf(\"expected error, got nil\")\r\n\t\t\t}\r\n\t\t\tif !strings.Contains(err.Error(), tt.expectError) {\r\n\t\t\t\tt.Fatalf(\"expected error containing %q, got %v\", tt.expectError, err)\r\n\t\t\t}\r\n\t\t})\r\n\t}\r\n}\r\n\r\nfunc TestEffectiveMTU",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\awggen\\mtu_test.go",
+        "start": 73,
+        "end": 91,
+        "startLoc": {
+          "line": 73,
+          "column": 12,
+          "position": 597
+        },
+        "endLoc": {
+          "line": 91,
+          "column": 17,
+          "position": 737
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\wg\\uapi_test.go",
+        "start": 269,
+        "end": 287,
+        "startLoc": {
+          "line": 269,
+          "column": 2,
+          "position": 2411
+        },
+        "endLoc": {
+          "line": 287,
+          "column": 22,
+          "position": 2551
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 19,
+      "fragment": ")\r\n\t\t\tif tt.expectError == \"\" {\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\tt.Fatalf(\"expected no error, got %v\", err)\r\n\t\t\t\t}\r\n\t\t\t\treturn\r\n\t\t\t}\r\n\r\n\t\t\tif err == nil {\r\n\t\t\t\tt.Fatalf(\"expected error, got nil\")\r\n\t\t\t}\r\n\t\t\tif !strings.Contains(err.Error(), tt.expectError) {\r\n\t\t\t\tt.Fatalf(\"expected error containing %q, got %v\", tt.expectError, err)\r\n\t\t\t}\r\n\t\t})\r\n\t}\r\n}\r\n\r\nfunc allDigits",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\awggen\\ispec_test.go",
+        "start": 152,
+        "end": 170,
+        "startLoc": {
+          "line": 152,
+          "column": 5,
+          "position": 1619
+        },
+        "endLoc": {
+          "line": 170,
+          "column": 10,
+          "position": 1759
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\wg\\uapi_test.go",
+        "start": 269,
+        "end": 287,
+        "startLoc": {
+          "line": 269,
+          "column": 2,
+          "position": 2411
+        },
+        "endLoc": {
+          "line": 287,
+          "column": 22,
+          "position": 2551
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ")\r\n\tif err != nil {\r\n\t\tt.Fatalf(\"GetPreset returned error: %v\", err)\r\n\t}\r\n\tfamily, err := GetFamily(\"TLSClientHello\")\r\n\tif err != nil {\r\n\t\tt.Fatalf(\"GetFamily returned error: %v\", err)\r\n\t}\r\n\r\n\tparams, err := GenerateParams(preset, family)\r\n\tif err != nil {\r\n\t\tt.Fatalf(\"GenerateParams returned error: %v\", err)\r\n\t}\r\n\r\n\tif params.I1",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\awggen\\generator_test.go",
+        "start": 50,
+        "end": 64,
+        "startLoc": {
+          "line": 50,
+          "column": 10,
+          "position": 586
+        },
+        "endLoc": {
+          "line": 64,
+          "column": 3,
+          "position": 713
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\awggen\\generator_test.go",
+        "start": 16,
+        "end": 30,
+        "startLoc": {
+          "line": 16,
+          "column": 11,
+          "position": 125
+        },
+        "endLoc": {
+          "line": 30,
+          "column": 3,
+          "position": 252
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": "(values ...int) bool {\r\n\tseen := make(map[int]struct{}, len(values))\r\n\tfor _, value := range values {\r\n\t\tif _, exists := seen[value]; exists {\r\n\t\t\treturn false\r\n\t\t}\r\n\t\tseen[value] = struct{}{}\r\n\t}\r\n\treturn true\r\n}",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\awggen\\generator.go",
+        "start": 265,
+        "end": 274,
+        "startLoc": {
+          "line": 265,
+          "column": 10,
+          "position": 2682
+        },
+        "endLoc": {
+          "line": 274,
+          "column": 2,
+          "position": 2790
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\awggen\\generator_test.go",
+        "start": 186,
+        "end": 195,
+        "startLoc": {
+          "line": 186,
+          "column": 9,
+          "position": 2186
+        },
+        "endLoc": {
+          "line": 195,
+          "column": 2,
+          "position": 2294
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": "(tt.input)\r\n\t\t\tif tt.expectError != \"\" {\r\n\t\t\t\tif err == nil {\r\n\t\t\t\t\tt.Fatalf(\"expected error, got nil\")\r\n\t\t\t\t}\r\n\t\t\t\tif !strings.Contains(err.Error(), tt.expectError) {\r\n\t\t\t\t\tt.Fatalf(\"expected error containing %q, got %v\", tt.expectError, err)\r\n\t\t\t\t}\r\n\t\t\t\treturn\r\n\t\t\t}\r\n\r\n\t\t\tif err != nil {\r\n\t\t\t\tt.Fatalf(\"GetFamily returned error: %v\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "pkg\\awggen\\families_test.go",
+        "start": 28,
+        "end": 40,
+        "startLoc": {
+          "line": 28,
+          "column": 10,
+          "position": 252
+        },
+        "endLoc": {
+          "line": 40,
+          "column": 31,
+          "position": 369
+        }
+      },
+      "secondFile": {
+        "name": "pkg\\topology\\ranges_test.go",
+        "start": 47,
+        "end": 59,
+        "startLoc": {
+          "line": 47,
+          "column": 11,
+          "position": 374
+        },
+        "endLoc": {
+          "line": 59,
+          "column": 32,
+          "position": 491
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": ", master.Name)\r\n\t\t}\r\n\r\n\t\tif closeErr := client.Close(); closeErr != nil {\r\n\t\t\tfmt.Fprintf(os.Stderr, \"warning: close %s: %v\\n\", master.Name, closeErr)\r\n\t\t}\r\n\t}\r\n\r\n\tif len(failures) > 0 {\r\n\t\tsort.Strings(failures)\r\n\t\treturn fmt.Errorf(\"tier 3 rotation failed: %s\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\rotate.go",
+        "start": 251,
+        "end": 261,
+        "startLoc": {
+          "line": 251,
+          "column": 34,
+          "position": 2610
+        },
+        "endLoc": {
+          "line": 261,
+          "column": 29,
+          "position": 2710
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\rotate.go",
+        "start": 181,
+        "end": 191,
+        "startLoc": {
+          "line": 181,
+          "column": 34,
+          "position": 1755
+        },
+        "endLoc": {
+          "line": 191,
+          "column": 29,
+          "position": 1855
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tmaster := topo.FindMaster(name)\r\n\t\t\tif master == nil {\r\n\t\t\t\treturn fmt.Errorf(\"master %q not found in topology\", name)\r\n\t\t\t}\r\n\r\n\t\t\tcaCert, caKey, err := pkgtls",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 117,
+        "end": 131,
+        "startLoc": {
+          "line": 117,
+          "column": 29,
+          "position": 940
+        },
+        "endLoc": {
+          "line": 131,
+          "column": 7,
+          "position": 1100
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 49,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 49,
+          "column": 9,
+          "position": 364
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": "})\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"create gRPC client: %w\", err)\r\n\t\t\t}\r\n\t\t\tdefer func() {\r\n\t\t\t\tif closeErr := client.Close(); closeErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: close grpc client: %v\\n\", closeErr)\r\n\t\t\t\t}\r\n\t\t\t}()\r\n\r\n\t\t\tctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)\r\n\t\t\tdefer cancel()\r\n\r\n\t\t\tresp, err := client.Agent().Init",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 156,
+        "end": 169,
+        "startLoc": {
+          "line": 156,
+          "column": 4,
+          "position": 1369
+        },
+        "endLoc": {
+          "line": 169,
+          "column": 5,
+          "position": 1516
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\token.go",
+        "start": 60,
+        "end": 73,
+        "startLoc": {
+          "line": 60,
+          "column": 4,
+          "position": 476
+        },
+        "endLoc": {
+          "line": 73,
+          "column": 12,
+          "position": 623
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tmaster := topo.FindMaster(name)\r\n\t\t\tif master == nil {\r\n\t\t\t\treturn fmt.Errorf(\"master %q not found in topology\", name)\r\n\t\t\t}\r\n\r\n\t\t\t_",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 310,
+        "end": 324,
+        "startLoc": {
+          "line": 310,
+          "column": 35,
+          "position": 3092
+        },
+        "endLoc": {
+          "line": 324,
+          "column": 2,
+          "position": 3242
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 49,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 49,
+          "column": 7,
+          "position": 354
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 24,
+      "fragment": ", err)\r\n\t\t\t}\r\n\r\n\t\t\tnd := nodeDir(configDir, name)\r\n\t\t\ttoken, err := loadToken(nd)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load token: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tclient, err := grpcclient.NewClient(grpcclient.ClientConfig{\r\n\t\t\t\tTarget:     master.GRPCAddr(),\r\n\t\t\t\tToken:    token,\r\n\t\t\t\tInsecure: true, // pre-Init bootstrap\r\n\t\t\t})\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"create gRPC client: %w\", err)\r\n\t\t\t}\r\n\t\t\tdefer func() {\r\n\t\t\t\tif closeErr := client.Close(); closeErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: close grpc client: %v\\n\", closeErr)\r\n\t\t\t\t}\r\n\t\t\t}()\r\n\r\n\t\t\tfor",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 326,
+        "end": 349,
+        "startLoc": {
+          "line": 326,
+          "column": 14,
+          "position": 3280
+        },
+        "endLoc": {
+          "line": 349,
+          "column": 4,
+          "position": 3498
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 143,
+        "end": 70,
+        "startLoc": {
+          "line": 143,
+          "column": 19,
+          "position": 1248
+        },
+        "endLoc": {
+          "line": 70,
+          "column": 4,
+          "position": 573
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\r\n\t\t\tif cidr == \"\" {\r\n\t\t\t\treturn fmt.Errorf(\"--cidr is required\")\r\n\t\t\t}\r\n\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tidx",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 150,
+        "end": 164,
+        "startLoc": {
+          "line": 150,
+          "column": 39,
+          "position": 1303
+        },
+        "endLoc": {
+          "line": 164,
+          "column": 4,
+          "position": 1439
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 74,
+        "end": 88,
+        "startLoc": {
+          "line": 74,
+          "column": 29,
+          "position": 593
+        },
+        "endLoc": {
+          "line": 88,
+          "column": 26,
+          "position": 729
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ")\r\n\t\t\t}\r\n\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tidx := findRangeIndex(topo, name)\r\n\t\t\tif idx < 0 {\r\n\t\t\t\treturn fmt.Errorf(\"range %q not found\", name)\r\n\t\t\t}\r\n\r\n\t\t\t// Ensure the new name is not already taken.",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 229,
+        "end": 242,
+        "startLoc": {
+          "line": 229,
+          "column": 25,
+          "position": 2074
+        },
+        "endLoc": {
+          "line": 242,
+          "column": 45,
+          "position": 2181
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 156,
+        "end": 169,
+        "startLoc": {
+          "line": 156,
+          "column": 21,
+          "position": 1378
+        },
+        "endLoc": {
+          "line": 169,
+          "column": 14,
+          "position": 1485
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tidx",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 268,
+        "end": 278,
+        "startLoc": {
+          "line": 268,
+          "column": 29,
+          "position": 2422
+        },
+        "endLoc": {
+          "line": 278,
+          "column": 4,
+          "position": 2529
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 44,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 44,
+          "column": 7,
+          "position": 309
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": "topo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tidx := findRangeIndex(topo, name)\r\n\t\t\tif idx < 0 {\r\n\t\t\t\treturn fmt.Errorf(\"range %q not found\", name)\r\n\t\t\t}\r\n\r\n\t\t\t// Check that no node has an overlay IP within this range.",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 273,
+        "end": 283,
+        "startLoc": {
+          "line": 273,
+          "column": 4,
+          "position": 2478
+        },
+        "endLoc": {
+          "line": 283,
+          "column": 59,
+          "position": 2575
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 159,
+        "end": 169,
+        "startLoc": {
+          "line": 159,
+          "column": 4,
+          "position": 1388
+        },
+        "endLoc": {
+          "line": 169,
+          "column": 14,
+          "position": 1485
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ")\r\n\t\t\t}\r\n\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tidx := findRangeIndex(topo, name)\r\n\t\t\tif idx < 0 {\r\n\t\t\t\treturn fmt.Errorf(\"range %q not found\", name)\r\n\t\t\t}\r\n\r\n\t\t\tr",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 319,
+        "end": 332,
+        "startLoc": {
+          "line": 319,
+          "column": 28,
+          "position": 2943
+        },
+        "endLoc": {
+          "line": 332,
+          "column": 2,
+          "position": 3050
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\ip.go",
+        "start": 156,
+        "end": 169,
+        "startLoc": {
+          "line": 156,
+          "column": 21,
+          "position": 1378
+        },
+        "endLoc": {
+          "line": 169,
+          "column": 14,
+          "position": 1485
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tep",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 35,
+        "end": 44,
+        "startLoc": {
+          "line": 35,
+          "column": 52,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 44,
+          "column": 3,
+          "position": 309
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 44,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 44,
+          "column": 7,
+          "position": 309
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 38,
+      "fragment": ", name)\r\n\t\t\t}\r\n\r\n\t\t\tcaCert, caKey, err := ensureCA(configDir)\r\n\t\t\t_ = caCert\r\n\t\t\t_ = caKey\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"ensure CA: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\ttoken, err := pkgtls.GenerateToken()\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"generate token: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\thash, err := pkgtls.HashToken(token)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"hash token: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tnd := nodeDir(configDir, name)\r\n\t\t\tif err := pkgtls.SaveTokenHash(nd, hash); err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"save token hash: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tif err := saveToken(nd, token); err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"save token: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tdata := struct {\r\n\t\t\t\tName       string\r\n\t\t\t\tHost       string\r\n\t\t\t\tOverlayIP  string\r\n\t\t\t\tImage      string\r\n\t\t\t\tListenPort int\r\n\t\t\t\tToken      string\r\n\t\t\t}{\r\n\t\t\t\tName:       ep",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 46,
+        "end": 83,
+        "startLoc": {
+          "line": 46,
+          "column": 36,
+          "position": 341
+        },
+        "endLoc": {
+          "line": 83,
+          "column": 3,
+          "position": 674
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 46,
+        "end": 83,
+        "startLoc": {
+          "line": 46,
+          "column": 34,
+          "position": 341
+        },
+        "endLoc": {
+          "line": 83,
+          "column": 7,
+          "position": 674
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tep := topo.FindEndpoint(name)\r\n\t\t\tif ep == nil {\r\n\t\t\t\treturn fmt.Errorf(\"endpoint %q not found in topology\", name)\r\n\t\t\t}\r\n\r\n\t\t\tcaCert, caKey, err := pkgtls",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 115,
+        "end": 129,
+        "startLoc": {
+          "line": 115,
+          "column": 64,
+          "position": 936
+        },
+        "endLoc": {
+          "line": 129,
+          "column": 7,
+          "position": 1096
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 49,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 49,
+          "column": 9,
+          "position": 364
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 18,
+      "fragment": ".Host})\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"issue cert: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tcaCertPEM, err := os.ReadFile(caPath(configDir))\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"read CA cert: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tnd := nodeDir(configDir, name)\r\n\t\t\ttoken, err := loadToken(nd)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load token: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tclient, err := grpcclient.NewClient(grpcclient.ClientConfig{\r\n\t\t\t\tTarget:   ep",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 134,
+        "end": 151,
+        "startLoc": {
+          "line": 134,
+          "column": 3,
+          "position": 1167
+        },
+        "endLoc": {
+          "line": 151,
+          "column": 3,
+          "position": 1338
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 136,
+        "end": 153,
+        "startLoc": {
+          "line": 136,
+          "column": 7,
+          "position": 1171
+        },
+        "endLoc": {
+          "line": 153,
+          "column": 7,
+          "position": 1342
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 19,
+      "fragment": "})\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"create gRPC client: %w\", err)\r\n\t\t\t}\r\n\t\t\tdefer func() {\r\n\t\t\t\tif closeErr := client.Close(); closeErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: close grpc client: %v\\n\", closeErr)\r\n\t\t\t\t}\r\n\t\t\t}()\r\n\r\n\t\t\tctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)\r\n\t\t\tdefer cancel()\r\n\r\n\t\t\tresp, err := client.Agent().Init(ctx, &proto.InitRequest{\r\n\t\t\t\tCaCert:   caCertPEM,\r\n\t\t\t\tNodeCert: certPEM,\r\n\t\t\t\tNodeKey:  keyPEM,\r\n\t\t\t\tConfig: &proto.NodeConfig{\r\n\t\t\t\t\tName:       ep",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 154,
+        "end": 172,
+        "startLoc": {
+          "line": 154,
+          "column": 4,
+          "position": 1365
+        },
+        "endLoc": {
+          "line": 172,
+          "column": 3,
+          "position": 1563
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\token.go",
+        "start": 60,
+        "end": 174,
+        "startLoc": {
+          "line": 60,
+          "column": 4,
+          "position": 476
+        },
+        "endLoc": {
+          "line": 174,
+          "column": 7,
+          "position": 1567
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 21,
+      "fragment": ".ListenPort),\r\n\t\t\t\t},\r\n\t\t\t})\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"init RPC: %w\", err)\r\n\t\t\t}\r\n\t\t\tif !resp.Success {\r\n\t\t\t\treturn fmt.Errorf(\"init failed: %s\", resp.Message)\r\n\t\t\t}\r\n\r\n\t\t\tpubkeyPath := filepath.Join(nd, \"pubkey\")\r\n\t\t\tif err := os.WriteFile(pubkeyPath, resp.NodePublicKey, 0644); err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"write pubkey file %q: %w\", pubkeyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\talloc, err := loadOrCreateAllocator(configDir, topo)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load transport allocator: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tselfClient",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 175,
+        "end": 195,
+        "startLoc": {
+          "line": 175,
+          "column": 3,
+          "position": 1594
+        },
+        "endLoc": {
+          "line": 195,
+          "column": 11,
+          "position": 1794
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 177,
+        "end": 197,
+        "startLoc": {
+          "line": 177,
+          "column": 7,
+          "position": 1598
+        },
+        "endLoc": {
+          "line": 197,
+          "column": 13,
+          "position": 1798
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 7,
+      "fragment": "parsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))\r\n\t\t\t\tfor _, nr := range topo.Overlay.Ranges {\r\n\t\t\t\t\tif r, rErr := topology.ParseRange(nr); rErr == nil {\r\n\t\t\t\t\t\tparsedRanges = append(parsedRanges, r)\r\n\t\t\t\t\t}\r\n\t\t\t\t}\r\n\t\t\t\tif",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 211,
+        "end": 217,
+        "startLoc": {
+          "line": 211,
+          "column": 5,
+          "position": 1974
+        },
+        "endLoc": {
+          "line": 217,
+          "column": 3,
+          "position": 2072
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 197,
+        "end": 204,
+        "startLoc": {
+          "line": 197,
+          "column": 4,
+          "position": 1798
+        },
+        "endLoc": {
+          "line": 204,
+          "column": 4,
+          "position": 1898
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": ",\r\n\t\t\t\t\tAllowedIps:          []string{allocation.Subnet.String()},\r\n\t\t\t\t\tEndpointHost:        master.PeerAddr(),\r\n\t\t\t\t\tPersistentKeepalive: 25,\r\n\t\t\t\t\tTransportSubnet:     allocation.Subnet.String(),\r\n\t\t\t\t\tLocalTransportIp:    allocation.EndpointIP.String(),\r\n\t\t\t\t\tPeerTransportIp:     allocation.MasterIP.String(),\r\n\t\t\t\t})\r\n\t\t\t\tpeerCancel()\r\n\t\t\t\tif peerErr",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 280,
+        "end": 289,
+        "startLoc": {
+          "line": 280,
+          "column": 16,
+          "position": 2784
+        },
+        "endLoc": {
+          "line": 289,
+          "column": 8,
+          "position": 2882
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 272,
+        "end": 281,
+        "startLoc": {
+          "line": 272,
+          "column": 14,
+          "position": 2695
+        },
+        "endLoc": {
+          "line": 281,
+          "column": 9,
+          "position": 2793
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tep := topo.FindEndpoint(name)\r\n\t\t\tif ep == nil {\r\n\t\t\t\treturn fmt.Errorf(\"endpoint %q not found in topology\", name)\r\n\t\t\t}\r\n\r\n\t\t\tfor",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 314,
+        "end": 328,
+        "startLoc": {
+          "line": 314,
+          "column": 35,
+          "position": 3113
+        },
+        "endLoc": {
+          "line": 328,
+          "column": 4,
+          "position": 3263
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 49,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 49,
+          "column": 7,
+          "position": 354
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 21,
+      "fragment": "continue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterToken, err := loadToken(nodeDir(configDir, master.Name))\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: cannot load token for master %q: %v\\n\", master.Name, err)\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{\r\n\t\t\t\t\tTarget:     master.GRPCAddr(),\r\n\t\t\t\t\tToken:      masterToken,\r\n\t\t\t\t\tInsecure:   true,\r\n\t\t\t\t})\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: cannot connect to master %q: %v\\n\", master.Name, err)\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)\r\n\t\t\t\tremoveResp",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 330,
+        "end": 350,
+        "startLoc": {
+          "line": 330,
+          "column": 6,
+          "position": 3301
+        },
+        "endLoc": {
+          "line": 350,
+          "column": 11,
+          "position": 3499
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 230,
+        "end": 250,
+        "startLoc": {
+          "line": 230,
+          "column": 6,
+          "position": 2231
+        },
+        "endLoc": {
+          "line": 250,
+          "column": 8,
+          "position": 2429
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tclient",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 37,
+        "end": 46,
+        "startLoc": {
+          "line": 37,
+          "column": 51,
+          "position": 212
+        },
+        "endLoc": {
+          "line": 46,
+          "column": 7,
+          "position": 317
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 44,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 44,
+          "column": 7,
+          "position": 309
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 35,
+      "fragment": "caCert, caKey, err := ensureCA(configDir)\r\n\t\t\t\t_ = caCert\r\n\t\t\t\t_ = caKey\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"ensure CA: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\ttoken, err := pkgtls.GenerateToken()\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"generate token: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\thash, err := pkgtls.HashToken(token)\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"hash token: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\tnd := nodeDir(configDir, name)\r\n\t\t\t\tif err := pkgtls.SaveTokenHash(nd, hash); err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"save token hash: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\tif err := saveToken(nd, token); err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"save token: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\tdata := struct {\r\n\t\t\t\t\tName       string\r\n\t\t\t\t\tHost       string\r\n\t\t\t\t\tOverlayIP  string\r\n\t\t\t\t\tImage      string\r\n\t\t\t\t\tListenPort int\r\n\t\t\t\t\tToken      string\r\n\t\t\t\t}{\r\n\t\t\t\t\tName:       client",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 53,
+        "end": 87,
+        "startLoc": {
+          "line": 53,
+          "column": 5,
+          "position": 379
+        },
+        "endLoc": {
+          "line": 87,
+          "column": 7,
+          "position": 699
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 49,
+        "end": 83,
+        "startLoc": {
+          "line": 49,
+          "column": 4,
+          "position": 354
+        },
+        "endLoc": {
+          "line": 83,
+          "column": 7,
+          "position": 674
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\ttoken, err := pkgtls.GenerateToken()\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"generate token: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\thash, err := pkgtls.HashToken(token)\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"hash token: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\tif",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 116,
+        "end": 129,
+        "startLoc": {
+          "line": 116,
+          "column": 28,
+          "position": 960
+        },
+        "endLoc": {
+          "line": 129,
+          "column": 3,
+          "position": 1068
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 53,
+        "end": 66,
+        "startLoc": {
+          "line": 53,
+          "column": 16,
+          "position": 406
+        },
+        "endLoc": {
+          "line": 66,
+          "column": 3,
+          "position": 514
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 9,
+      "fragment": "if err := pkgtls.SaveTokenHash(nd, hash); err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"save token hash: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\tif err := saveToken(nd, token); err != nil {\r\n\t\t\t\t\treturn fmt.Errorf(\"save token: %w\", err)\r\n\t\t\t\t}\r\n\r\n\t\t\t\t// Collect master hosts for the deploy script.",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 129,
+        "end": 137,
+        "startLoc": {
+          "line": 129,
+          "column": 5,
+          "position": 1068
+        },
+        "endLoc": {
+          "line": 137,
+          "column": 47,
+          "position": 1160
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 67,
+        "end": 75,
+        "startLoc": {
+          "line": 67,
+          "column": 4,
+          "position": 528
+        },
+        "endLoc": {
+          "line": 75,
+          "column": 5,
+          "position": 620
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tclient := topo.FindClient(name)\r\n\t\t\tif client == nil {\r\n\t\t\t\treturn fmt.Errorf(\"client %q not found in topology\", name)\r\n\t\t\t}\r\n\r\n\t\t\ttargetHost",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 215,
+        "end": 229,
+        "startLoc": {
+          "line": 215,
+          "column": 29,
+          "position": 1895
+        },
+        "endLoc": {
+          "line": 229,
+          "column": 11,
+          "position": 2045
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 51,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 51,
+          "column": 7,
+          "position": 362
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 17,
+      "fragment": "})\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"issue cert: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tcaCertPEM, err := os.ReadFile(caPath(configDir))\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"read CA cert: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tnd := nodeDir(configDir, name)\r\n\t\t\ttoken, err := loadToken(nd)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load token: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tclientGRPC",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 239,
+        "end": 255,
+        "startLoc": {
+          "line": 239,
+          "column": 11,
+          "position": 2167
+        },
+        "endLoc": {
+          "line": 255,
+          "column": 11,
+          "position": 2315
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 136,
+        "end": 152,
+        "startLoc": {
+          "line": 136,
+          "column": 5,
+          "position": 1173
+        },
+        "endLoc": {
+          "line": 152,
+          "column": 7,
+          "position": 1321
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 9,
+      "fragment": ".Close(); closeErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: close grpc client: %v\\n\", closeErr)\r\n\t\t\t\t}\r\n\t\t\t}()\r\n\r\n\t\t\tctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)\r\n\t\t\tdefer cancel()\r\n\r\n\t\t\tresp, err := clientGRPC",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 264,
+        "end": 272,
+        "startLoc": {
+          "line": 264,
+          "column": 11,
+          "position": 2415
+        },
+        "endLoc": {
+          "line": 272,
+          "column": 11,
+          "position": 2504
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\token.go",
+        "start": 65,
+        "end": 73,
+        "startLoc": {
+          "line": 65,
+          "column": 7,
+          "position": 528
+        },
+        "endLoc": {
+          "line": 73,
+          "column": 7,
+          "position": 617
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": ",\r\n\t\t\t\t},\r\n\t\t\t})\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"init RPC: %w\", err)\r\n\t\t\t}\r\n\t\t\tif !resp.Success {\r\n\t\t\t\treturn fmt.Errorf(\"init failed: %s\", resp.Message)\r\n\t\t\t}\r\n\r\n\t\t\tpubkeyPath := filepath.Join(nd, \"pubkey\")\r\n\t\t\tif err := os.WriteFile(pubkeyPath, resp.NodePublicKey, 0644); err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"write client pubkey file %q: %w\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 280,
+        "end": 292,
+        "startLoc": {
+          "line": 280,
+          "column": 2,
+          "position": 2590
+        },
+        "endLoc": {
+          "line": 292,
+          "column": 34,
+          "position": 2721
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 177,
+        "end": 189,
+        "startLoc": {
+          "line": 177,
+          "column": 2,
+          "position": 1601
+        },
+        "endLoc": {
+          "line": 189,
+          "column": 27,
+          "position": 1732
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": ", pubkeyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\talloc, err := loadOrCreateAllocator(configDir, topo)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load transport allocator: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tparsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))\r\n\t\t\tfor _, nr := range topo.Overlay.Ranges {\r\n\t\t\t\tif r, rErr := topology.ParseRange(nr); rErr == nil {\r\n\t\t\t\t\tparsedRanges = append(parsedRanges, r)\r\n\t\t\t\t} else",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 292,
+        "end": 304,
+        "startLoc": {
+          "line": 292,
+          "column": 34,
+          "position": 2722
+        },
+        "endLoc": {
+          "line": 304,
+          "column": 5,
+          "position": 2879
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 189,
+        "end": 202,
+        "startLoc": {
+          "line": 189,
+          "column": 27,
+          "position": 1733
+        },
+        "endLoc": {
+          "line": 202,
+          "column": 2,
+          "position": 1892
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": ", master.Name, err)\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{\r\n\t\t\t\t\tTarget:     master.GRPCAddr(),\r\n\t\t\t\t\tToken:      masterToken,\r\n\t\t\t\t\tInsecure:   true,\r\n\t\t\t\t})\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: connect to master %q: %v\\n\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 344,
+        "end": 354,
+        "startLoc": {
+          "line": 344,
+          "column": 42,
+          "position": 3347
+        },
+        "endLoc": {
+          "line": 354,
+          "column": 38,
+          "position": 3441
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 235,
+        "end": 245,
+        "startLoc": {
+          "line": 235,
+          "column": 49,
+          "position": 2285
+        },
+        "endLoc": {
+          "line": 245,
+          "column": 45,
+          "position": 2379
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 7,
+      "fragment": ", master.Name, err)\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)\r\n\t\t\t\taddResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{\r\n\t\t\t\t\tName:                client",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 354,
+        "end": 360,
+        "startLoc": {
+          "line": 354,
+          "column": 38,
+          "position": 3442
+        },
+        "endLoc": {
+          "line": 360,
+          "column": 7,
+          "position": 3520
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 245,
+        "end": 251,
+        "startLoc": {
+          "line": 245,
+          "column": 45,
+          "position": 2380
+        },
+        "endLoc": {
+          "line": 251,
+          "column": 3,
+          "position": 2458
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ",\r\n\t\t\t\t\tPeerPublicKey:       resp.NodePublicKey,\r\n\t\t\t\t\tWeight:              1,\r\n\t\t\t\t\tTransportSubnet:     allocation.Subnet.String(),\r\n\t\t\t\t\tMasterTransportIp:   allocation.MasterIP.String(),\r\n\t\t\t\t\tEndpointTransportIp: allocation.EndpointIP.String(),\r\n\t\t\t\t})\r\n\t\t\t\tmasterCancel()\r\n\t\t\t\tif closeErr := masterClient.Close(); closeErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: close grpc client for master %q: %v\\n\", master.Name, closeErr)\r\n\t\t\t\t}\r\n\r\n\t\t\t\tif addErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: add tunnel on master %q failed: %v\\n\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 363,
+        "end": 376,
+        "startLoc": {
+          "line": 363,
+          "column": 3,
+          "position": 3549
+        },
+        "endLoc": {
+          "line": 376,
+          "column": 48,
+          "position": 3696
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 254,
+        "end": 267,
+        "startLoc": {
+          "line": 254,
+          "column": 11,
+          "position": 2491
+        },
+        "endLoc": {
+          "line": 267,
+          "column": 48,
+          "position": 2638
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": ",\r\n\t\tArgs:  cobra.ExactArgs(1),\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\tname := args[0]\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology %q: %w\", topologyPath, err)\r\n\t\t\t}\r\n\r\n\t\t\tclient := topo.FindClient(name)\r\n\t\t\tif client == nil {\r\n\t\t\t\treturn fmt.Errorf(\"client %q not found in topology\", name)\r\n\t\t\t}\r\n\r\n\t\t\tfor",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 435,
+        "end": 449,
+        "startLoc": {
+          "line": 435,
+          "column": 32,
+          "position": 4316
+        },
+        "endLoc": {
+          "line": 449,
+          "column": 4,
+          "position": 4466
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\master.go",
+        "start": 35,
+        "end": 51,
+        "startLoc": {
+          "line": 35,
+          "column": 49,
+          "position": 204
+        },
+        "endLoc": {
+          "line": 51,
+          "column": 7,
+          "position": 362
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 23,
+      "fragment": ")\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterToken, err := loadToken(nodeDir(configDir, master.Name))\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: cannot load token for master %q: %v\\n\", master.Name, err)\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{\r\n\t\t\t\t\tTarget:     master.GRPCAddr(),\r\n\t\t\t\t\tToken:      masterToken,\r\n\t\t\t\t\tInsecure:   true,\r\n\t\t\t\t})\r\n\t\t\t\tif err != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: cannot connect to master %q: %v\\n\", master.Name, err)\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tmasterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)\r\n\t\t\t\tremoveResp, removeErr := masterClient.Agent().RemoveTunnel(masterCtx, &proto.RemoveTunnelRequest{\r\n\t\t\t\t\tName: client",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 452,
+        "end": 474,
+        "startLoc": {
+          "line": 452,
+          "column": 11,
+          "position": 4523
+        },
+        "endLoc": {
+          "line": 474,
+          "column": 7,
+          "position": 4754
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 229,
+        "end": 351,
+        "startLoc": {
+          "line": 229,
+          "column": 4,
+          "position": 2227
+        },
+        "endLoc": {
+          "line": 351,
+          "column": 3,
+          "position": 3528
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 18,
+      "fragment": ".Name,\r\n\t\t\t\t})\r\n\t\t\t\tmasterCancel()\r\n\t\t\t\tif closeErr := masterClient.Close(); closeErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: close grpc client for master %q: %v\\n\", master.Name, closeErr)\r\n\t\t\t\t}\r\n\r\n\t\t\t\tif removeErr != nil {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: remove tunnel from master %q failed: %v\\n\", master.Name, removeErr)\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tif !removeResp.Success {\r\n\t\t\t\t\tfmt.Fprintf(os.Stderr, \"warning: remove tunnel from master %q failed: %s\\n\", master.Name, \"[RPC failure]\")\r\n\t\t\t\t\tcontinue\r\n\t\t\t\t}\r\n\r\n\t\t\t\tfmt.Printf(\"Removed tunnel for client %q from master %q.\\n\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\client.go",
+        "start": 474,
+        "end": 491,
+        "startLoc": {
+          "line": 474,
+          "column": 7,
+          "position": 4755
+        },
+        "endLoc": {
+          "line": 491,
+          "column": 49,
+          "position": 4914
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\endpoint.go",
+        "start": 351,
+        "end": 368,
+        "startLoc": {
+          "line": 351,
+          "column": 3,
+          "position": 3529
+        },
+        "endLoc": {
+          "line": 368,
+          "column": 51,
+          "position": 3688
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": ",\r\n\t\tRunE: func(cmd *cobra.Command, args []string) error {\r\n\t\t\ttopo, err := topology.LoadTopology(topologyPath)\r\n\t\t\tif err != nil {\r\n\t\t\t\treturn fmt.Errorf(\"load topology: %w\", err)\r\n\t\t\t}\r\n\r\n\t\t\tdomainsFile := topo.Capture.DomainsFile\r\n\t\t\tif domainsFile == \"\" {\r\n\t\t\t\treturn",
+      "tokens": 0,
+      "firstFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\capture.go",
+        "start": 166,
+        "end": 175,
+        "startLoc": {
+          "line": 166,
+          "column": 2,
+          "position": 1547
+        },
+        "endLoc": {
+          "line": 175,
+          "column": 7,
+          "position": 1649
+        }
+      },
+      "secondFile": {
+        "name": "cmd\\mesh-ctl\\cmd\\capture.go",
+        "start": 133,
+        "end": 142,
+        "startLoc": {
+          "line": 133,
+          "column": 34,
+          "position": 1220
+        },
+        "endLoc": {
+          "line": 142,
+          "column": 4,
+          "position": 1322
+        }
+      }
+    }
+  ]
+}

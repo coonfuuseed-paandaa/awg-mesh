@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
-	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
-	proto "github.com/thebtf/awg-mesh/proto"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 )
 
 func newTokenCommand() *cobra.Command {

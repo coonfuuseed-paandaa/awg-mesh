@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package awgmesh;
 
-option go_package = "github.com/thebtf/awg-mesh/proto";
+option go_package = "github.com/coonfuuseed-paandaa/awg-mesh/proto";
 
 import "types.proto";
 

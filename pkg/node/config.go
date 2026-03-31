@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	"gopkg.in/yaml.v3"
 )
 

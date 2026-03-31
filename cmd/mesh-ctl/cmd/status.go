@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
-	"github.com/thebtf/awg-mesh/pkg/topology"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"gopkg.in/yaml.v3"
 )
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
-	"github.com/thebtf/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 )
 
 const defaultConfigDir = "/config"

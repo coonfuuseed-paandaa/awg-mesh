@@ -3,7 +3,7 @@ package grpcserver
 import (
 	"time"
 
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 // TunnelManager handles tunnel lifecycle operations.

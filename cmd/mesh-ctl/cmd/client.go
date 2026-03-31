@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
-	"github.com/thebtf/awg-mesh/pkg/mikrotik"
-	pkgtls "github.com/thebtf/awg-mesh/pkg/tls"
-	"github.com/thebtf/awg-mesh/pkg/topology"
-	proto "github.com/thebtf/awg-mesh/proto"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 )
 
 func newClientCommand() *cobra.Command {
@@ -88,7 +88,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:       client.Name,
 					Host:       "",
 					OverlayIP:  client.OverlayIP,
-					Image:      "ghcr.io/thebtf/awg-mesh:latest",
+					Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
 					ListenPort: 51820,
 					Token:      token,
 					Masters:    strings.Join(client.Masters, ","),
@@ -148,7 +148,7 @@ func newClientPrepareCommand() *cobra.Command {
 
 				ds := mikrotik.DeployScript{
 					ContainerName: name,
-					Image:         "ghcr.io/thebtf/awg-mesh:latest",
+					Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
 					Veth:          "veth-" + name,
 					VethGateway:   "192.168.100.1/24",
 					OverlayIP:     client.OverlayIP,

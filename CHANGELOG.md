@@ -193,7 +193,7 @@ All 15 investigation findings resolved (4×P0, 6×P1, 5×P2). Zero known defects
 ### Fixed
 - Cross-platform paths — `filepath.Join` throughout the codebase
 - Version detection without ldflags — uses `debug.ReadBuildInfo()`
-- Docker image name mismatch — `mesh-ctl` uses `ghcr.io/thebtf/awg-mesh` (matches CI)
+- Docker image name mismatch — `mesh-ctl` uses `ghcr.io/coonfuuseed-paandaa/awg-mesh` (matches CI)
 
 ---
 
@@ -228,7 +228,7 @@ All 15 investigation findings resolved (4×P0, 6×P1, 5×P2). Zero known defects
 
 ### Fixed
 - Cross-platform paths — `filepath.Join` throughout (fixes mixed slashes on Windows)
-- Docker image name — `mesh-ctl` now uses `ghcr.io/thebtf/awg-mesh` (matches CI)
+- Docker image name — `mesh-ctl` now uses `ghcr.io/coonfuuseed-paandaa/awg-mesh` (matches CI)
 - `--topology` default documented as empty string (not `/config/mesh-topology.yml`)
 - `domains_file` documented as a local path on the admin PC, not a container path
 
@@ -252,22 +252,22 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 - **IP range management** — CLI commands for overlay address space operations
 - **Prometheus metrics** — `:9091/metrics` with tunnel, peer, rotation, and healthcheck gauges
 - **Structured JSON logging** — zerolog with component scoping and configurable levels
-- **Docker-native** — 42 MB Alpine image at `ghcr.io/thebtf/awg-mesh`
+- **Docker-native** — 42 MB Alpine image at `ghcr.io/coonfuuseed-paandaa/awg-mesh`
 - CI: GitHub Actions pipeline (lint → test → build → Docker smoke test)
 - E2E verified: two-container AWG tunnel, 3/3 ping, 0% loss
 
 ---
 
-[Unreleased]: https://github.com/thebtf/awg-mesh/compare/v1.2.0...HEAD
-[1.2.0]: https://github.com/thebtf/awg-mesh/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/thebtf/awg-mesh/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/thebtf/awg-mesh/compare/v0.9.0...v1.0.0
-[0.9.0]: https://github.com/thebtf/awg-mesh/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/thebtf/awg-mesh/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/thebtf/awg-mesh/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/thebtf/awg-mesh/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/thebtf/awg-mesh/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/thebtf/awg-mesh/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/thebtf/awg-mesh/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/thebtf/awg-mesh/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/thebtf/awg-mesh/releases/tag/v0.1.0
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.9.0...v1.0.0
+[0.9.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/releases/tag/v0.1.0

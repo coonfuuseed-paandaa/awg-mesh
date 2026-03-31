@@ -104,10 +104,10 @@ jobs:
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker tag awg-mesh-node:ci ghcr.io/thebtf/awg-mesh:latest
-          docker tag awg-mesh-node:ci ghcr.io/thebtf/awg-mesh:${{ github.sha }}
-          docker push ghcr.io/thebtf/awg-mesh:latest
-          docker push ghcr.io/thebtf/awg-mesh:${{ github.sha }}
+          docker tag awg-mesh-node:ci ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
+          docker tag awg-mesh-node:ci ghcr.io/coonfuuseed-paandaa/awg-mesh:${{ github.sha }}
+          docker push ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
+          docker push ghcr.io/coonfuuseed-paandaa/awg-mesh:${{ github.sha }}
     permissions:
       contents: read
       packages: write

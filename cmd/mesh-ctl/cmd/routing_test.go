@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thebtf/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 )
 
 func TestRoutingGenerateCommand(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/thebtf/awg-mesh/pkg/mikrotik"
-	"github.com/thebtf/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 )
 
 func newRoutingCommand() *cobra.Command {

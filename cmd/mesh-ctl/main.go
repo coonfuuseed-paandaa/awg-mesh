@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/thebtf/awg-mesh/cmd/mesh-ctl/cmd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/cmd"
 )
 
 func main() {

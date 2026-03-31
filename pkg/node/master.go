@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
-	"github.com/thebtf/awg-mesh/pkg/routing"
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 // MasterTunnel represents a single tunnel managed by master mode.

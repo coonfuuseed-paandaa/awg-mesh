@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 func TestSaveLoadNodeStateRoundTrip(t *testing.T) {

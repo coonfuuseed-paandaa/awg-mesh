@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thebtf/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 )
 
 const routingScriptTemplate = `# awg-mesh DSCP routing configuration

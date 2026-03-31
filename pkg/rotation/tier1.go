@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"github.com/thebtf/awg-mesh/pkg/awggen"
-	proto "github.com/thebtf/awg-mesh/proto"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 )
 
 // Tier1Rotation executes zero-downtime per-tunnel rotation of Jc/Jmin/Jmax and I1-I5 only.

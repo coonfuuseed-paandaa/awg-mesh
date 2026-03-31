@@ -2181,7 +2181,7 @@ const file_types_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\ahealthy\x18\x02 \x01(\bR\ahealthy\x12\"\n" +
 	"\rlast_check_ms\x18\x03 \x01(\x03R\vlastCheckMs\x121\n" +
-	"\x14consecutive_failures\x18\x04 \x01(\x05R\x13consecutiveFailuresB\"Z github.com/thebtf/awg-mesh/protob\x06proto3"
+	"\x14consecutive_failures\x18\x04 \x01(\x05R\x13consecutiveFailuresB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
 
 var (
 	file_types_proto_rawDescOnce sync.Once

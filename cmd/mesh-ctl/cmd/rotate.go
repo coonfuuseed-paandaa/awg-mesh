@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/thebtf/awg-mesh/pkg/awggen"
-	grpcclient "github.com/thebtf/awg-mesh/pkg/grpc"
-	"github.com/thebtf/awg-mesh/pkg/rotation"
-	"github.com/thebtf/awg-mesh/pkg/topology"
-	"github.com/thebtf/awg-mesh/pkg/wg"
-	proto "github.com/thebtf/awg-mesh/proto"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 )
 
 const (

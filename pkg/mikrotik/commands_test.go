@@ -11,7 +11,7 @@ func TestGenerateContainerCommands(t *testing.T) {
 
 	cfg := ContainerConfig{
 		Name:      "awg node",
-		Image:     "ghcr.io/thebtf/awg-mesh:latest",
+		Image:     "ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
 		Interface: "veth1",
 		EnvVars: map[string]string{
 			"Z_VAR": "z",
@@ -35,7 +35,7 @@ func TestGenerateContainerCommands(t *testing.T) {
 	checks := []string{
 		"/container/add",
 		"interface=veth1",
-		"image=ghcr.io/thebtf/awg-mesh:latest",
+		"image=ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
 		"hostname=\"awg node\"",
 		"envlist=\"awg node-envs\"",
 		"name=\"awg node\"",

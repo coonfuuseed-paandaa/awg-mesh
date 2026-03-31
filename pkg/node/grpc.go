@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 )
 
 const defaultGRPCListenAddr = ":9090"

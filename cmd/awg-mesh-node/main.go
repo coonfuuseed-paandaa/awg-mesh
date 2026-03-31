@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/thebtf/awg-mesh/pkg/logging"
-	"github.com/thebtf/awg-mesh/pkg/node"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/logging"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
 )
 
 const (

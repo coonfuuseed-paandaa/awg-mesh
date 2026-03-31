@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 // ClientRunner runs node logic for client mode.

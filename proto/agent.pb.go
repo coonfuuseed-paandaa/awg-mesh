@@ -40,7 +40,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0eCaptureRefresh\x12\x17.awgmesh.CaptureRequest\x1a\x18.awgmesh.CaptureResponse\x120\n" +
 	"\tGetStatus\x12\x0e.awgmesh.Empty\x1a\x13.awgmesh.NodeStatus\x120\n" +
 	"\tGetRoutes\x12\x0e.awgmesh.Empty\x1a\x13.awgmesh.RouteTable\x124\n" +
-	"\tGetHealth\x12\x0e.awgmesh.Empty\x1a\x17.awgmesh.HealthResponseB\"Z github.com/thebtf/awg-mesh/protob\x06proto3"
+	"\tGetHealth\x12\x0e.awgmesh.Empty\x1a\x17.awgmesh.HealthResponseB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
 
 var file_agent_proto_goTypes = []any{
 	(*InitRequest)(nil),          // 0: awgmesh.InitRequest

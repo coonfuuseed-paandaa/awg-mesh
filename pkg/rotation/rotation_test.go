@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/thebtf/awg-mesh/pkg/awggen"
-	"github.com/thebtf/awg-mesh/pkg/wg"
-	proto "github.com/thebtf/awg-mesh/proto"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"google.golang.org/grpc"
 )
 

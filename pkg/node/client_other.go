@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 )
 
 type clientPlatformState struct{}

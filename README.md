@@ -1,10 +1,10 @@
 **English** | [Русский](README.ru.md)
 
 <!-- BADGE_ROW -->
-[![CI](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml)
+[![CI](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fthebtf%2Fawg--mesh-2496ED?logo=docker)](https://ghcr.io/thebtf/awg-mesh)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fcoonfuuseed-paandaa%2Fawg--mesh-2496ED?logo=docker)](https://ghcr.io/coonfuuseed-paandaa/awg-mesh)
 
 # awg-mesh
 
@@ -142,7 +142,7 @@ This example deploys a minimal mesh: two masters in Russia, two endpoints in Kaz
 
 ```bash
 # 1. Install mesh-ctl on your admin machine
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Create your topology file (see Configuration section for all fields)
@@ -186,7 +186,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Install mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 The binary lands in `$(go env GOPATH)/bin`. Ensure that directory is in your `PATH`:
@@ -230,7 +230,7 @@ All nodes should appear `ONLINE` with tunnel counts matching the topology.
 ### Upgrading mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 The `~/.mesh-ctl/` state directory (CA, tokens, keys, transport allocations) is not affected.
@@ -263,9 +263,9 @@ ssh master-02 'docker compose -f ru-master-02-docker-compose.yml pull && docker 
 ### Docker image
 
 ```
-ghcr.io/thebtf/awg-mesh:latest
-ghcr.io/thebtf/awg-mesh:v1.2.0
-ghcr.io/thebtf/awg-mesh:<commit-sha>
+ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
+ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
+ghcr.io/coonfuuseed-paandaa/awg-mesh:<commit-sha>
 ```
 
 - Size: ~42 MB (Alpine base)
@@ -287,7 +287,7 @@ The container expects configuration at `/config`. Map your node's config directo
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:v1.2.0
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -873,7 +873,7 @@ lint → test → build → docker (smoke test + push to GHCR)
 - **lint**: golangci-lint v1.64.0
 - **test**: `CGO_ENABLED=1 go test -race` with coverage threshold enforcement
 - **build**: `CGO_ENABLED=1 go build -trimpath` for both binaries
-- **docker**: multi-stage image build, smoke test (verifies AWG interface creation and gRPC server startup), push to `ghcr.io/thebtf/awg-mesh` on master
+- **docker**: multi-stage image build, smoke test (verifies AWG interface creation and gRPC server startup), push to `ghcr.io/coonfuuseed-paandaa/awg-mesh` on master
 
 ## Contributing
 

@@ -2,7 +2,7 @@
 
 package node
 
-import grpcserver "github.com/thebtf/awg-mesh/pkg/grpc"
+import grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 
 func newCaptureFunc() grpcserver.CaptureFunc {
 	return nil

@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog/log"
-	"github.com/thebtf/awg-mesh/pkg/awggen"
-	proto "github.com/thebtf/awg-mesh/proto"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 )
 
 // Tier2Rotation executes coordinated rotation of S1-S4 and H1-H4 across all masters.

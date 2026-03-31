@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/thebtf/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/vishvananda/netlink"
 )
 

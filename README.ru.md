@@ -1,10 +1,10 @@
 [English](README.md) | **Русский**
 
 <!-- BADGE_ROW -->
-[![CI](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/thebtf/awg-mesh/actions/workflows/build.yml)
+[![CI](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fthebtf%2Fawg--mesh-2496ED?logo=docker)](https://ghcr.io/thebtf/awg-mesh)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fcoonfuuseed-paandaa%2Fawg--mesh-2496ED?logo=docker)](https://ghcr.io/coonfuuseed-paandaa/awg-mesh)
 
 # awg-mesh
 
@@ -142,7 +142,7 @@ graph TB
 
 ```bash
 # 1. Установите mesh-ctl на своей машине администратора
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Создайте файл топологии (все поля описаны в разделе Конфигурация)
@@ -186,7 +186,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Установка mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 Бинарник окажется в `$(go env GOPATH)/bin`. Убедитесь, что эта директория есть в `PATH`:
@@ -230,7 +230,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Обновление mesh-ctl
 
 ```bash
-go install github.com/thebtf/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
 ```
 
 Директория состояния `~/.mesh-ctl/` (CA, токены, ключи, транспортные выделения) не затрагивается.
@@ -263,9 +263,9 @@ ssh master-02 'docker compose -f ru-master-02-docker-compose.yml pull && docker 
 ### Docker-образ
 
 ```
-ghcr.io/thebtf/awg-mesh:latest
-ghcr.io/thebtf/awg-mesh:v1.2.0
-ghcr.io/thebtf/awg-mesh:<commit-sha>
+ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
+ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
+ghcr.io/coonfuuseed-paandaa/awg-mesh:<commit-sha>
 ```
 
 - Размер: ~42 МБ (базовый образ Alpine)
@@ -287,7 +287,7 @@ ghcr.io/thebtf/awg-mesh:<commit-sha>
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/thebtf/awg-mesh:v1.2.0
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -873,7 +873,7 @@ lint → test → build → docker (smoke test + push to GHCR)
 - **lint**: golangci-lint v1.64.0
 - **test**: `CGO_ENABLED=1 go test -race` с проверкой порога покрытия
 - **build**: `CGO_ENABLED=1 go build -trimpath` для обоих бинарников
-- **docker**: многоэтапная сборка образа, smoke test (проверка создания AWG-интерфейса и запуска gRPC-сервера), push в `ghcr.io/thebtf/awg-mesh` на master
+- **docker**: многоэтапная сборка образа, smoke test (проверка создания AWG-интерфейса и запуска gRPC-сервера), push в `ghcr.io/coonfuuseed-paandaa/awg-mesh` на master
 
 ## Участие в разработке
 

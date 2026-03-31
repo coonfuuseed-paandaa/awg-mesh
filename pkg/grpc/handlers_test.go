@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/thebtf/awg-mesh/pkg/wg"
-	proto "github.com/thebtf/awg-mesh/proto"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

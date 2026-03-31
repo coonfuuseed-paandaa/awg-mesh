@@ -10,7 +10,7 @@ func TestGenerateDeployRSC(t *testing.T) {
 
 	script, err := GenerateDeployRSC(DeployScript{
 		ContainerName: "awg-client",
-		Image:         "ghcr.io/thebtf/awg-mesh:latest",
+		Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
 		Veth:          "veth-awg",
 		VethGateway:   "10.50.0.1",
 		OverlayIP:     "10.10.0.10",

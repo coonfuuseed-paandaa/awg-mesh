@@ -5,7 +5,7 @@ package node
 import (
 	"fmt"
 
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 type masterTunnelPlatformState struct{}

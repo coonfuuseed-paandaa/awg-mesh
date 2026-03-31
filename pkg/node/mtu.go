@@ -1,6 +1,6 @@
 package node
 
-import "github.com/thebtf/awg-mesh/pkg/topology"
+import "github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 
 const (
 	// MinMTU is the minimum allowed MTU (IPv6 minimum).

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thebtf/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 // composePath is the absolute path to the directory containing docker-compose.yml.
