@@ -44,3 +44,18 @@ func (f *NftablesFirewall) TeardownNAT() error                  { return errNotS
 func (f *NftablesFirewall) ClampMSSToPMTU() error               { return errNotSupported }
 func (f *NftablesFirewall) EnableStickyECMP(_ string) error     { return errNotSupported }
 func (f *NftablesFirewall) DisableStickyECMP(_ string) error    { return errNotSupported }
+
+// DSCPPolicy stub for non-Linux platforms.
+type DSCPPolicy struct {
+	DSCP    int
+	Fwmark  int
+	TableID int
+	Gateway string
+	Device  string
+}
+
+// SetupDSCPPolicyRouting is a no-op on non-Linux platforms.
+func SetupDSCPPolicyRouting(_ []DSCPPolicy) error { return errNotSupported }
+
+// TeardownDSCPPolicyRouting is a no-op on non-Linux platforms.
+func TeardownDSCPPolicyRouting() error { return errNotSupported }

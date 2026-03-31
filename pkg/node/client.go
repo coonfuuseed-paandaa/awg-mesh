@@ -57,6 +57,7 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("create client interfaces: %w", err)
 	}
 	defer func() {
+		c.teardownDSCPRouting()
 		if closeErr := c.closeInterfaces(); closeErr != nil {
 			c.node.logger.Warn().Err(closeErr).Msg("failed to close client interfaces")
 		}
@@ -64,6 +65,10 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 
 	if err := c.reconcileFromTransportState(); err != nil {
 		return fmt.Errorf("reconcile client transport state: %w", err)
+	}
+
+	if err := c.setupDSCPRouting(); err != nil {
+		c.node.logger.Warn().Err(err).Msg("setup DSCP policy routing failed (non-fatal)")
 	}
 
 	c.node.logger.Info().

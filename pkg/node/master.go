@@ -131,6 +131,13 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 		}
 	}
 
+	if err := m.setupDSCPRouting(); err != nil {
+		m.node.logger.Warn().Err(err).Msg("setup master DSCP policy routing failed (non-fatal)")
+	}
+	if err := m.setupExitMode(); err != nil {
+		m.node.logger.Warn().Err(err).Msg("setup master exit mode failed (non-fatal)")
+	}
+
 	hcCfg := HealthConfig{
 		Interval:         defaultHealthInterval,
 		Timeout:          defaultHealthTimeout,

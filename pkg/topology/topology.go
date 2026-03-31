@@ -45,6 +45,7 @@ type MasterNode struct {
 	ListenPort int      `yaml:"listen_port"`
 	GRPCPort   int      `yaml:"grpc_port,omitempty"`
 	Endpoints  []string `yaml:"endpoints"`
+	Exit       bool     `yaml:"exit,omitempty"`
 }
 
 // GRPCAddr returns host:grpc_port for this node (default 9090).
@@ -103,7 +104,23 @@ type ClientNode struct {
 	Host      string   `yaml:"host,omitempty"`
 	OverlayIP string   `yaml:"overlay_ip"`
 	GRPCPort  int      `yaml:"grpc_port,omitempty"`
-	Masters   []string `yaml:"masters"`
+	Masters         []string        `yaml:"masters"`
+	RoutingPolicies []RoutingPolicy `yaml:"routing_policies,omitempty"`
+	DNS             *DNSConfig      `yaml:"dns,omitempty"`
+}
+
+// RoutingPolicy defines a DSCP-to-target routing policy for client nodes.
+type RoutingPolicy struct {
+	Name    string   `yaml:"name"`
+	DSCP    int      `yaml:"dscp"`
+	Targets []string `yaml:"targets"`
+}
+
+// DNSConfig defines embedded DNS server settings for client nodes.
+type DNSConfig struct {
+	Zone     string `yaml:"zone"`
+	Listen   string `yaml:"listen,omitempty"`
+	Upstream string `yaml:"upstream,omitempty"`
 }
 
 // GRPCAddr returns host:grpc_port for this node (default 9090).

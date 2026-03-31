@@ -636,6 +636,105 @@ func (c *ClientRunner) healthTargets() []HealthTarget {
 	return targets
 }
 
+// setupDSCPRouting reads routing_policies from topology and sets up DSCP->fwmark->table policy routing.
+// It resolves per-policy gateway/device from transport state so that per-table default routes are created.
+func (c *ClientRunner) setupDSCPRouting() error {
+	if c.node.topology == nil {
+		return nil
+	}
+
+	client := c.node.topology.FindClient(c.node.config.Name)
+	if client == nil || len(client.RoutingPolicies) == 0 {
+		return nil
+	}
+
+	// Build transport link map: tunnel name -> (peerTransportIP, interface name).
+	type transportInfo struct {
+		gateway string
+		device  string
+	}
+	transportMap := make(map[string]transportInfo) // master/tunnel name -> transport info
+
+	state, stateErr := loadNodeTransportState(c.node.config.ConfigDir)
+	if stateErr == nil {
+		for _, tunnel := range state.Tunnels {
+			trimmedKey := strings.TrimSpace(tunnel.PeerPublicKey)
+			if trimmedKey == "" || strings.TrimSpace(tunnel.PeerTransportIP) == "" {
+				continue
+			}
+			c.platformState.mu.Lock()
+			link, exists := c.platformState.byKey[trimmedKey]
+			c.platformState.mu.Unlock()
+			if exists && link != nil && link.iface != nil {
+				transportMap[tunnel.Name] = transportInfo{
+					gateway: tunnel.PeerTransportIP,
+					device:  link.iface.Name(),
+				}
+			}
+		}
+	}
+
+	policies := make([]routing.DSCPPolicy, 0, len(client.RoutingPolicies))
+	for i, rp := range client.RoutingPolicies {
+		var gateway, device string
+
+		// For each routing policy, resolve targets -> master -> transport info.
+		for _, target := range rp.Targets {
+			// Check if target is a master (exit node) directly.
+			if c.node.topology.FindMaster(target) != nil {
+				if info, ok := transportMap[target]; ok {
+					gateway = info.gateway
+					device = info.device
+					break
+				}
+			}
+			// Check if target is an endpoint — find its parent master.
+			for _, m := range c.node.topology.Masters {
+				for _, ep := range m.Endpoints {
+					if ep == target {
+						if info, ok := transportMap[m.Name]; ok {
+							gateway = info.gateway
+							device = info.device
+						}
+						break
+					}
+				}
+				if gateway != "" {
+					break
+				}
+			}
+			if gateway != "" {
+				break
+			}
+		}
+
+		policies = append(policies, routing.DSCPPolicy{
+			DSCP:    rp.DSCP,
+			Fwmark:  rp.DSCP,       // Use DSCP value as fwmark
+			TableID: 100 + rp.DSCP, // Table IDs start at 100+DSCP
+			Gateway: gateway,
+			Device:  device,
+		})
+		c.node.logger.Info().
+			Str("policy", rp.Name).
+			Int("dscp", rp.DSCP).
+			Int("table", 100+rp.DSCP).
+			Str("gateway", gateway).
+			Str("device", device).
+			Int("index", i).
+			Msg("DSCP routing policy configured")
+	}
+
+	return routing.SetupDSCPPolicyRouting(policies)
+}
+
+// teardownDSCPRouting removes DSCP policy routing rules and nftables table on shutdown.
+func (c *ClientRunner) teardownDSCPRouting() {
+	if err := routing.TeardownDSCPPolicyRouting(); err != nil {
+		c.node.logger.Warn().Err(err).Msg("teardown DSCP policy routing failed")
+	}
+}
+
 func extractPeerEndpoint(endpointHost string) string {
 	trimmedEndpointHost := strings.TrimSpace(endpointHost)
 	if trimmedEndpointHost == "" {

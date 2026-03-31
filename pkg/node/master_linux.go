@@ -418,6 +418,48 @@ func (m *MasterRunner) masterHandshakeChecker() HandshakeChecker {
 	}
 }
 
+// setupExitMode enables masquerade on eth0 if this master has exit: true in topology.
+func (m *MasterRunner) setupExitMode() error {
+	if m.node.topology == nil {
+		return nil
+	}
+
+	master := m.node.topology.FindMaster(m.node.config.Name)
+	if master == nil || !master.Exit {
+		return nil
+	}
+
+	fw, err := routing.NewNftablesFirewall()
+	if err != nil {
+		return fmt.Errorf("create nftables firewall for exit mode: %w", err)
+	}
+
+	if err := fw.SetupNAT("eth0"); err != nil {
+		return fmt.Errorf("setup exit NAT on eth0: %w", err)
+	}
+
+	m.node.logger.Info().Msg("master exit mode enabled: masquerade on eth0")
+	return nil
+}
+
+// setupDSCPRouting reads routing_policies from topology and sets up DSCP->fwmark->table policy routing.
+// Masters don't have routing_policies directly — they read DSCP from incoming
+// WG packets and apply the same fwmark->table routing as clients.
+// For now, masters rely on overlay routing; DSCP forwarding
+// is handled by the existing ECMP/overlay route table.
+func (m *MasterRunner) setupDSCPRouting() error {
+	if m.node.topology == nil {
+		return nil
+	}
+
+	master := m.node.topology.FindMaster(m.node.config.Name)
+	if master == nil {
+		return nil
+	}
+
+	return nil
+}
+
 func (m *MasterRunner) closeTunnelInterface(tunnel *MasterTunnel) error {
 	if tunnel == nil || tunnel.platformState.iface == nil {
 		return nil

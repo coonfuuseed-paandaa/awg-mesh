@@ -46,6 +46,9 @@ func (m *MasterRunner) masterHandshakeChecker() HandshakeChecker {
 	return nil
 }
 
+func (m *MasterRunner) setupExitMode() error   { return nil }
+func (m *MasterRunner) setupDSCPRouting() error { return nil }
+
 func (m *MasterRunner) rebuildECMP(balancerIP string) {}
 
 func (m *MasterRunner) removeOverlayRoute(overlayIP string) {}

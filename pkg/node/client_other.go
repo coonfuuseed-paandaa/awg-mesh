@@ -61,4 +61,8 @@ func (c *ClientRunner) startHealthCheck(_ context.Context) {}
 
 func (c *ClientRunner) rebuildECMP(_ string) error { return nil }
 
+func (c *ClientRunner) setupDSCPRouting() error { return nil }
+
+func (c *ClientRunner) teardownDSCPRouting() {}
+
 func (c *ClientRunner) SetBalancerIP(_, _ string) {}
