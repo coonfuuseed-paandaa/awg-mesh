@@ -91,7 +91,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Build Docker Image
-        run: docker build -f deploy/Dockerfile --build-arg VERSION=${{ github.sha }} -t awg-mesh-node:ci .
+        run: docker build -f deploy/Dockerfile.node --build-arg VERSION=${{ github.sha }} -t awg-mesh-node:ci .
 
       - name: Smoke Test
         run: |
