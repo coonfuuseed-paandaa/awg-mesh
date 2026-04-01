@@ -179,7 +179,7 @@ func TestNodeRunValidation(t *testing.T) {
 		t.Fatalf("NewNode returned error: %v", err)
 	}
 
-	err = nodeValue.Run(nil)
+	err = nodeValue.Run(context.TODO())
 	if err == nil || !strings.Contains(err.Error(), "context is required") {
 		t.Fatalf("expected context-required error, got %v", err)
 	}
