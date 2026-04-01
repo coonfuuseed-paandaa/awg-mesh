@@ -14,7 +14,7 @@ func TestNewForwarder(t *testing.T) {
 	if err != nil {
 		t.Skipf("eBPF not available (need CAP_BPF or root): %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if f.fwdMap == nil {
 		t.Fatal("expected fwd_map to be created")
@@ -28,7 +28,7 @@ func TestForwarderSetDeleteRoute(t *testing.T) {
 	if err != nil {
 		t.Skipf("eBPF not available: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ip := net.ParseIP("172.20.70.34").To4()
 	ifindex := 5
@@ -59,7 +59,7 @@ func TestForwarderSetRouteInvalidIP(t *testing.T) {
 	if err != nil {
 		t.Skipf("eBPF not available: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// IPv6 address should fail
 	if err := f.SetRoute(net.ParseIP("::1"), 1); err == nil {
@@ -74,7 +74,7 @@ func TestForwarderAttachWithoutProgram(t *testing.T) {
 	if err != nil {
 		t.Skipf("eBPF not available: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Attach without program loaded should be no-op (graceful degradation)
 	if err := f.Attach("lo"); err != nil {

@@ -179,6 +179,7 @@ func TestNodeRunValidation(t *testing.T) {
 		t.Fatalf("NewNode returned error: %v", err)
 	}
 
+	//nolint:staticcheck // SA1012: intentionally passing nil to test nil-context guard
 	err = nodeValue.Run(nil)
 	if err == nil || !strings.Contains(err.Error(), "context is required") {
 		t.Fatalf("expected context-required error, got %v", err)
@@ -227,6 +228,9 @@ func TestNodeRunClientAndEndpoint(t *testing.T) {
 }
 
 func TestMasterRunnerTunnelLifecycle(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (TUN device creation)")
+	}
 	t.Parallel()
 
 	nodeValue, err := NewNode(NodeConfig{
@@ -430,6 +434,9 @@ func TestTransportStatePreservesOverlayAndBalancerIP(t *testing.T) {
 }
 
 func TestAddTunnelInitiallyUnhealthy(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (TUN device creation)")
+	}
 	t.Parallel()
 
 	dir := t.TempDir()

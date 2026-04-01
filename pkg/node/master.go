@@ -297,9 +297,9 @@ func (m *MasterRunner) RemoveTunnel(name string) error {
 	// Clean up eBPF forwarding before removing routes.
 	if m.forwarder != nil && tunnel.OverlayIP != "" {
 		if overlayAddr := net.ParseIP(tunnel.OverlayIP); overlayAddr != nil {
-			m.forwarder.DeleteRoute(overlayAddr)
+			_ = m.forwarder.DeleteRoute(overlayAddr)
 		}
-		m.forwarder.Detach(tunnel.InterfaceName)
+		_ = m.forwarder.Detach(tunnel.InterfaceName)
 	}
 
 	// Clean up routing state before closing the interface.

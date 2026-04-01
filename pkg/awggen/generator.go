@@ -170,7 +170,7 @@ func validatePresetRanges(preset *Preset) error {
 		return fmt.Errorf("invalid H range: HMin (%d) > HMax (%d)", preset.HMin, preset.HMax)
 	}
 	if preset.HMax-preset.HMin+1 < headerSegmentCount {
-		return fmt.Errorf("H range must contain at least %d values: [%d, %d]", headerSegmentCount, preset.HMin, preset.HMax)
+		return fmt.Errorf("h range must contain at least %d values: [%d, %d]", headerSegmentCount, preset.HMin, preset.HMax)
 	}
 
 	return nil

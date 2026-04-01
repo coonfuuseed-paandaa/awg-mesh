@@ -188,7 +188,7 @@ func PingICMP(ctx context.Context, ip string, timeout time.Duration) (bool, erro
 	if err != nil {
 		return false, fmt.Errorf("icmp listen: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	deadline := time.Now().Add(timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {

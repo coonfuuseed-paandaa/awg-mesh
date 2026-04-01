@@ -164,7 +164,7 @@ func (r *NetlinkRouter) AddrExists(ifaceName string, addr *net.IPNet) (bool, err
 	}
 
 	for _, existing := range addrs {
-		if existing.IPNet.IP.Equal(addr.IP) {
+		if existing.IP.Equal(addr.IP) {
 			return true, nil
 		}
 	}

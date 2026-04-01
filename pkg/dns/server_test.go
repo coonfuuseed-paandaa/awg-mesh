@@ -24,7 +24,7 @@ func startTestServer(t *testing.T, records []Record) (string, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		srv.Start(ctx)
+		_ = srv.Start(ctx)
 	}()
 
 	// Wait for server to be ready
@@ -112,7 +112,7 @@ func TestDNSServerUpdateRecords(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go srv.Start(ctx)
+	go func() { _ = srv.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	// Update records

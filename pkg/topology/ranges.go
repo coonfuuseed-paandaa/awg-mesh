@@ -122,11 +122,12 @@ func prefixLastAddr(prefix netip.Prefix) netip.Addr {
 
 		hostBits := 32 - maskedPrefix.Bits()
 		var hostMask uint32
-		if hostBits == 32 {
+		switch hostBits {
+		case 32:
 			hostMask = ^uint32(0)
-		} else if hostBits == 0 {
+		case 0:
 			hostMask = 0
-		} else {
+		default:
 			hostMask = (uint32(1) << uint(hostBits)) - 1
 		}
 
