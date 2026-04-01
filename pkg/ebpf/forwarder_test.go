@@ -74,7 +74,7 @@ func TestForwarderAttachWithoutProgram(t *testing.T) {
 	if err != nil {
 		t.Skipf("eBPF not available: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Attach without program loaded should be no-op (graceful degradation)
 	if err := f.Attach("lo"); err != nil {

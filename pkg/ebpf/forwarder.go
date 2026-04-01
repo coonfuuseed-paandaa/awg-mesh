@@ -137,12 +137,12 @@ func (f *Forwarder) Close() error {
 	defer f.mu.Unlock()
 
 	for name, l := range f.attached {
-		l.Close()
+		_ = l.Close()
 		delete(f.attached, name)
 	}
 
 	if f.program != nil {
-		f.program.Close()
+		_ = f.program.Close()
 		f.program = nil
 	}
 

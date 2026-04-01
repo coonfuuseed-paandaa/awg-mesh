@@ -112,7 +112,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("dns server failed: %w", err)
 	case <-ctx.Done():
 		if s.server != nil {
-			s.server.Shutdown()
+			_ = s.server.Shutdown()
 		}
 		return nil
 	}
