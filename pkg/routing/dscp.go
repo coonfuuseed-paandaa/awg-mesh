@@ -101,7 +101,7 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 	for _, p := range policies {
 		// ip rule add fwmark <mark> lookup <table>
 		rule := netlink.NewRule()
-		rule.Mark = p.Fwmark
+		rule.Mark = uint32(p.Fwmark)
 		rule.Table = p.TableID
 		rule.Priority = 100 + p.DSCP
 		if err := netlink.RuleAdd(rule); err != nil {
