@@ -76,7 +76,7 @@ func ParseConfigFile(path string) (*Config, []PeerConfig, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open config file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	cfg := &Config{}
 	peers := make([]PeerConfig, 0)

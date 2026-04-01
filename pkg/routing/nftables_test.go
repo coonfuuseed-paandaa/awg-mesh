@@ -32,7 +32,7 @@ func TestNftablesSetupAndTeardownNAT(t *testing.T) {
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
 	}
-	defer fw.TeardownNAT()
+	defer func() { _ = fw.TeardownNAT() }()
 
 	if err := fw.SetupNAT("lo"); err != nil {
 		t.Fatalf("SetupNAT: %v", err)
@@ -53,7 +53,7 @@ func TestNftablesClampMSSToPMTU(t *testing.T) {
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
 	}
-	defer fw.TeardownNAT()
+	defer func() { _ = fw.TeardownNAT() }()
 
 	if err := fw.ClampMSSToPMTU(); err != nil {
 		t.Fatalf("ClampMSSToPMTU: %v", err)
@@ -69,7 +69,7 @@ func TestNftablesEnableStickyECMP(t *testing.T) {
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
 	}
-	defer fw.TeardownNAT()
+	defer func() { _ = fw.TeardownNAT() }()
 
 	if err := fw.EnableStickyECMP("172.20.70.1/32"); err != nil {
 		t.Fatalf("EnableStickyECMP: %v", err)

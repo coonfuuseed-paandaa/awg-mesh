@@ -59,7 +59,7 @@ func NewInterface(name string, mtu int, logger *device.Logger) (*Interface, erro
 		return nil, fmt.Errorf("create UAPI listener: %w", err)
 	}
 	if closeErr != nil {
-		uapiListener.Close()
+		_ = uapiListener.Close()
 		dev.Close()
 		return nil, fmt.Errorf("close UAPI file: %w", closeErr)
 	}
@@ -84,7 +84,7 @@ func (iface *Interface) serveUAPI() {
 		if err != nil {
 			return
 		}
-		conn.SetDeadline(time.Now().Add(uapiConnectionTimeout))
+		_ = conn.SetDeadline(time.Now().Add(uapiConnectionTimeout))
 		go iface.dev.IpcHandle(conn)
 	}
 }

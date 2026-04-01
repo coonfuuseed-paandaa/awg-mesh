@@ -179,7 +179,8 @@ func TestNodeRunValidation(t *testing.T) {
 		t.Fatalf("NewNode returned error: %v", err)
 	}
 
-	err = nodeValue.Run(context.TODO())
+	//nolint:staticcheck // SA1012: intentionally passing nil to test nil-context guard
+	err = nodeValue.Run(nil)
 	if err == nil || !strings.Contains(err.Error(), "context is required") {
 		t.Fatalf("expected context-required error, got %v", err)
 	}

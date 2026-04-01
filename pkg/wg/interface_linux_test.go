@@ -22,8 +22,8 @@ func TestSetDeadlineOnConnection(t *testing.T) {
 
 	// Create a pipe to simulate a connection
 	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
 
 	// Verify SetDeadline doesn't error
 	deadline := time.Now().Add(uapiConnectionTimeout)
