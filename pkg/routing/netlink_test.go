@@ -4,6 +4,7 @@ package routing
 
 import (
 	"net"
+	"os"
 	"testing"
 )
 
@@ -16,6 +17,9 @@ func TestNewNetlinkRouter(t *testing.T) {
 }
 
 func TestLinkSetUpLoopback(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (netlink operations)")
+	}
 	t.Parallel()
 	r := NewNetlinkRouter()
 	// lo is always present and UP — should be idempotent

@@ -227,6 +227,9 @@ func TestNodeRunClientAndEndpoint(t *testing.T) {
 }
 
 func TestMasterRunnerTunnelLifecycle(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (TUN device creation)")
+	}
 	t.Parallel()
 
 	nodeValue, err := NewNode(NodeConfig{
@@ -430,6 +433,9 @@ func TestTransportStatePreservesOverlayAndBalancerIP(t *testing.T) {
 }
 
 func TestAddTunnelInitiallyUnhealthy(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (TUN device creation)")
+	}
 	t.Parallel()
 
 	dir := t.TempDir()

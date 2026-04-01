@@ -3,10 +3,14 @@
 package routing
 
 import (
+	"os"
 	"testing"
 )
 
 func TestNewNftablesFirewall(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (nftables)")
+	}
 	t.Parallel()
 	fw, err := NewNftablesFirewall()
 	if err != nil {
@@ -20,6 +24,9 @@ func TestNewNftablesFirewall(t *testing.T) {
 }
 
 func TestNftablesSetupAndTeardownNAT(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (nftables)")
+	}
 	t.Parallel()
 	fw, err := NewNftablesFirewall()
 	if err != nil {
@@ -38,6 +45,9 @@ func TestNftablesSetupAndTeardownNAT(t *testing.T) {
 }
 
 func TestNftablesClampMSSToPMTU(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (nftables)")
+	}
 	t.Parallel()
 	fw, err := NewNftablesFirewall()
 	if err != nil {
@@ -51,6 +61,9 @@ func TestNftablesClampMSSToPMTU(t *testing.T) {
 }
 
 func TestNftablesEnableStickyECMP(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (nftables)")
+	}
 	t.Parallel()
 	fw, err := NewNftablesFirewall()
 	if err != nil {
@@ -64,6 +77,9 @@ func TestNftablesEnableStickyECMP(t *testing.T) {
 }
 
 func TestNftablesTeardownIdempotent(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (nftables)")
+	}
 	t.Parallel()
 	fw, err := NewNftablesFirewall()
 	if err != nil {
