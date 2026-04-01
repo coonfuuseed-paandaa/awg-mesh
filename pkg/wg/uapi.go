@@ -49,7 +49,7 @@ func (c *UAPIClient) ConfigureDevice(name string, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("dial uapi socket: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := io.WriteString(conn, "set=1\n"); err != nil {
 		return fmt.Errorf("write uapi set header: %w", err)
@@ -78,7 +78,7 @@ func (c *UAPIClient) Device(name string) (*Device, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial uapi socket: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := io.WriteString(conn, "get=1\n\n"); err != nil {
 		return nil, fmt.Errorf("write uapi get command: %w", err)

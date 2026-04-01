@@ -561,7 +561,7 @@ func (c *ClientRunner) rebuildECMP(balancerIP string) error {
 	if len(nexthops) == 0 {
 		fw, fwErr := routing.NewNftablesFirewall()
 		if fwErr == nil {
-			fw.DisableStickyECMP(cidr)
+			_ = fw.DisableStickyECMP(cidr)
 		}
 		if destNet != nil {
 			if err := router.RemoveECMPRoute(destNet); err != nil {

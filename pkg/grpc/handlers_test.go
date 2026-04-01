@@ -73,9 +73,7 @@ func (m *testTunnelManager) AddTunnel(
 
 func (m *testTunnelManager) ListTunnels() []TunnelInfo {
 	result := make([]TunnelInfo, 0, len(m.listTunnels))
-	for _, tunnel := range m.listTunnels {
-		result = append(result, tunnel)
-	}
+	result = append(result, m.listTunnels...)
 	return result
 }
 

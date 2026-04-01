@@ -323,7 +323,7 @@ func TestConfigureDeviceAndDeviceOverUnixSocket(t *testing.T) {
 	if err != nil {
 		t.Skipf("unix sockets unavailable on this platform: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	done := make(chan error, 1)
 	go func() {
@@ -332,7 +332,7 @@ func TestConfigureDeviceAndDeviceOverUnixSocket(t *testing.T) {
 			done <- acceptErr
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		reader := bufio.NewReader(conn)
 		var requestBuilder strings.Builder
@@ -379,7 +379,7 @@ func TestConfigureDeviceAndDeviceOverUnixSocket(t *testing.T) {
 			getDone <- acceptErr
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		buffer := make([]byte, 128)
 		n, readErr := conn.Read(buffer)

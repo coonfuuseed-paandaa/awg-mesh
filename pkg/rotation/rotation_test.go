@@ -391,6 +391,7 @@ func TestNilContextPreventsExecution(t *testing.T) {
 		{
 			name: "tier2 nil context",
 			execution: func() error {
+				//nolint:staticcheck // SA1012: intentionally passing nil to test nil-context guard
 				return NewTier2Rotation().Execute(nil, map[string]proto.AwgAgentClient{"a": &mockAwgAgentClient{}}, "tunnel", &awggen.Params{})
 			},
 			contains: "context is required",
@@ -402,6 +403,7 @@ func TestNilContextPreventsExecution(t *testing.T) {
 				for i := range key {
 					key[i] = 1
 				}
+				//nolint:staticcheck // SA1012: intentionally passing nil to test nil-context guard
 				return NewTier3Rotation().Execute(nil, &mockAwgAgentClient{}, "tunnel", &awggen.Params{}, key)
 			},
 			contains: "context is required",
