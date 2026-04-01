@@ -1,0 +1,26 @@
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 go build -tags nocapture -trimpath -ldflags "-s -w" -o /build/bin/awg-mesh-node ./cmd/awg-mesh-node
+
+FROM alpine:3.21
+
+RUN apk add --no-cache iproute2
+
+COPY --from=builder /build/bin/awg-mesh-node /usr/local/bin/awg-mesh-node
+
+RUN mkdir -p /config
+
+VOLUME ["/config"]
+
+EXPOSE 51820/udp 9090 9091 53/udp
+
+# Runs as root: required for nftables, ip rule, TUN device management.
+# Use --cap-add=NET_ADMIN --cap-add=NET_RAW in docker-compose.
+ENTRYPOINT ["/usr/local/bin/awg-mesh-node"]
