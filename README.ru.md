@@ -2,9 +2,11 @@
 
 <!-- BADGE_ROW -->
 [![CI](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/coonfuuseed-paandaa/awg-mesh?logo=github)](https://github.com/coonfuuseed-paandaa/awg-mesh/releases)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fcoonfuuseed-paandaa%2Fawg--mesh-2496ED?logo=docker)](https://ghcr.io/coonfuuseed-paandaa/awg-mesh)
+[![GHCR](https://img.shields.io/badge/GHCR-awg--mesh-2496ED?logo=docker)](https://github.com/coonfuuseed-paandaa/awg-mesh/pkgs/container/awg-mesh)
+[![Docker Hub](https://img.shields.io/badge/Docker_Hub-awg--mesh-2496ED?logo=docker)](https://hub.docker.com/r/coonfuuseedpaandaa/awg-mesh)
 
 # awg-mesh
 
