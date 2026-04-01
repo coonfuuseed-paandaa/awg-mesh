@@ -434,11 +434,12 @@ func (m *MasterRunner) setupExitMode() error {
 		return fmt.Errorf("create nftables firewall for exit mode: %w", err)
 	}
 
-	if err := fw.SetupNAT("eth0"); err != nil {
-		return fmt.Errorf("setup exit NAT on eth0: %w", err)
+	wanIface := discoverWANInterface()
+	if err := fw.SetupNAT(wanIface); err != nil {
+		return fmt.Errorf("setup exit NAT on %s: %w", wanIface, err)
 	}
 
-	m.node.logger.Info().Msg("master exit mode enabled: masquerade on eth0")
+	m.node.logger.Info().Str("wan_interface", wanIface).Msg("master exit mode enabled: masquerade on WAN interface")
 	return nil
 }
 
