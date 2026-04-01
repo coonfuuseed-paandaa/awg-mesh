@@ -74,6 +74,7 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 	c.node.logger.Info().
 		Str("public_key", publicKey.String()).
 		Msg("client runner started")
+	c.node.logger.Info().Str("wan_interface", discoverWANInterface()).Msg("WAN interface discovered")
 
 	c.startHealthCheck(ctx)
 

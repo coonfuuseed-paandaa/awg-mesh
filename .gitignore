@@ -40,3 +40,4 @@ TECHNICAL_DEBT.md
 *-docker-compose.yml
 .audit*
 audit_*
+.mcp.json

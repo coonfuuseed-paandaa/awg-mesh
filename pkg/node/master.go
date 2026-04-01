@@ -92,6 +92,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 		Str("overlay_ip", m.node.config.OverlayIP).
 		Str("public_key", publicKey.String()).
 		Msg("master runner started")
+	m.node.logger.Info().Str("wan_interface", discoverWANInterface()).Msg("WAN interface discovered")
 
 	if state, err := loadNodeTransportState(m.node.config.ConfigDir); err == nil && len(state.Tunnels) > 0 {
 		reconciled := 0
