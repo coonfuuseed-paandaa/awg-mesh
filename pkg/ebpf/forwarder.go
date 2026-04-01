@@ -147,7 +147,7 @@ func (f *Forwarder) Close() error {
 	}
 
 	if f.fwdMap != nil {
-		f.fwdMap.Close()
+		_ = f.fwdMap.Close()
 		f.fwdMap = nil
 	}
 

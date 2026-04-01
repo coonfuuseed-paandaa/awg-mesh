@@ -20,7 +20,7 @@ func TestNewNftablesFirewall(t *testing.T) {
 		t.Fatal("expected non-nil firewall")
 	}
 	// Clean up
-	fw.TeardownNAT()
+	_ = fw.TeardownNAT()
 }
 
 func TestNftablesSetupAndTeardownNAT(t *testing.T) {
