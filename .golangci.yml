@@ -1,0 +1,13 @@
+version: "2"
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.PacketConn).Close
+        - (*os.File).Close
+        - (*net.UDPConn).Close
+        - (net.Conn).SetDeadline
