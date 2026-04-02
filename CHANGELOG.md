@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-04-02
+
+### Added
+- Two Docker images: `awg-mesh-client` (CGO-free, ~15 MB) and `awg-mesh-node` (full, ~42 MB)
+- WAN interface auto-discovery via netlink default route (MikroTik ROS 7.20+ compatible)
+- `MESH_INTERFACE` environment variable for manual interface override
+- Client state persistence to `/config/client-state.yml` for zero-config restart
+- `nocapture` build tag for CGO_ENABLED=0 client binary builds
+- CI matrix: parallel builds for client and node images with separate smoke tests
+- ADR-0001: Multi-Image Docker Strategy
+- ADR-0002: MikroTik VETH Interface Discovery
+
+### Changed
+- Dockerfile renamed to Dockerfile.node
+- Docker CI builds both images in matrix
+- `awg-mesh:latest` is now an alias for `awg-mesh-node:latest`
+
+### Fixed
+- Hardcoded `eth0` in master exit mode replaced with auto-discovered interface
+- golangci-lint updated to v2.11.4 (Go 1.25 compatible)
+- Root skip guards added to privileged tests for CI compatibility
+- All errcheck findings resolved for golangci-lint v2
+
+---
+
 ## [1.2.0] - 2026-03-31
 
 ### Added
@@ -258,7 +283,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v0.9.0...v1.0.0
