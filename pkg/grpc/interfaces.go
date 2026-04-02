@@ -62,6 +62,11 @@ type CaptureScheduler interface {
 	StopSchedule()
 }
 
+// ClientStateSaver persists client-mode state after peer configuration changes.
+type ClientStateSaver interface {
+	SaveClientState() error
+}
+
 type TunnelInfo struct {
 	Name          string
 	OverlayIP     string

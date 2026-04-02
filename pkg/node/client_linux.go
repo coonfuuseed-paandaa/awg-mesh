@@ -13,6 +13,7 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/dns"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
@@ -636,15 +637,29 @@ func (c *ClientRunner) healthTargets() []HealthTarget {
 	return targets
 }
 
-// setupDSCPRouting reads routing_policies from topology and sets up DSCP->fwmark->table policy routing.
-// It resolves per-policy gateway/device from transport state so that per-table default routes are created.
+// setupDSCPRouting reads routing policies from topology (or persisted client state on restart)
+// and sets up DSCP->fwmark->table policy routing. It resolves per-policy gateway/device from
+// transport state so that per-table default routes are created.
 func (c *ClientRunner) setupDSCPRouting() error {
-	if c.node.topology == nil {
-		return nil
-	}
+	// Determine routing policy source: topology takes precedence, clientState is fallback on restart.
+	var routingPolicies []RoutingPolicyState
 
-	client := c.node.topology.FindClient(c.node.config.Name)
-	if client == nil || len(client.RoutingPolicies) == 0 {
+	if c.node.topology != nil {
+		client := c.node.topology.FindClient(c.node.config.Name)
+		if client == nil || len(client.RoutingPolicies) == 0 {
+			return nil
+		}
+		routingPolicies = make([]RoutingPolicyState, 0, len(client.RoutingPolicies))
+		for _, rp := range client.RoutingPolicies {
+			routingPolicies = append(routingPolicies, RoutingPolicyState{
+				Name:    rp.Name,
+				DSCP:    rp.DSCP,
+				Targets: append([]string(nil), rp.Targets...),
+			})
+		}
+	} else if c.clientState != nil && len(c.clientState.RoutingPolicies) > 0 {
+		routingPolicies = c.clientState.RoutingPolicies
+	} else {
 		return nil
 	}
 
@@ -653,7 +668,7 @@ func (c *ClientRunner) setupDSCPRouting() error {
 		gateway string
 		device  string
 	}
-	transportMap := make(map[string]transportInfo) // master/tunnel name -> transport info
+	transportMap := make(map[string]transportInfo)
 
 	state, stateErr := loadNodeTransportState(c.node.config.ConfigDir)
 	if stateErr == nil {
@@ -674,33 +689,33 @@ func (c *ClientRunner) setupDSCPRouting() error {
 		}
 	}
 
-	policies := make([]routing.DSCPPolicy, 0, len(client.RoutingPolicies))
-	for i, rp := range client.RoutingPolicies {
+	policies := make([]routing.DSCPPolicy, 0, len(routingPolicies))
+	for i, rp := range routingPolicies {
 		var gateway, device string
 
-		// For each routing policy, resolve targets -> master -> transport info.
+		// For each routing policy, resolve targets -> master/tunnel -> transport info.
 		for _, target := range rp.Targets {
-			// Check if target is a master (exit node) directly.
-			if c.node.topology.FindMaster(target) != nil {
-				if info, ok := transportMap[target]; ok {
-					gateway = info.gateway
-					device = info.device
-					break
-				}
+			// Try the target name directly as a tunnel/master name in the transport map.
+			if info, ok := transportMap[target]; ok {
+				gateway = info.gateway
+				device = info.device
+				break
 			}
-			// Check if target is an endpoint — find its parent master.
-			for _, m := range c.node.topology.Masters {
-				for _, ep := range m.Endpoints {
-					if ep == target {
-						if info, ok := transportMap[m.Name]; ok {
-							gateway = info.gateway
-							device = info.device
+			// When topology is available, also check endpoint -> parent master resolution.
+			if c.node.topology != nil {
+				for _, m := range c.node.topology.Masters {
+					for _, ep := range m.Endpoints {
+						if ep == target {
+							if info, ok := transportMap[m.Name]; ok {
+								gateway = info.gateway
+								device = info.device
+							}
+							break
 						}
+					}
+					if gateway != "" {
 						break
 					}
-				}
-				if gateway != "" {
-					break
 				}
 			}
 			if gateway != "" {
@@ -726,6 +741,126 @@ func (c *ClientRunner) setupDSCPRouting() error {
 	}
 
 	return routing.SetupDSCPPolicyRouting(policies)
+}
+
+// SaveClientState persists current client configuration to disk for restart recovery.
+// Implements grpcserver.ClientStateSaver. Safe to call when topology is nil (returns nil).
+func (c *ClientRunner) SaveClientState() error {
+	if c == nil || c.node == nil {
+		return nil
+	}
+	if c.node.topology == nil {
+		return nil
+	}
+
+	client := c.node.topology.FindClient(c.node.config.Name)
+	if client == nil {
+		return nil
+	}
+
+	routingPolicies := make([]RoutingPolicyState, 0, len(client.RoutingPolicies))
+	for _, rp := range client.RoutingPolicies {
+		routingPolicies = append(routingPolicies, RoutingPolicyState{
+			Name:    rp.Name,
+			DSCP:    rp.DSCP,
+			Targets: append([]string(nil), rp.Targets...),
+		})
+	}
+
+	masters := make([]NodeRef, 0, len(c.node.topology.Masters))
+	for _, m := range c.node.topology.Masters {
+		masters = append(masters, NodeRef{Name: m.Name, OverlayIP: m.OverlayIP})
+	}
+
+	endpoints := make([]NodeRef, 0, len(c.node.topology.Endpoints))
+	for _, ep := range c.node.topology.Endpoints {
+		endpoints = append(endpoints, NodeRef{Name: ep.Name, OverlayIP: ep.OverlayIP})
+	}
+
+	var dnsState *DNSState
+	if client.DNS != nil {
+		dnsState = &DNSState{
+			Zone:     client.DNS.Zone,
+			Listen:   client.DNS.Listen,
+			Upstream: client.DNS.Upstream,
+		}
+	}
+
+	state := ClientState{
+		OverlayIP:       c.node.config.OverlayIP,
+		RoutingPolicies: routingPolicies,
+		DNS:             dnsState,
+		Masters:         masters,
+		Endpoints:       endpoints,
+	}
+
+	if err := saveClientState(c.node.config.ConfigDir, state); err != nil {
+		return fmt.Errorf("save client state: %w", err)
+	}
+	c.node.logger.Info().Str("overlay_ip", state.OverlayIP).Msg("client state saved")
+	return nil
+}
+
+// startDNSServer starts the embedded DNS server if DNS is configured in the topology or
+// persisted client state. No-op if no DNS configuration is available.
+func (c *ClientRunner) startDNSServer(ctx context.Context) {
+	var dnsZone, dnsListen, dnsUpstream string
+	nodeMap := make(map[string]string) // name -> overlayIP
+
+	if c.node.topology != nil {
+		client := c.node.topology.FindClient(c.node.config.Name)
+		if client != nil && client.DNS != nil {
+			dnsZone = client.DNS.Zone
+			dnsListen = client.DNS.Listen
+			dnsUpstream = client.DNS.Upstream
+		}
+		if strings.TrimSpace(dnsZone) != "" {
+			for _, m := range c.node.topology.Masters {
+				if m.OverlayIP != "" {
+					nodeMap[m.Name] = m.OverlayIP
+				}
+			}
+			for _, ep := range c.node.topology.Endpoints {
+				if ep.OverlayIP != "" {
+					nodeMap[ep.Name] = ep.OverlayIP
+				}
+			}
+		}
+	} else if c.clientState != nil && c.clientState.DNS != nil {
+		dnsZone = c.clientState.DNS.Zone
+		dnsListen = c.clientState.DNS.Listen
+		dnsUpstream = c.clientState.DNS.Upstream
+		if strings.TrimSpace(dnsZone) != "" {
+			for _, ref := range c.clientState.Masters {
+				if ref.OverlayIP != "" {
+					nodeMap[ref.Name] = ref.OverlayIP
+				}
+			}
+			for _, ref := range c.clientState.Endpoints {
+				if ref.OverlayIP != "" {
+					nodeMap[ref.Name] = ref.OverlayIP
+				}
+			}
+		}
+	}
+
+	if strings.TrimSpace(dnsZone) == "" {
+		return
+	}
+
+	records := dns.BuildZoneRecords(dnsZone, nodeMap)
+	server := dns.NewServer(dnsZone, dnsListen, dnsUpstream, records)
+	if server == nil {
+		return
+	}
+
+	c.node.logger.Info().Str("zone", dnsZone).Str("listen", dnsListen).Msg("starting DNS server")
+
+	go func() {
+		if err := server.Start(ctx); err != nil {
+			c.node.logger.Warn().Err(err).Msg("DNS server stopped")
+		}
+	}()
 }
 
 // teardownDSCPRouting removes DSCP policy routing rules and nftables table on shutdown.
