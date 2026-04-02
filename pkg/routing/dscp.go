@@ -93,6 +93,92 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 		})
 	}
 
+	// Connmark restore chain: for ESTABLISHED/RELATED connections, restore
+	// fwmark from connmark so reply packets use the same policy route as the
+	// original DSCP-marked packet. Without this, return traffic falls through
+	// to the default route because replies typically have DSCP 0.
+	restoreChain := conn.AddChain(&nftables.Chain{
+		Name:     "connmark_restore",
+		Table:    table,
+		Type:     nftables.ChainTypeFilter,
+		Hooknum:  nftables.ChainHookPrerouting,
+		Priority: nftables.ChainPriorityMangle,
+	})
+
+	conn.AddRule(&nftables.Rule{
+		Table: table,
+		Chain: restoreChain,
+		Exprs: []expr.Any{
+			// ct state established,related
+			&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
+			&expr.Bitwise{
+				SourceRegister: 1,
+				DestRegister:   1,
+				Len:            4,
+				Mask:           []byte{0x06, 0x00, 0x00, 0x00}, // ESTABLISHED|RELATED
+				Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+			},
+			&expr.Cmp{
+				Op:       expr.CmpOpNeq,
+				Register: 1,
+				Data:     []byte{0x00, 0x00, 0x00, 0x00},
+			},
+			// meta mark set ct mark (restore connmark → fwmark)
+			&expr.Ct{
+				Key:            expr.CtKeyMARK,
+				Register:       1,
+				SourceRegister: false,
+			},
+			&expr.Meta{
+				Key:            expr.MetaKeyMARK,
+				SourceRegister: true,
+				Register:       1,
+			},
+		},
+	})
+
+	// Connmark save chain: for NEW connections with a fwmark set by the
+	// dscp_mark chain, save fwmark to connmark so it persists across packets
+	// in the same connection (used by connmark_restore above).
+	saveChain := conn.AddChain(&nftables.Chain{
+		Name:     "connmark_save",
+		Table:    table,
+		Type:     nftables.ChainTypeFilter,
+		Hooknum:  nftables.ChainHookPostrouting,
+		Priority: nftables.ChainPriorityMangle,
+	})
+
+	conn.AddRule(&nftables.Rule{
+		Table: table,
+		Chain: saveChain,
+		Exprs: []expr.Any{
+			// ct state new
+			&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
+			&expr.Bitwise{
+				SourceRegister: 1,
+				DestRegister:   1,
+				Len:            4,
+				Mask:           []byte{0x08, 0x00, 0x00, 0x00}, // NEW
+				Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+			},
+			&expr.Cmp{
+				Op:       expr.CmpOpNeq,
+				Register: 1,
+				Data:     []byte{0x00, 0x00, 0x00, 0x00},
+			},
+			// ct mark set meta mark (save fwmark → connmark)
+			&expr.Meta{
+				Key:      expr.MetaKeyMARK,
+				Register: 1,
+			},
+			&expr.Ct{
+				Key:            expr.CtKeyMARK,
+				Register:       1,
+				SourceRegister: true,
+			},
+		},
+	})
+
 	if err := conn.Flush(); err != nil {
 		return fmt.Errorf("nftables flush DSCP rules: %w", err)
 	}
