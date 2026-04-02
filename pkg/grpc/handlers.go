@@ -369,6 +369,12 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 		}
 	}
 
+	if cs, ok := h.peerMgr.(ClientStateSaver); ok {
+		if err := cs.SaveClientState(); err != nil {
+			h.logger.Warn().Err(err).Msg("save client state failed")
+		}
+	}
+
 	return &proto.AddPeerResponse{Success: true}, nil
 }
 

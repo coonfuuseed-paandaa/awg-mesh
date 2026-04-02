@@ -14,6 +14,7 @@ type ClientRunner struct {
 	node          *Node
 	startTime     time.Time
 	platformState clientPlatformState
+	clientState   *ClientState
 }
 
 // NewClientRunner creates a client mode runner.
@@ -67,9 +68,23 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("reconcile client transport state: %w", err)
 	}
 
+	// On restart without topology file, load persisted client state to restore
+	// DSCP routing and DNS configuration.
+	if c.node.topology == nil {
+		loaded, err := loadClientState(c.node.config.ConfigDir)
+		if err != nil {
+			c.node.logger.Warn().Err(err).Msg("load client state failed (non-fatal)")
+		} else if loaded.OverlayIP != "" {
+			c.clientState = &loaded
+			c.node.logger.Info().Str("overlay_ip", loaded.OverlayIP).Msg("client state loaded from disk")
+		}
+	}
+
 	if err := c.setupDSCPRouting(); err != nil {
 		c.node.logger.Warn().Err(err).Msg("setup DSCP policy routing failed (non-fatal)")
 	}
+
+	c.startDNSServer(ctx)
 
 	c.node.logger.Info().
 		Str("public_key", publicKey.String()).
