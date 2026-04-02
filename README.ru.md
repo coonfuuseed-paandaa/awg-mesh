@@ -67,6 +67,14 @@ graph TB
 
 ## Что нового
 
+### v1.3.0
+
+- **Два Docker-образа** — лёгкий `awg-mesh-client` (~15 МБ, без CGO) для клиентов MikroTik/Linux и полный `awg-mesh-node` (~42 МБ) для master/endpoint-узлов. `awg-mesh:latest` остаётся алиасом для образа node.
+- **Авто-обнаружение интерфейса** — контейнер автоматически определяет WAN-интерфейс через маршрут по умолчанию (netlink). Работает на MikroTik ROS < 7.20 (`eth0`), ROS >= 7.20 (произвольные имена VETH) и стандартном Docker. Переопределите через переменную окружения `MESH_INTERFACE`.
+- **Сохранение состояния клиента** — после первого `mesh-ctl client init` политики маршрутизации и конфиг DNS сохраняются в `/config/client-state.yml`. При перезапуске контейнер восстанавливает полное состояние без файла топологии и повторной инициализации через gRPC.
+- **Тег сборки `nocapture`** — `CGO_ENABLED=0 go build -tags nocapture` собирает статический клиентский бинарник без gopacket/libpcap.
+- **Matrix-сборка в CI** — GitHub Actions собирает и публикует оба образа с отдельными smoke-тестами для каждого.
+
 ### v1.2.0
 
 - **Smart Client** — один контейнер заменяет N отдельных AWG-контейнеров по регионам с помощью policy routing на основе DSCP. Роутер маркирует трафик значением DSCP, контейнер читает поле DSCP и маршрутизирует поток в нужный endpoint через соответствующие таблицы политик.
@@ -144,7 +152,7 @@ graph TB
 
 ```bash
 # 1. Установите mesh-ctl на своей машине администратора
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Создайте файл топологии (все поля описаны в разделе Конфигурация)
@@ -188,7 +196,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Установка mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
 ```
 
 Бинарник окажется в `$(go env GOPATH)/bin`. Убедитесь, что эта директория есть в `PATH`:
@@ -232,7 +240,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Обновление mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
 ```
 
 Директория состояния `~/.mesh-ctl/` (CA, токены, ключи, транспортные выделения) не затрагивается.
@@ -265,9 +273,12 @@ ssh master-02 'docker compose -f master-02-docker-compose.yml pull && docker com
 ### Docker-образ
 
 ```
-ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
-ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
-ghcr.io/coonfuuseed-paandaa/awg-mesh:<commit-sha>
+# Node-образ (master/endpoint — полные возможности)
+ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest
+ghcr.io/coonfuuseed-paandaa/awg-mesh:latest          # алиас для node
+
+# Client-образ (MikroTik/Linux — лёгкий, без CGO)
+ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest
 ```
 
 - Размер: ~42 МБ (базовый образ Alpine)
@@ -289,7 +300,7 @@ ghcr.io/coonfuuseed-paandaa/awg-mesh:<commit-sha>
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.3.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -551,6 +562,7 @@ mesh-ctl capture refresh -t mesh-topology.yml
 --topology      string   Путь к mesh-topology.yml (опционально — узел может получить конфиг через gRPC Init)
 --log-level     string   Уровень логирования: debug|info|warn|error (по умолчанию: info)
 --metrics-addr  string   Адрес Prometheus metrics (по умолчанию: :9091)
+MESH_INTERFACE  env    Переопределить авто-обнаруженное имя WAN-интерфейса (например, veth-awg)
 ```
 
 ## Справка по CLI
@@ -846,7 +858,7 @@ CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
 
 | Способ сборки | Отображаемая версия |
 |---------------|---------------------|
-| `go install ...@v1.2.0` | `v1.2.0` |
+| `go install ...@v1.3.0` | `v1.2.0` |
 | Локальный клон на тегированном коммите | `v1.2.0 (abcd1234)` |
 | `go run` | `dev` |
 

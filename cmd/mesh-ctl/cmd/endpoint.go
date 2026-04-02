@@ -84,7 +84,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 				Name:       ep.Name,
 				Host:       ep.Host,
 				OverlayIP:  ep.OverlayIP,
-				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
+				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
 				ListenPort: ep.ListenPort,
 				Token:      token,
 			}

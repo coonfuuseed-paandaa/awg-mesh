@@ -67,6 +67,14 @@ graph TB
 
 ## What's New
 
+### v1.3.0
+
+- **Two Docker images** — lightweight `awg-mesh-client` (~15 MB, CGO-free) for MikroTik/Linux clients, full `awg-mesh-node` (~42 MB) for master/endpoint nodes. `awg-mesh:latest` remains an alias for the node image.
+- **Interface auto-discovery** — container automatically detects its WAN interface via default route (netlink). Works on MikroTik ROS < 7.20 (`eth0`), ROS >= 7.20 (custom VETH names), and standard Docker. Override with `MESH_INTERFACE` environment variable.
+- **Client state persistence** — after first `mesh-ctl client init`, routing policies and DNS config are saved to `/config/client-state.yml`. Container restores full state on restart without topology file or gRPC re-init.
+- **`nocapture` build tag** — `CGO_ENABLED=0 go build -tags nocapture` produces a static client binary without gopacket/libpcap.
+- **CI matrix build** — GitHub Actions builds and pushes both client and node images with separate smoke tests.
+
 ### v1.2.0
 
 - **Smart Client** — single container replaces N per-region AWG containers with DSCP-based policy routing. Router marks traffic with DSCP, container reads DSCP field and routes to the correct endpoint via policy routing tables.
@@ -144,7 +152,7 @@ This example deploys a minimal mesh: two masters in Russia, two endpoints in Kaz
 
 ```bash
 # 1. Install mesh-ctl on your admin machine
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Create your topology file (see Configuration section for all fields)
@@ -188,7 +196,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Install mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
 ```
 
 The binary lands in `$(go env GOPATH)/bin`. Ensure that directory is in your `PATH`:
@@ -232,7 +240,7 @@ All nodes should appear `ONLINE` with tunnel counts matching the topology.
 ### Upgrading mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.2.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
 ```
 
 The `~/.mesh-ctl/` state directory (CA, tokens, keys, transport allocations) is not affected.
@@ -265,9 +273,12 @@ ssh master-02 'docker compose -f master-02-docker-compose.yml pull && docker com
 ### Docker image
 
 ```
-ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
-ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
-ghcr.io/coonfuuseed-paandaa/awg-mesh:<commit-sha>
+# Node image (master/endpoint — full capabilities)
+ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest
+ghcr.io/coonfuuseed-paandaa/awg-mesh:latest          # alias for node
+
+# Client image (MikroTik/Linux — lightweight, no CGO)
+ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest
 ```
 
 - Size: ~42 MB (Alpine base)
@@ -289,7 +300,7 @@ The container expects configuration at `/config`. Map your node's config directo
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/coonfuuseed-paandaa/awg-mesh:v1.2.0
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.3.0
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -551,6 +562,7 @@ All three modes run from the same binary (`awg-mesh-node`). The mode is selected
 --topology      string   Path to mesh-topology.yml (optional — node can receive config via gRPC Init)
 --log-level     string   Logging verbosity: debug|info|warn|error (default: info)
 --metrics-addr  string   Prometheus metrics listen address (default: :9091)
+MESH_INTERFACE  env    Override auto-discovered WAN interface name (e.g., veth-awg)
 ```
 
 ## CLI Reference
@@ -846,7 +858,7 @@ Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()`
 
 | How built | Version shown |
 |-----------|--------------|
-| `go install ...@v1.2.0` | `v1.2.0` |
+| `go install ...@v1.3.0` | `v1.2.0` |
 | Local clone at tagged commit | `v1.2.0 (abcd1234)` |
 | `go run` | `dev` |
 

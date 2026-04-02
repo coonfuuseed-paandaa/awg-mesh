@@ -83,7 +83,7 @@ func newMasterPrepareCommand() *cobra.Command {
 				Name:       master.Name,
 				Host:       master.Host,
 				OverlayIP:  master.OverlayIP,
-				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh:latest",
+				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
 				ListenPort: master.ListenPort,
 				Token:      token,
 			}
