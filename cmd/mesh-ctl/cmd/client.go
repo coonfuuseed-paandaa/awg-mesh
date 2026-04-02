@@ -32,7 +32,9 @@ func newClientCommand() *cobra.Command {
 }
 
 func newClientPrepareCommand() *cobra.Command {
-	return &cobra.Command{
+	var useTraefik bool
+
+	cmd := &cobra.Command{
 		Use:   "prepare [name]",
 		Short: "Generate config for a client (linux or mikrotik)",
 		Args:  cobra.ExactArgs(1),
@@ -95,7 +97,11 @@ func newClientPrepareCommand() *cobra.Command {
 				}
 
 				outputPath := client.Name + "-docker-compose.yml"
-				clientTemplate, err := loadTemplate("docker-compose.client.yml.tmpl")
+				templateName := "docker-compose.client.yml.tmpl"
+				if useTraefik {
+					templateName = "docker-compose.client.traefik.yml.tmpl"
+				}
+				clientTemplate, err := loadTemplate(templateName)
 				if err != nil {
 					return fmt.Errorf("load client compose template: %w", err)
 				}
@@ -185,6 +191,9 @@ func newClientPrepareCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
+	return cmd
 }
 
 func resolveClientTarget(topo *topology.Topology, client *topology.ClientNode) (string, error) {
