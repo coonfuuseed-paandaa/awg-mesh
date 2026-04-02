@@ -146,9 +146,81 @@ graph TB
 - **Anti-DPI environments**: AWG obfuscation parameters rotate on schedule and are fingerprinted against real TLS/QUIC traffic to defeat traffic classifiers.
 - **MikroTik single-container VPN**: replace 5+ AWG containers (one per region) with a single smart client container. DSCP marks on the router select which endpoint each traffic flow reaches — 33 manual mangle rules and 10 routing tables replaced by one topology file and `mesh-ctl routing generate`.
 
+## Direct Overlay Routing
+
+Every node in the mesh has a unique overlay IP. You can route traffic to any specific endpoint or master by destination IP — no DSCP marking required. This is the simplest way to steer traffic through a specific exit point.
+
+### How it works
+
+The client container maintains WG tunnels to all masters. Each master has tunnels to its endpoints. Traffic sent to an endpoint's overlay IP is automatically routed through the correct master → endpoint chain. Traffic sent to the balancer IP (`balancer_ip` in topology) is ECMP-distributed across all healthy endpoints.
+
+```
+Your device → client container → master → endpoint (overlay IP = destination)
+Your device → client container → master → ECMP across endpoints (balancer IP)
+```
+
+### MikroTik examples
+
+**Route specific traffic to a specific endpoint (by overlay IP):**
+
+```routeros
+# Create address list for services that should exit through node-asia-01 (overlay 172.20.70.34)
+/ip/firewall/address-list
+add list=via-asia address=8.8.8.8
+add list=via-asia address=1.1.1.1
+
+# Route matching traffic to the endpoint's overlay IP via client container gateway
+/ip/route
+add dst-address=172.20.70.34/32 gateway=192.168.254.4 comment="route to node-asia-01 via awg-mesh"
+
+# Mangle: mark connections matching the address list
+/ip/firewall/mangle
+add chain=prerouting dst-address-list=via-asia action=mark-routing new-routing-mark=via-asia passthrough=yes
+add chain=prerouting routing-mark=via-asia action=route gateway=192.168.254.4 comment="send via-asia traffic through awg-mesh client"
+```
+
+**Route all VPN traffic through the balancer (ECMP across all endpoints):**
+
+```routeros
+# All traffic to the balancer IP → distributed across endpoints automatically
+/ip/route
+add dst-address=172.20.70.1/32 gateway=192.168.254.4 comment="ECMP balancer via awg-mesh"
+
+# Mark traffic destined for VPN
+/ip/firewall/mangle
+add chain=prerouting src-address-list=vpn-clients action=mark-routing new-routing-mark=vpn passthrough=yes
+add chain=prerouting routing-mark=vpn action=route gateway=192.168.254.4 comment="all VPN traffic through mesh"
+```
+
+**Route through a master exit node (direct egress, no endpoint hop):**
+
+```routeros
+# Master with exit: true has its own overlay IP (e.g., 172.20.70.10)
+# Traffic to this IP exits directly from the master's location
+/ip/route
+add dst-address=172.20.70.10/32 gateway=192.168.254.4 comment="exit via master-01 directly"
+```
+
+### Overlay DNS
+
+The client container runs an embedded DNS server for the overlay zone. Instead of remembering overlay IPs, use names:
+
+```bash
+# From any device using the client container as DNS
+dig node-asia-01.mesh.zone @192.168.254.4    # → 172.20.70.34
+dig -x 172.20.70.34 @192.168.254.4           # → node-asia-01.mesh.zone
+```
+
+On MikroTik, set the client container as DNS for the mesh zone:
+
+```routeros
+/ip/dns/static
+add name=mesh.zone type=FWD forward-to=192.168.254.4
+```
+
 ## Quick Start
 
-This example deploys a minimal mesh: two masters in Russia, two endpoints in Kazakhstan, one Linux client.
+This example deploys a minimal mesh: two masters in two regions, two endpoints in two other regions, one Linux client.
 
 ```bash
 # 1. Install mesh-ctl on your admin machine

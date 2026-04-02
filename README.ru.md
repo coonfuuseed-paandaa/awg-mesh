@@ -146,6 +146,78 @@ graph TB
 - **Среды с анти-DPI**: параметры обфускации AWG ротируются по расписанию и калибруются по реальному TLS/QUIC-трафику для обхода классификаторов трафика.
 - **MikroTik — один контейнер вместо нескольких**: замените 5+ AWG-контейнеров (по одному на регион) единым smart client-контейнером. DSCP-метки на роутере выбирают, через какой endpoint пойдёт каждый поток — 33 ручных mangle-правила и 10 таблиц маршрутизации заменяются одним файлом топологии и командой `mesh-ctl routing generate`.
 
+## Прямая маршрутизация через overlay
+
+Каждый узел в mesh-сети имеет уникальный overlay IP. Трафик можно маршрутизировать на конкретный endpoint или master по IP-адресу назначения — без DSCP-меток. Это самый простой способ направить трафик через конкретную точку выхода.
+
+### Как это работает
+
+Клиентский контейнер поддерживает WG-туннели ко всем master-узлам. Каждый master имеет туннели к своим endpoint-узлам. Трафик, отправленный на overlay IP endpoint'а, автоматически маршрутизируется через цепочку master → endpoint. Трафик на balancer IP (`balancer_ip` в топологии) распределяется ECMP по всем здоровым endpoint'ам.
+
+```
+Ваше устройство → клиентский контейнер → master → endpoint (overlay IP = назначение)
+Ваше устройство → клиентский контейнер → master → ECMP по endpoint'ам (balancer IP)
+```
+
+### Примеры для MikroTik
+
+**Маршрутизация определённого трафика через конкретный endpoint (по overlay IP):**
+
+```routeros
+# Список адресов для сервисов, которые должны выходить через node-asia-01 (overlay 172.20.70.34)
+/ip/firewall/address-list
+add list=via-asia address=8.8.8.8
+add list=via-asia address=1.1.1.1
+
+# Маршрут на overlay IP endpoint'а через шлюз клиентского контейнера
+/ip/route
+add dst-address=172.20.70.34/32 gateway=192.168.254.4 comment="route to node-asia-01 via awg-mesh"
+
+# Mangle: пометка соединений по списку адресов
+/ip/firewall/mangle
+add chain=prerouting dst-address-list=via-asia action=mark-routing new-routing-mark=via-asia passthrough=yes
+add chain=prerouting routing-mark=via-asia action=route gateway=192.168.254.4 comment="send via-asia traffic through awg-mesh client"
+```
+
+**Маршрутизация всего VPN-трафика через balancer (ECMP по всем endpoint'ам):**
+
+```routeros
+# Весь трафик на balancer IP → автоматически распределяется по endpoint'ам
+/ip/route
+add dst-address=172.20.70.1/32 gateway=192.168.254.4 comment="ECMP balancer via awg-mesh"
+
+# Пометка трафика для VPN
+/ip/firewall/mangle
+add chain=prerouting src-address-list=vpn-clients action=mark-routing new-routing-mark=vpn passthrough=yes
+add chain=prerouting routing-mark=vpn action=route gateway=192.168.254.4 comment="all VPN traffic through mesh"
+```
+
+**Маршрутизация через master exit node (прямой выход, без endpoint'а):**
+
+```routeros
+# Master с exit: true имеет свой overlay IP (например, 172.20.70.10)
+# Трафик на этот IP выходит напрямую из локации master'а
+/ip/route
+add dst-address=172.20.70.10/32 gateway=192.168.254.4 comment="exit via master-01 directly"
+```
+
+### Overlay DNS
+
+Клиентский контейнер запускает встроенный DNS-сервер для overlay-зоны. Вместо запоминания IP используйте имена:
+
+```bash
+# С любого устройства, использующего клиентский контейнер как DNS
+dig node-asia-01.mesh.zone @192.168.254.4    # → 172.20.70.34
+dig -x 172.20.70.34 @192.168.254.4           # → node-asia-01.mesh.zone
+```
+
+На MikroTik — настройте клиентский контейнер как DNS для mesh-зоны:
+
+```routeros
+/ip/dns/static
+add name=mesh.zone type=FWD forward-to=192.168.254.4
+```
+
 ## Быстрый старт
 
 Этот пример разворачивает минимальную сеть: два master'а в России, два endpoint'а в Казахстане, один Linux-клиент.
