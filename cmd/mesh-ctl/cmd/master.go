@@ -30,7 +30,9 @@ func newMasterCommand() *cobra.Command {
 }
 
 func newMasterPrepareCommand() *cobra.Command {
-	return &cobra.Command{
+	var useTraefik bool
+
+	cmd := &cobra.Command{
 		Use:   "prepare [name]",
 		Short: "Generate docker-compose and token for a master",
 		Args:  cobra.ExactArgs(1),
@@ -88,7 +90,12 @@ func newMasterPrepareCommand() *cobra.Command {
 				Token:      token,
 			}
 
-			masterTemplate, err := loadTemplate("docker-compose.master.yml.tmpl")
+			templateName := "docker-compose.master.yml.tmpl"
+			if useTraefik {
+				templateName = "docker-compose.master.traefik.yml.tmpl"
+			}
+
+			masterTemplate, err := loadTemplate(templateName)
 			if err != nil {
 				return fmt.Errorf("load master compose template: %w", err)
 			}
@@ -109,6 +116,9 @@ func newMasterPrepareCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
+	return cmd
 }
 
 func newMasterInitCommand() *cobra.Command {

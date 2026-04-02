@@ -31,7 +31,9 @@ func newEndpointCommand() *cobra.Command {
 }
 
 func newEndpointPrepareCommand() *cobra.Command {
-	return &cobra.Command{
+	var useTraefik bool
+
+	cmd := &cobra.Command{
 		Use:   "prepare [name]",
 		Short: "Generate docker-compose and token for an endpoint",
 		Args:  cobra.ExactArgs(1),
@@ -88,7 +90,13 @@ func newEndpointPrepareCommand() *cobra.Command {
 				ListenPort: ep.ListenPort,
 				Token:      token,
 			}
-			endpointTemplate, err := loadTemplate("docker-compose.endpoint.yml.tmpl")
+
+			templateName := "docker-compose.endpoint.yml.tmpl"
+			if useTraefik {
+				templateName = "docker-compose.endpoint.traefik.yml.tmpl"
+			}
+
+			endpointTemplate, err := loadTemplate(templateName)
 			if err != nil {
 				return fmt.Errorf("load endpoint compose template: %w", err)
 			}
@@ -108,6 +116,9 @@ func newEndpointPrepareCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
+	return cmd
 }
 
 func newEndpointInitCommand() *cobra.Command {
