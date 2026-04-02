@@ -146,72 +146,122 @@ graph TB
 - **Anti-DPI environments**: AWG obfuscation parameters rotate on schedule and are fingerprinted against real TLS/QUIC traffic to defeat traffic classifiers.
 - **MikroTik single-container VPN**: replace 5+ AWG containers (one per region) with a single smart client container. DSCP marks on the router select which endpoint each traffic flow reaches — 33 manual mangle rules and 10 routing tables replaced by one topology file and `mesh-ctl routing generate`.
 
-## Direct Overlay Routing
+## Traffic Steering with DSCP
 
-Every node in the mesh has a unique overlay IP. You can route traffic to any specific endpoint or master by destination IP — no DSCP marking required. This is the simplest way to steer traffic through a specific exit point.
+> **MikroTik minimum version: RouterOS 7.21+** — the client container uses nftables (kernel `nf_tables` module) for DSCP→fwmark policy routing. RouterOS versions before 7.21 do not load `nf_tables` into the container kernel. On Linux (non-MikroTik), any modern kernel with nf_tables support works.
+
+DSCP (Differentiated Services Code Point) is the mechanism for selecting which endpoint handles each traffic flow. Routing marks on MikroTik are local to conntrack — they don't survive the trip through the WG tunnel. DSCP is the only field in the IP header that the router can set and the client container can read on the other side.
 
 ### How it works
 
-The client container maintains WG tunnels to all masters. Each master has tunnels to its endpoints. Traffic sent to an endpoint's overlay IP is automatically routed through the correct master → endpoint chain. Traffic sent to the balancer IP (`balancer_ip` in topology) is ECMP-distributed across all healthy endpoints.
+```
+Router                           Client container              Master            Endpoint
+  │                                │                            │                  │
+  │ 1. address-list → conn-mark    │                            │                  │
+  │ 2. conn-mark → change-dscp     │                            │                  │
+  │ 3. route to container gateway  │                            │                  │
+  │ ───────────────────────────────>│                            │                  │
+  │                                │ 4. nftables: read DSCP     │                  │
+  │                                │ 5. DSCP → fwmark           │                  │
+  │                                │ 6. fwmark → policy table   │                  │
+  │                                │ 7. table → via master WG   │                  │
+  │                                │ ───────────────────────────>│                  │
+  │                                │                            │ 8. forward       │
+  │                                │                            │ ────────────────>│
+  │                                │                            │                  │ 9. NAT → internet
+```
 
-```
-Your device → client container → master → endpoint (overlay IP = destination)
-Your device → client container → master → ECMP across endpoints (balancer IP)
-```
+- **DSCP 0** (default): ECMP across all endpoints — no special marking needed
+- **DSCP 1-63**: each value maps to a routing policy in `mesh-topology.yml`
+- The router sets DSCP; the container reads it. Routing marks don't cross device boundaries.
 
 ### MikroTik examples
 
-**Route specific traffic to a specific endpoint (by overlay IP):**
+**Step 1: Define which traffic goes where (address lists):**
 
 ```routeros
-# Create address list for services that should exit through node-asia-01 (overlay 172.20.70.34)
 /ip/firewall/address-list
-add list=via-asia address=8.8.8.8
-add list=via-asia address=1.1.1.1
-
-# Route matching traffic to the endpoint's overlay IP via client container gateway
-/ip/route
-add dst-address=172.20.70.34/32 gateway=192.168.254.4 comment="route to node-asia-01 via awg-mesh"
-
-# Mangle: mark connections matching the address list
-/ip/firewall/mangle
-add chain=prerouting dst-address-list=via-asia action=mark-routing new-routing-mark=via-asia passthrough=yes
-add chain=prerouting routing-mark=via-asia action=route gateway=192.168.254.4 comment="send via-asia traffic through awg-mesh client"
+add list=via-asia address=8.8.8.8 comment="Google DNS via Asia"
+add list=via-asia address=1.1.1.1 comment="Cloudflare via Asia"
+add list=via-us address=208.67.222.222 comment="OpenDNS via US"
 ```
 
-**Route all VPN traffic through the balancer (ECMP across all endpoints):**
+**Step 2: Mark connections and set DSCP (mangle):**
 
 ```routeros
-# All traffic to the balancer IP → distributed across endpoints automatically
-/ip/route
-add dst-address=172.20.70.1/32 gateway=192.168.254.4 comment="ECMP balancer via awg-mesh"
-
-# Mark traffic destined for VPN
 /ip/firewall/mangle
-add chain=prerouting src-address-list=vpn-clients action=mark-routing new-routing-mark=vpn passthrough=yes
-add chain=prerouting routing-mark=vpn action=route gateway=192.168.254.4 comment="all VPN traffic through mesh"
+# Mark connections by destination address list
+add chain=prerouting dst-address-list=via-asia action=mark-connection \
+    new-connection-mark=vpn-asia-conn passthrough=yes comment="awg-mesh: mark Asia connections"
+add chain=prerouting dst-address-list=via-us action=mark-connection \
+    new-connection-mark=vpn-us-conn passthrough=yes comment="awg-mesh: mark US connections"
+
+# Set DSCP based on connection mark (this survives the WG tunnel)
+add chain=prerouting connection-mark=vpn-asia-conn action=change-dscp \
+    new-dscp=10 passthrough=yes comment="awg-mesh: DSCP=10 for Asia"
+add chain=prerouting connection-mark=vpn-us-conn action=change-dscp \
+    new-dscp=20 passthrough=yes comment="awg-mesh: DSCP=20 for US"
 ```
 
-**Route through a master exit node (direct egress, no endpoint hop):**
+**Step 3: Route marked traffic to the client container:**
 
 ```routeros
-# Master with exit: true has its own overlay IP (e.g., 172.20.70.10)
-# Traffic to this IP exits directly from the master's location
+/routing/table
+add name=vpn-mesh fib comment="awg-mesh VPN routing table"
+
 /ip/route
-add dst-address=172.20.70.10/32 gateway=192.168.254.4 comment="exit via master-01 directly"
+add dst-address=0.0.0.0/0 gateway=192.168.254.4 routing-table=vpn-mesh \
+    distance=5 comment="awg-mesh: default VPN route"
+
+/ip/firewall/mangle
+add chain=prerouting connection-mark=vpn-asia-conn action=mark-routing \
+    new-routing-mark=vpn-mesh passthrough=no comment="awg-mesh: route Asia via mesh"
+add chain=prerouting connection-mark=vpn-us-conn action=mark-routing \
+    new-routing-mark=vpn-mesh passthrough=no comment="awg-mesh: route US via mesh"
 ```
+
+**Or generate all of this automatically:**
+
+```bash
+mesh-ctl routing generate --platform mikrotik --client my-router -t mesh-topology.yml > awg-routing.rsc
+# Import on MikroTik: /import awg-routing.rsc
+```
+
+### All-traffic VPN (no per-flow steering)
+
+If you just want all traffic through the VPN without selecting endpoints:
+
+```routeros
+# Simple: route everything through the client container
+/ip/route
+add dst-address=0.0.0.0/0 gateway=192.168.254.4 distance=10 comment="all traffic via awg-mesh"
+```
+
+DSCP 0 (default) → ECMP across all endpoints automatically.
+
+### Master exit (direct egress)
+
+Masters with `exit: true` in topology can act as VPN exit points directly. Assign a DSCP value targeting the master in `routing_policies`:
+
+```yaml
+routing_policies:
+  - name: vpn-direct
+    dscp: 50
+    targets: [master-01]   # master with exit: true
+```
+
+Traffic with DSCP=50 exits from master-01's location without the extra hop through an endpoint.
 
 ### Overlay DNS
 
-The client container runs an embedded DNS server for the overlay zone. Instead of remembering overlay IPs, use names:
+The client container runs an embedded DNS server for the overlay zone:
 
 ```bash
-# From any device using the client container as DNS
 dig node-asia-01.mesh.zone @192.168.254.4    # → 172.20.70.34
 dig -x 172.20.70.34 @192.168.254.4           # → node-asia-01.mesh.zone
 ```
 
-On MikroTik, set the client container as DNS for the mesh zone:
+On MikroTik, forward mesh zone queries to the client container:
 
 ```routeros
 /ip/dns/static

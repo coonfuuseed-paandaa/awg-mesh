@@ -146,72 +146,122 @@ graph TB
 - **Среды с анти-DPI**: параметры обфускации AWG ротируются по расписанию и калибруются по реальному TLS/QUIC-трафику для обхода классификаторов трафика.
 - **MikroTik — один контейнер вместо нескольких**: замените 5+ AWG-контейнеров (по одному на регион) единым smart client-контейнером. DSCP-метки на роутере выбирают, через какой endpoint пойдёт каждый поток — 33 ручных mangle-правила и 10 таблиц маршрутизации заменяются одним файлом топологии и командой `mesh-ctl routing generate`.
 
-## Прямая маршрутизация через overlay
+## Управление трафиком через DSCP
 
-Каждый узел в mesh-сети имеет уникальный overlay IP. Трафик можно маршрутизировать на конкретный endpoint или master по IP-адресу назначения — без DSCP-меток. Это самый простой способ направить трафик через конкретную точку выхода.
+> **Минимальная версия MikroTik: RouterOS 7.21+** — клиентский контейнер использует nftables (модуль ядра `nf_tables`) для policy routing на основе DSCP→fwmark. Версии RouterOS до 7.21 не загружают `nf_tables` в ядро контейнера. На Linux (не MikroTik) подходит любое современное ядро с поддержкой nf_tables.
+
+DSCP (Differentiated Services Code Point) — механизм выбора endpoint'а для каждого потока трафика. Routing marks на MikroTik — локальные для conntrack, они не переживают переход через WG-туннель. DSCP — единственное поле в IP-заголовке, которое роутер может установить, а клиентский контейнер — прочитать на другой стороне.
 
 ### Как это работает
 
-Клиентский контейнер поддерживает WG-туннели ко всем master-узлам. Каждый master имеет туннели к своим endpoint-узлам. Трафик, отправленный на overlay IP endpoint'а, автоматически маршрутизируется через цепочку master → endpoint. Трафик на balancer IP (`balancer_ip` в топологии) распределяется ECMP по всем здоровым endpoint'ам.
+```
+Роутер                           Клиентский контейнер         Master            Endpoint
+  │                                │                            │                  │
+  │ 1. address-list → conn-mark    │                            │                  │
+  │ 2. conn-mark → change-dscp     │                            │                  │
+  │ 3. route в контейнер           │                            │                  │
+  │ ───────────────────────────────>│                            │                  │
+  │                                │ 4. nftables: читает DSCP   │                  │
+  │                                │ 5. DSCP → fwmark           │                  │
+  │                                │ 6. fwmark → policy table   │                  │
+  │                                │ 7. table → через master WG │                  │
+  │                                │ ───────────────────────────>│                  │
+  │                                │                            │ 8. forward       │
+  │                                │                            │ ────────────────>│
+  │                                │                            │                  │ 9. NAT → интернет
+```
 
-```
-Ваше устройство → клиентский контейнер → master → endpoint (overlay IP = назначение)
-Ваше устройство → клиентский контейнер → master → ECMP по endpoint'ам (balancer IP)
-```
+- **DSCP 0** (по умолчанию): ECMP по всем endpoint'ам — маркировка не нужна
+- **DSCP 1-63**: каждое значение соответствует routing policy в `mesh-topology.yml`
+- Роутер устанавливает DSCP; контейнер его читает. Routing marks не пересекают границу устройства.
 
 ### Примеры для MikroTik
 
-**Маршрутизация определённого трафика через конкретный endpoint (по overlay IP):**
+**Шаг 1: Определить, какой трафик куда направлять (списки адресов):**
 
 ```routeros
-# Список адресов для сервисов, которые должны выходить через node-asia-01 (overlay 172.20.70.34)
 /ip/firewall/address-list
-add list=via-asia address=8.8.8.8
-add list=via-asia address=1.1.1.1
-
-# Маршрут на overlay IP endpoint'а через шлюз клиентского контейнера
-/ip/route
-add dst-address=172.20.70.34/32 gateway=192.168.254.4 comment="route to node-asia-01 via awg-mesh"
-
-# Mangle: пометка соединений по списку адресов
-/ip/firewall/mangle
-add chain=prerouting dst-address-list=via-asia action=mark-routing new-routing-mark=via-asia passthrough=yes
-add chain=prerouting routing-mark=via-asia action=route gateway=192.168.254.4 comment="send via-asia traffic through awg-mesh client"
+add list=via-asia address=8.8.8.8 comment="Google DNS через Азию"
+add list=via-asia address=1.1.1.1 comment="Cloudflare через Азию"
+add list=via-us address=208.67.222.222 comment="OpenDNS через US"
 ```
 
-**Маршрутизация всего VPN-трафика через balancer (ECMP по всем endpoint'ам):**
+**Шаг 2: Пометить соединения и установить DSCP (mangle):**
 
 ```routeros
-# Весь трафик на balancer IP → автоматически распределяется по endpoint'ам
-/ip/route
-add dst-address=172.20.70.1/32 gateway=192.168.254.4 comment="ECMP balancer via awg-mesh"
-
-# Пометка трафика для VPN
 /ip/firewall/mangle
-add chain=prerouting src-address-list=vpn-clients action=mark-routing new-routing-mark=vpn passthrough=yes
-add chain=prerouting routing-mark=vpn action=route gateway=192.168.254.4 comment="all VPN traffic through mesh"
+# Пометка соединений по спискам адресов
+add chain=prerouting dst-address-list=via-asia action=mark-connection \
+    new-connection-mark=vpn-asia-conn passthrough=yes comment="awg-mesh: пометка Asia"
+add chain=prerouting dst-address-list=via-us action=mark-connection \
+    new-connection-mark=vpn-us-conn passthrough=yes comment="awg-mesh: пометка US"
+
+# Установка DSCP по connection mark (переживает WG-туннель)
+add chain=prerouting connection-mark=vpn-asia-conn action=change-dscp \
+    new-dscp=10 passthrough=yes comment="awg-mesh: DSCP=10 для Азии"
+add chain=prerouting connection-mark=vpn-us-conn action=change-dscp \
+    new-dscp=20 passthrough=yes comment="awg-mesh: DSCP=20 для US"
 ```
 
-**Маршрутизация через master exit node (прямой выход, без endpoint'а):**
+**Шаг 3: Маршрутизация помеченного трафика в клиентский контейнер:**
 
 ```routeros
-# Master с exit: true имеет свой overlay IP (например, 172.20.70.10)
-# Трафик на этот IP выходит напрямую из локации master'а
+/routing/table
+add name=vpn-mesh fib comment="awg-mesh VPN routing table"
+
 /ip/route
-add dst-address=172.20.70.10/32 gateway=192.168.254.4 comment="exit via master-01 directly"
+add dst-address=0.0.0.0/0 gateway=192.168.254.4 routing-table=vpn-mesh \
+    distance=5 comment="awg-mesh: VPN-маршрут по умолчанию"
+
+/ip/firewall/mangle
+add chain=prerouting connection-mark=vpn-asia-conn action=mark-routing \
+    new-routing-mark=vpn-mesh passthrough=no comment="awg-mesh: Asia через mesh"
+add chain=prerouting connection-mark=vpn-us-conn action=mark-routing \
+    new-routing-mark=vpn-mesh passthrough=no comment="awg-mesh: US через mesh"
 ```
+
+**Или сгенерируйте всё автоматически:**
+
+```bash
+mesh-ctl routing generate --platform mikrotik --client my-router -t mesh-topology.yml > awg-routing.rsc
+# Импорт на MikroTik: /import awg-routing.rsc
+```
+
+### Весь трафик через VPN (без выбора endpoint'а)
+
+Если нужно просто пустить весь трафик через VPN без выбора конкретного endpoint'а:
+
+```routeros
+# Просто: маршрутизация всего через клиентский контейнер
+/ip/route
+add dst-address=0.0.0.0/0 gateway=192.168.254.4 distance=10 comment="весь трафик через awg-mesh"
+```
+
+DSCP 0 (по умолчанию) → ECMP по всем endpoint'ам автоматически.
+
+### Master exit (прямой выход)
+
+Master'ы с `exit: true` в топологии могут выступать точками выхода напрямую. Назначьте значение DSCP для master'а в `routing_policies`:
+
+```yaml
+routing_policies:
+  - name: vpn-direct
+    dscp: 50
+    targets: [master-01]   # master с exit: true
+```
+
+Трафик с DSCP=50 выходит из локации master-01 без дополнительного хопа через endpoint.
 
 ### Overlay DNS
 
-Клиентский контейнер запускает встроенный DNS-сервер для overlay-зоны. Вместо запоминания IP используйте имена:
+Клиентский контейнер запускает встроенный DNS-сервер для overlay-зоны:
 
 ```bash
-# С любого устройства, использующего клиентский контейнер как DNS
 dig node-asia-01.mesh.zone @192.168.254.4    # → 172.20.70.34
 dig -x 172.20.70.34 @192.168.254.4           # → node-asia-01.mesh.zone
 ```
 
-На MikroTik — настройте клиентский контейнер как DNS для mesh-зоны:
+На MikroTik — перенаправьте запросы mesh-зоны в клиентский контейнер:
 
 ```routeros
 /ip/dns/static
