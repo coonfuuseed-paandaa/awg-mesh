@@ -6,8 +6,9 @@ This directory contains Architecture Decision Records (ADRs) for awg-mesh.
 
 | ADR | Title | Status | Date |
 |-----|-------|--------|------|
-| [0001](0001-multi-image-docker-strategy.md) | Multi-Image Docker Strategy (Client + Server) | Proposed | 2026-04-01 |
-| [0002](0002-mikrotik-veth-interface-discovery.md) | MikroTik VETH Interface Auto-Discovery | Proposed | 2026-04-01 |
+| [0001](0001-multi-image-docker-strategy.md) | Multi-Image Docker Strategy (Client + Node) | Accepted | 2026-04-01 |
+| [0002](0002-mikrotik-veth-interface-discovery.md) | MikroTik VETH Interface Auto-Discovery | Accepted | 2026-04-01 |
+| [0003](0003-traefik-integration.md) | Traefik Integration — Hybrid Pattern | Accepted | 2026-04-02 |
 
 ## Creating a New ADR
 

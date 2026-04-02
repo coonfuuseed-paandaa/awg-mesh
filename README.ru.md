@@ -460,6 +460,60 @@ services:
 | `NET_RAW` | Захват трафика через gopacket/libpcap для определения протокольного fingerprint |
 | `/dev/net/tun` | TUN-устройство для overlay-интерфейса сети |
 
+### Интеграция с Traefik
+
+awg-mesh работает с реверс-прокси Traefik по гибридной схеме: Traefik обрабатывает gRPC и метрики (TCP/HTTP), тогда как UDP-трафик AWG проходит напрямую через прямое связывание порта.
+
+> **Почему AWG не через Traefik?** UDP-прокси Traefik подменяет source IP на IP своего контейнера. WireGuard использует source IP для идентификации пиров — все пиры будут выглядеть как один адрес, что ломает handshake. Это фундаментальное ограничение протокола, а не проблема производительности. Подробности в [ADR-0003](docs/adr/0003-traefik-integration.md).
+
+```yaml
+services:
+  awg-mesh-node:
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - /srv/awg-mesh:/config
+    ports:
+      # AWG data plane — DIRECT, bypasses Traefik (required)
+      - "51820:51820/udp"
+    labels:
+      - "traefik.enable=true"
+      # gRPC management — TCP with mTLS passthrough
+      - "traefik.tcp.routers.awg-grpc.entrypoints=awg-grpc"
+      - "traefik.tcp.routers.awg-grpc.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.awg-grpc.tls.passthrough=true"
+      - "traefik.tcp.routers.awg-grpc.service=awg-grpc-svc"
+      - "traefik.tcp.services.awg-grpc-svc.loadbalancer.server.port=9090"
+      # Prometheus metrics — HTTP
+      - "traefik.http.routers.awg-metrics.rule=Host(`node.example.com`) && PathPrefix(`/metrics`)"
+      - "traefik.http.routers.awg-metrics.entrypoints=web"
+      - "traefik.http.routers.awg-metrics.service=awg-metrics-svc"
+      - "traefik.http.services.awg-metrics-svc.loadbalancer.server.port=9091"
+    command:
+      - --mode=master
+      - --name=master-01
+      - --topology=/config/mesh-topology.yml
+```
+
+Статическая конфигурация Traefik — добавьте точку входа gRPC:
+
+```yaml
+entryPoints:
+  awg-grpc:
+    address: ":9090"
+```
+
+| Порт | Протокол | Маршрутизация | Причина |
+|------|----------|---------------|---------|
+| 51820 | UDP | Прямая (`ports:`) | Source IP необходим для идентификации WG-пиров |
+| 9090 | TCP | Traefik (mTLS passthrough) | Управление gRPC, TLS на ноде |
+| 9091 | HTTP | Traefik | Метрики Prometheus |
+
 ### Интеграция с systemd (опционально)
 
 ```ini
