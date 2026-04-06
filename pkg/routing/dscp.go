@@ -48,10 +48,15 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 		Priority: nftables.ChainPriorityMangle,
 	})
 
+	seenDSCP := make(map[int]bool, len(policies))
 	for _, p := range policies {
 		if p.DSCP < 1 || p.DSCP > 63 {
 			return fmt.Errorf("DSCP value %d out of range (1-63)", p.DSCP)
 		}
+		if seenDSCP[p.DSCP] {
+			return fmt.Errorf("duplicate DSCP value %d in routing policies", p.DSCP)
+		}
+		seenDSCP[p.DSCP] = true
 
 		// Match IP DSCP field and set fwmark.
 		// DSCP is stored in TOS byte bits 7-2 (shifted left by 2).

@@ -1,10 +1,12 @@
 package node
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -66,7 +68,9 @@ func loadNodeTransportState(configDir string) (NodeTransportState, error) {
 	}
 
 	var state NodeTransportState
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&state); err != nil {
 		return NodeTransportState{}, err
 	}
 	return state, nil

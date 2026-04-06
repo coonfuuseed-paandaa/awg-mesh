@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,7 +86,9 @@ func loadClientState(configDir string) (ClientState, error) {
 	}
 
 	var state ClientState
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&state); err != nil {
 		return ClientState{}, err
 	}
 	return state, nil

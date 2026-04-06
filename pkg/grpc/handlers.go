@@ -704,6 +704,9 @@ func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequ
 	return &proto.RotateTokenResponse{Success: true}, nil
 }
 
+// mapParamsToConfig converts proto AWG params to wg.Config.
+// Note: zero-value fields (e.g. Jc=0) are indistinguishable from "not set" in proto3
+// and will be skipped. To clear a parameter, use the rotation API which replaces all params.
 func mapParamsToConfig(params *proto.AwgParams) (wg.Config, bool) {
 	cfg := wg.Config{}
 	hasParams := false

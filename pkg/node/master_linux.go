@@ -445,19 +445,13 @@ func (m *MasterRunner) setupExitMode() error {
 
 // setupDSCPRouting reads routing_policies from topology and sets up DSCP->fwmark->table policy routing.
 // Masters don't have routing_policies directly — they read DSCP from incoming
-// WG packets and apply the same fwmark->table routing as clients.
-// For now, masters rely on overlay routing; DSCP forwarding
-// is handled by the existing ECMP/overlay route table.
+// setupDSCPRouting is intentionally a no-op for masters.
+// Masters forward traffic via ECMP overlay routes; DSCP marking and
+// policy-based routing is a client-side concern. If master-side DSCP
+// forwarding is needed in the future, this function should install
+// nftables rules to match incoming DSCP-marked WG packets and apply
+// fwmark→table routing analogous to client_linux.go:setupDSCPRouting.
 func (m *MasterRunner) setupDSCPRouting() error {
-	if m.node.topology == nil {
-		return nil
-	}
-
-	master := m.node.topology.FindMaster(m.node.config.Name)
-	if master == nil {
-		return nil
-	}
-
 	return nil
 }
 
