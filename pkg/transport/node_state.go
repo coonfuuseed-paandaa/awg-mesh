@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,7 +60,7 @@ func LoadNodeTransportState(configDir string) (NodeTransportState, error) {
 	path := filepath.Join(configDir, "transport.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return NodeTransportState{}, nil
 		}
 		return NodeTransportState{}, fmt.Errorf("read node transport state %q: %w", path, err)

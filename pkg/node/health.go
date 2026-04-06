@@ -263,11 +263,4 @@ func (c *icmpSeqCounter) next() int {
 	return seq
 }
 
-// PingOverlay sends a single ICMP echo using the system ping command.
-// Deprecated: Use PingICMP for production. Kept for non-Linux platforms
-// where raw ICMP sockets may not be available.
-func PingOverlay(ip string, timeout time.Duration) bool {
-	alive, _ := PingICMP(context.Background(), ip, timeout)
-	return alive
-}
 

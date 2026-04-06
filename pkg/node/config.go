@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -71,7 +72,9 @@ func LoadNodeState(dir string) (*NodeState, error) {
 	}
 
 	var state NodeState
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&state); err != nil {
 		return nil, fmt.Errorf("unmarshal node state yaml: %w", err)
 	}
 
@@ -96,8 +99,14 @@ func EnsureKeypair(dir string) (privateKey wg.Key, publicKey wg.Key, err error) 
 	}
 
 	if !errors.Is(loadErr, os.ErrNotExist) {
-		// If the state file exists but is corrupt (e.g., truncated by a crash),
-		// remove it and regenerate rather than failing permanently.
+		// Only auto-recover from YAML parse errors (corrupt/truncated file).
+		// Filesystem errors (permission denied, I/O error) should propagate.
+		var yamlErr *yaml.TypeError
+		isYAMLErr := errors.As(loadErr, &yamlErr) || strings.Contains(loadErr.Error(), "unmarshal node state yaml")
+		if !isYAMLErr {
+			return wg.Key{}, wg.Key{}, fmt.Errorf("load node state: %w", loadErr)
+		}
+
 		statePath := filepath.Join(strings.TrimSpace(dir), nodeStateFileName)
 		if removeErr := os.Remove(statePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			return wg.Key{}, wg.Key{}, fmt.Errorf("remove corrupt node state: %w (original: %w)", removeErr, loadErr)

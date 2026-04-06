@@ -629,12 +629,15 @@ func (c *ClientRunner) SetBalancerIP(pubkeyHex, balancerIP string) {
 			healthy:          old.healthy,
 		}
 		c.platformState.byKey[key] = updated
+		nextLinks := make([]*transportLink, len(c.platformState.links))
 		for i, link := range c.platformState.links {
 			if link == old {
-				c.platformState.links[i] = updated
-				break
+				nextLinks[i] = updated
+			} else {
+				nextLinks[i] = link
 			}
 		}
+		c.platformState.links = nextLinks
 	}
 	c.platformState.mu.Unlock()
 }

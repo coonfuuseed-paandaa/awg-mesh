@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -90,6 +91,10 @@ func (h *AgentHandler) Init(_ context.Context, req *proto.InitRequest) (*proto.I
 	// Verify node cert is signed by the provided CA.
 	if err := pkgtls.ValidateCert(req.NodeCert, caCertParsed); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "init: node_cert not signed by ca_cert: %v", err)
+	}
+	// Verify cert and key form a valid pair.
+	if _, err := tls.X509KeyPair(req.NodeCert, req.NodeKey); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: node_cert and node_key do not match: %v", err)
 	}
 
 	tlsDir := filepath.Join(h.configDir, "tls")
@@ -422,6 +427,9 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 
 	peerPublicKey := hex.EncodeToString(req.GetPublicKey())
 	tunnelName, peerEndpoint := splitEndpointMetadata(strings.TrimSpace(req.GetEndpointHost()))
+	if tunnelName != "" && (strings.Contains(tunnelName, "..") || strings.ContainsAny(tunnelName, "/\\")) {
+		return fmt.Errorf("derived tunnel name %q contains unsafe path characters", tunnelName)
+	}
 	entry := tunnelTransport{
 		Name:            tunnelName,
 		TransportIP:     req.GetLocalTransportIp(),

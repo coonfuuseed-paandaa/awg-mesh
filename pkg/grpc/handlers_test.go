@@ -739,6 +739,85 @@ func TestRotateTokenWritesFile(t *testing.T) {
 	assertFileContents(t, filepath.Join(configDir, "mesh.token"), validHash)
 }
 
+func TestRotateTokenRejectsInvalidHash(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		hash string
+	}{
+		{name: "empty", hash: ""},
+		{name: "plain text", hash: "not-a-bcrypt-hash"},
+		{name: "too long", hash: strings.Repeat("a", 101)},
+		{name: "sha256 hex", hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
+			_, err := handler.RotateToken(context.Background(), &proto.RotateTokenRequest{
+				NewTokenHash: tt.hash,
+			})
+			assertCode(t, err, codes.InvalidArgument)
+		})
+	}
+}
+
+func TestInitRejectsInvalidCerts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		caCert   []byte
+		nodeCert []byte
+		nodeKey  []byte
+	}{
+		{name: "empty ca_cert", caCert: nil, nodeCert: []byte("cert"), nodeKey: []byte("key")},
+		{name: "empty node_cert", caCert: []byte("ca"), nodeCert: nil, nodeKey: []byte("key")},
+		{name: "empty node_key", caCert: []byte("ca"), nodeCert: []byte("cert"), nodeKey: nil},
+		{name: "non-PEM ca_cert", caCert: []byte("not-pem"), nodeCert: []byte("cert"), nodeKey: []byte("key")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
+			_, err := handler.Init(context.Background(), &proto.InitRequest{
+				CaCert:   tt.caCert,
+				NodeCert: tt.nodeCert,
+				NodeKey:  tt.nodeKey,
+			})
+			assertCode(t, err, codes.InvalidArgument)
+		})
+	}
+}
+
+func TestAddTunnelRejectsInvalidNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		tunnelName string
+	}{
+		{name: "too long", tunnelName: "this-is-too-long"},
+		{name: "path traversal", tunnelName: "../../evil"},
+		{name: "spaces", tunnelName: "has space"},
+		{name: "dots", tunnelName: "has.dot"},
+		{name: "slash", tunnelName: "has/slash"},
+	}
+
+	tm := &testTunnelManager{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tm, nil, nil, nil, nil, nil, nil)
+			_, err := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
+				Name:         tt.tunnelName,
+				EndpointHost: "host:51820",
+			})
+			assertCode(t, err, codes.InvalidArgument)
+		})
+	}
+}
+
 func TestCaptureRefresh(t *testing.T) {
 	t.Parallel()
 

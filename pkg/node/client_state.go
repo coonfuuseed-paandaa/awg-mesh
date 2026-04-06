@@ -2,6 +2,7 @@ package node
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,7 +80,7 @@ func loadClientState(configDir string) (ClientState, error) {
 	path := filepath.Join(configDir, clientStateFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return ClientState{}, nil
 		}
 		return ClientState{}, err
