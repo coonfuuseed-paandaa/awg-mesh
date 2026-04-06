@@ -37,7 +37,7 @@ func NewServer(zone, listen, upstream string, records []Record) *Server {
 
 	trimmedListen := strings.TrimSpace(listen)
 	if trimmedListen == "" {
-		trimmedListen = "0.0.0.0:53"
+		trimmedListen = "127.0.0.1:53"
 	}
 
 	trimmedUpstream := strings.TrimSpace(upstream)
@@ -96,24 +96,23 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("in-addr.arpa.", s.handlePTR)
 	mux.HandleFunc(".", s.handleForward)
 
-	s.server = &mdns.Server{
+	server := &mdns.Server{
 		Addr:    s.listen,
 		Net:     "udp",
 		Handler: mux,
 	}
+	s.server = server
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- s.server.ListenAndServe()
+		errCh <- server.ListenAndServe()
 	}()
 
 	select {
 	case err := <-errCh:
 		return fmt.Errorf("dns server failed: %w", err)
 	case <-ctx.Done():
-		if s.server != nil {
-			_ = s.server.Shutdown()
-		}
+		_ = server.Shutdown()
 		return nil
 	}
 }

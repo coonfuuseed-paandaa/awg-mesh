@@ -3,9 +3,10 @@
 package routing
 
 import (
+	"errors"
 	"fmt"
 	"net"
-	"strings"
+	"syscall"
 
 	"github.com/vishvananda/netlink"
 )
@@ -143,7 +144,7 @@ func (r *NetlinkRouter) AddrAdd(ifaceName string, addr *net.IPNet) error {
 
 	netlinkAddr := &netlink.Addr{IPNet: addr}
 	if err := netlink.AddrAdd(link, netlinkAddr); err != nil {
-		if strings.Contains(err.Error(), "file exists") {
+		if errors.Is(err, syscall.EEXIST) {
 			return nil // already assigned, idempotent
 		}
 		return fmt.Errorf("addr add %s dev %s: %w", addr, ifaceName, err)

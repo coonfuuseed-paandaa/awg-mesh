@@ -386,7 +386,11 @@ func makeUnaryAuthInterceptor(tokenProvider func() string, logger zerolog.Logger
 					if pkgtls.VerifyToken(token, tokenProvider()) {
 						return handler(ctx, req)
 					}
-					logger.Warn().Str("method", info.FullMethod).Msg("invalid bearer token")
+					logEvt := logger.Warn().Str("method", info.FullMethod)
+					if p, ok := peer.FromContext(ctx); ok {
+						logEvt = logEvt.Str("peer", p.Addr.String())
+					}
+					logEvt.Msg("invalid bearer token")
 				}
 			}
 		}

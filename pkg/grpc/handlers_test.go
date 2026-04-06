@@ -717,9 +717,12 @@ func TestRotateTokenWritesFile(t *testing.T) {
 	t.Parallel()
 
 	configDir := t.TempDir()
+	// Use a valid bcrypt hash (cost=12, matches RotateToken validation).
+	validHash := "$2a$12$LJ3m4sFQmP.YBpOuQ0v8ru8Fx0g9FPHEMdKEaFVaMEMaYgK0Nb3k."
+
 	handler := NewAgentHandler(configDir, zerolog.Nop())
 	resp, err := handler.RotateToken(context.Background(), &proto.RotateTokenRequest{
-		NewTokenHash: "hashed-token",
+		NewTokenHash: validHash,
 	})
 	if err != nil {
 		t.Fatalf("RotateToken returned error: %v", err)
@@ -728,7 +731,7 @@ func TestRotateTokenWritesFile(t *testing.T) {
 		t.Fatalf("expected success response, got %#v", resp)
 	}
 
-	assertFileContents(t, filepath.Join(configDir, "mesh.token"), "hashed-token")
+	assertFileContents(t, filepath.Join(configDir, "mesh.token"), validHash)
 }
 
 func TestCaptureRefresh(t *testing.T) {

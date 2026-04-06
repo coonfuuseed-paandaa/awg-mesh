@@ -22,6 +22,12 @@ type NodeState struct {
 	OverlayIP  string `yaml:"overlay_ip"`
 }
 
+// String returns a safe representation with the private key redacted.
+func (s NodeState) String() string {
+	return fmt.Sprintf("NodeState{Name:%s Mode:%s OverlayIP:%s PublicKey:%s PrivateKey:[REDACTED]}",
+		s.Name, s.Mode, s.OverlayIP, s.PublicKey)
+}
+
 // SaveNodeState writes node state to node.yml in dir.
 func SaveNodeState(dir string, state NodeState) error {
 	cleanDir := strings.TrimSpace(dir)
@@ -39,8 +45,13 @@ func SaveNodeState(dir string, state NodeState) error {
 	}
 
 	statePath := filepath.Join(cleanDir, nodeStateFileName)
-	if err := os.WriteFile(statePath, data, 0o600); err != nil {
-		return fmt.Errorf("write node state file: %w", err)
+	tmpPath := statePath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return fmt.Errorf("write node state temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, statePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename node state file: %w", err)
 	}
 
 	return nil
@@ -85,7 +96,12 @@ func EnsureKeypair(dir string) (privateKey wg.Key, publicKey wg.Key, err error) 
 	}
 
 	if !errors.Is(loadErr, os.ErrNotExist) {
-		return wg.Key{}, wg.Key{}, fmt.Errorf("load node state: %w", loadErr)
+		// If the state file exists but is corrupt (e.g., truncated by a crash),
+		// remove it and regenerate rather than failing permanently.
+		statePath := filepath.Join(strings.TrimSpace(dir), nodeStateFileName)
+		if removeErr := os.Remove(statePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return wg.Key{}, wg.Key{}, fmt.Errorf("remove corrupt node state: %w (original: %w)", removeErr, loadErr)
+		}
 	}
 
 	privateKey, err = wg.GeneratePrivateKey()

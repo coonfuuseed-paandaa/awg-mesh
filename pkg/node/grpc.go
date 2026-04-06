@@ -79,8 +79,12 @@ func startGRPCServer(
 	}
 
 	go func() {
-		if serveErr := <-serveErrCh; serveErr != nil && ctx.Err() == nil {
-			logger.Error().Err(serveErr).Msg("gRPC server exited with error")
+		select {
+		case serveErr := <-serveErrCh:
+			if serveErr != nil && ctx.Err() == nil {
+				logger.Error().Err(serveErr).Msg("gRPC server exited with error")
+			}
+		case <-ctx.Done():
 		}
 	}()
 

@@ -452,13 +452,7 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 		return nil
 	}
 
-	if err := router.AddrAdd(interfaceName, addr); err != nil {
-		if strings.Contains(err.Error(), "file exists") {
-			return nil
-		}
-		return err
-	}
-	return nil
+	return router.AddrAdd(interfaceName, addr)
 }
 
 func (c *ClientRunner) updateDefaultRoute(links []*transportLink) error {
@@ -608,12 +602,29 @@ func (c *ClientRunner) rebuildECMP(balancerIP string) error {
 	return nil
 }
 
-// SetBalancerIP sets the balancer IP for a specific peer link.
+// SetBalancerIP sets the balancer IP for a specific peer link using copy-on-write.
 func (c *ClientRunner) SetBalancerIP(pubkeyHex, balancerIP string) {
+	key := strings.TrimSpace(pubkeyHex)
+	newIP := strings.TrimSpace(balancerIP)
+
 	c.platformState.mu.Lock()
-	link, exists := c.platformState.byKey[strings.TrimSpace(pubkeyHex)]
-	if exists && link != nil {
-		link.balancerIP = strings.TrimSpace(balancerIP)
+	old, exists := c.platformState.byKey[key]
+	if exists && old != nil {
+		updated := &transportLink{
+			iface:            old.iface,
+			pubkeyHex:        old.pubkeyHex,
+			localTransportIP: old.localTransportIP,
+			peerTransportIP:  old.peerTransportIP,
+			balancerIP:       newIP,
+			healthy:          old.healthy,
+		}
+		c.platformState.byKey[key] = updated
+		for i, link := range c.platformState.links {
+			if link == old {
+				c.platformState.links[i] = updated
+				break
+			}
+		}
 	}
 	c.platformState.mu.Unlock()
 }

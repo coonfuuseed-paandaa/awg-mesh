@@ -129,7 +129,7 @@ func renderDockerCompose(tmplContent string, data any, outputPath string) error 
 		return fmt.Errorf("render compose template: %w", err)
 	}
 
-	if err := os.WriteFile(outputPath, []byte(output.String()), 0644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(output.String()), 0600); err != nil {
 		return fmt.Errorf("write compose file: %w", err)
 	}
 	return nil

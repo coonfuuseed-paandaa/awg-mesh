@@ -40,7 +40,7 @@ func saveNodeTransportState(configDir string, state NodeTransportState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create transport state directory: %w", err)
 	}
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("write node transport state: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

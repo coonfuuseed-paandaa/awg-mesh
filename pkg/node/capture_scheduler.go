@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -33,6 +34,12 @@ func (cs *captureScheduler) SetSchedule(domains []string, countPerDomain int, sc
 	interval, err := time.ParseDuration(schedule)
 	if err != nil {
 		return err
+	}
+	if interval < time.Minute {
+		return fmt.Errorf("capture schedule interval must be at least 1 minute, got %v", interval)
+	}
+	if len(domains) > 100 {
+		return fmt.Errorf("capture domain count must be at most 100, got %d", len(domains))
 	}
 
 	cs.mu.Lock()

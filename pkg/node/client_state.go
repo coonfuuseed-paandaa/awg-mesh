@@ -58,7 +58,7 @@ func saveClientState(configDir string, state ClientState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create client state directory: %w", err)
 	}
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("write client state: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

@@ -7,12 +7,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
+	"golang.org/x/crypto/bcrypt"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
@@ -195,6 +197,10 @@ func (h *AgentHandler) CaptureRefresh(_ context.Context, req *proto.CaptureReque
 	}, nil
 }
 
+// validTunnelName limits tunnel names to 12 safe characters.
+// The derived interface name ("wg-" + name) must fit within IFNAMSIZ (15 chars).
+var validTunnelName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,12}$`)
+
 // AddTunnel creates a tunnel on master mode nodes.
 func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest) (*proto.AddTunnelResponse, error) {
 	if req == nil {
@@ -207,6 +213,9 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 	tunnelName := strings.TrimSpace(req.GetName())
 	if tunnelName == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if !validTunnelName.MatchString(tunnelName) {
+		return nil, status.Errorf(codes.InvalidArgument, "tunnel name %q must match [a-zA-Z0-9_-]{1,12}", tunnelName)
 	}
 
 	endpointHost := strings.TrimSpace(req.GetEndpointHost())
@@ -671,9 +680,17 @@ func (h *AgentHandler) GetHealth(_ context.Context, _ *proto.Empty) (*proto.Heal
 
 // RotateToken updates the node's MESH_TOKEN hash atomically (write-to-temp + rename).
 func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequest) (*proto.RotateTokenResponse, error) {
+	newHash := req.NewTokenHash
+	if len(newHash) == 0 || len(newHash) > 100 {
+		return nil, status.Errorf(codes.InvalidArgument, "token hash must be 1-100 bytes")
+	}
+	if _, err := bcrypt.Cost([]byte(newHash)); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid bcrypt hash: %v", err)
+	}
+
 	tokenPath := filepath.Join(h.configDir, "mesh.token")
 	tmpPath := tokenPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(req.NewTokenHash), 0600); err != nil {
+	if err := os.WriteFile(tmpPath, []byte(newHash), 0600); err != nil {
 		h.logger.Error().Err(err).Msg("rotate token: write temp hash")
 		return nil, status.Errorf(codes.Internal, "rotate token: %v", err)
 	}

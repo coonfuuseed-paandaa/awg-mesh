@@ -111,9 +111,15 @@ func (a *Allocator) Deallocate(master, endpoint string) bool {
 	defer a.mu.Unlock()
 
 	tunnel := master + "/" + endpoint
-	for i, allocation := range a.allocations {
+	for _, allocation := range a.allocations {
 		if allocation.Tunnel == tunnel {
-			a.allocations = append(a.allocations[:i], a.allocations[i+1:]...)
+			next := make([]Allocation, 0, len(a.allocations)-1)
+			for _, a2 := range a.allocations {
+				if a2.Tunnel != tunnel {
+					next = append(next, a2)
+				}
+			}
+			a.allocations = next
 			return true
 		}
 	}

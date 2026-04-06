@@ -108,7 +108,7 @@ func IssueCert(caCert *x509.Certificate, caKey crypto.PrivateKey, commonName str
 
 // SaveCA writes ca.crt (0644) and ca.key (0600) PEM files to dir.
 func SaveCA(dir string, cert *x509.Certificate, key crypto.PrivateKey) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create CA dir: %w", err)
 	}
 
