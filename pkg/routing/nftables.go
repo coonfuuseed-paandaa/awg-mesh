@@ -245,9 +245,13 @@ func (f *NftablesFirewall) EnableStickyECMP(balancerCIDR string) error {
 	return nil
 }
 
-// DisableStickyECMP is handled by TeardownNAT (deletes entire table).
+// DisableStickyECMP is a no-op for individual CIDRs.
+// Connmark rules are table-wide (awg_mesh) and cannot be removed per-CIDR without
+// tracking which CIDRs have active ECMP routes. Stale connmark entries for removed
+// balancer IPs are harmless (no matching traffic) and are cleaned up when TeardownNAT
+// removes the entire table on node shutdown.
 func (f *NftablesFirewall) DisableStickyECMP(_ string) error {
-	return nil // Cleanup happens via TeardownNAT
+	return nil
 }
 
 // TeardownNAT removes the entire awg_mesh table and all its chains/rules.

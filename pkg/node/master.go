@@ -344,6 +344,7 @@ func (m *MasterRunner) listMasterTunnels() []MasterTunnel {
 
 func (m *MasterRunner) healthTargets() []HealthTarget {
 	tunnels := m.listMasterTunnels()
+	UpdateTunnelMetrics(tunnels)
 	targets := make([]HealthTarget, 0, len(tunnels))
 	for _, t := range tunnels {
 		pingAddr := t.EndpointTransportIP

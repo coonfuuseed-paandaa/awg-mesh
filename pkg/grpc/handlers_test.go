@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"google.golang.org/grpc/codes"
@@ -306,11 +307,13 @@ func TestNewAgentHandlerConstructors(t *testing.T) {
 func TestInitWritesInitArtifacts(t *testing.T) {
 	t.Parallel()
 
+	caCertPEM, nodeCertPEM, nodeKeyPEM := generateTestCerts(t)
+
 	handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
 	resp, err := handler.Init(context.Background(), &proto.InitRequest{
-		CaCert:   []byte("ca-cert"),
-		NodeCert: []byte("node-cert"),
-		NodeKey:  []byte("node-key"),
+		CaCert:   caCertPEM,
+		NodeCert: nodeCertPEM,
+		NodeKey:  nodeKeyPEM,
 		Config:   &proto.NodeConfig{},
 	})
 	if err != nil {
@@ -324,9 +327,9 @@ func TestInitWritesInitArtifacts(t *testing.T) {
 	}
 
 	configDir := handler.configDir
-	assertFileContents(t, filepath.Join(configDir, "tls", "ca.crt"), "ca-cert")
-	assertFileContents(t, filepath.Join(configDir, "tls", "node.crt"), "node-cert")
-	assertFileContents(t, filepath.Join(configDir, "tls", "node.key"), "node-key")
+	assertFileContents(t, filepath.Join(configDir, "tls", "ca.crt"), string(caCertPEM))
+	assertFileContents(t, filepath.Join(configDir, "tls", "node.crt"), string(nodeCertPEM))
+	assertFileContents(t, filepath.Join(configDir, "tls", "node.key"), string(nodeKeyPEM))
 	assertFileContents(t, filepath.Join(configDir, "node-config.json"), "{}")
 }
 
@@ -339,12 +342,14 @@ func TestInitReturnsPublicKeyFromKeyProvider(t *testing.T) {
 	}
 	pubKey := key.PublicKey()
 
+	caCertPEM, nodeCertPEM, nodeKeyPEM := generateTestCerts(t)
+
 	kp := &testKeyProvider{key: pubKey}
 	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, nil, nil, kp)
 	resp, initErr := handler.Init(context.Background(), &proto.InitRequest{
-		CaCert:   []byte("ca"),
-		NodeCert: []byte("cert"),
-		NodeKey:  []byte("key"),
+		CaCert:   caCertPEM,
+		NodeCert: nodeCertPEM,
+		NodeKey:  nodeKeyPEM,
 	})
 	if initErr != nil {
 		t.Fatalf("Init returned error: %v", initErr)
@@ -1248,6 +1253,21 @@ func TestGetRoutesNonLinux(t *testing.T) {
 	handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
 	_, err := handler.GetRoutes(context.Background(), &proto.Empty{})
 	assertCode(t, err, codes.Unimplemented)
+}
+
+// generateTestCerts creates a CA + signed node certificate for Init tests.
+func generateTestCerts(t *testing.T) (caCertPEM, nodeCertPEM, nodeKeyPEM []byte) {
+	t.Helper()
+	caCert, caKey, err := pkgtls.GenerateCA("test-ca")
+	if err != nil {
+		t.Fatalf("generate CA: %v", err)
+	}
+	caCertPEM = pkgtls.EncodeCertPEM(caCert)
+	nodeCertPEM, nodeKeyPEM, err = pkgtls.IssueCert(caCert, caKey, "test-node", nil)
+	if err != nil {
+		t.Fatalf("issue cert: %v", err)
+	}
+	return caCertPEM, nodeCertPEM, nodeKeyPEM
 }
 
 func assertFileContents(t *testing.T, path string, expected string) {

@@ -33,12 +33,14 @@ type clientPlatformState struct {
 	mu      sync.Mutex
 	links   []*transportLink
 	byKey   map[string]*transportLink
+	pending map[string]bool // pubkey creation in progress
 	nextIdx int
 }
 
 func initClientPlatformState() clientPlatformState {
 	return clientPlatformState{
-		byKey: make(map[string]*transportLink),
+		byKey:   make(map[string]*transportLink),
+		pending: make(map[string]bool),
 	}
 }
 
@@ -74,9 +76,23 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 		return c.configurePeerOnIface(existingLink.iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
 	}
 
+	// Mark this key as pending to prevent concurrent AddPeer from creating a duplicate.
+	if c.platformState.pending[pubkeyHex] {
+		c.platformState.mu.Unlock()
+		return fmt.Errorf("AddPeer for %s already in progress", pubkeyHex[:8])
+	}
+	c.platformState.pending[pubkeyHex] = true
+
 	ifaceName := fmt.Sprintf("%s%d", clientInterfacePrefix, c.platformState.nextIdx)
 	c.platformState.nextIdx++
 	c.platformState.mu.Unlock()
+
+	// Ensure pending flag is cleared on any exit path.
+	defer func() {
+		c.platformState.mu.Lock()
+		delete(c.platformState.pending, pubkeyHex)
+		c.platformState.mu.Unlock()
+	}()
 
 	privateKey, _, err := EnsureKeypair(c.node.config.ConfigDir)
 	if err != nil {
@@ -111,12 +127,6 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	}
 
 	c.platformState.mu.Lock()
-	if existing, exists := c.platformState.byKey[pubkeyHex]; exists {
-		c.platformState.mu.Unlock()
-		_ = iface.Close()
-		return c.configurePeerOnIface(existing.iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
-	}
-
 	nextLinks := append(append([]*transportLink(nil), c.platformState.links...), newLink)
 	c.platformState.links = nextLinks
 	c.platformState.byKey[pubkeyHex] = newLink

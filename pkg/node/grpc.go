@@ -12,6 +12,10 @@ import (
 )
 
 const defaultGRPCListenAddr = ":9090"
+// grpcStartupGracePeriod is a time-based heuristic for detecting server bind failure.
+// If the server fails to bind within this window, the error is returned to the caller.
+// A deterministic readiness signal (via net.Listen + passing the listener) would be
+// more robust, but would require refactoring the DynamicServer.Start() interface.
 const grpcStartupGracePeriod = 200 * time.Millisecond
 
 // startGRPCServer starts a background gRPC server with token fallback auth and

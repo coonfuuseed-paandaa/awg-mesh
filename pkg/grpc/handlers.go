@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/crypto/bcrypt"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"google.golang.org/grpc/codes"
@@ -74,9 +75,25 @@ func NewAgentHandlerFull(
 // them to disk, and returns success. After Init completes, the node can
 // transition from token-only auth to full mTLS.
 func (h *AgentHandler) Init(_ context.Context, req *proto.InitRequest) (*proto.InitResponse, error) {
+	// Validate TLS material before writing to disk.
+	if len(req.CaCert) == 0 || len(req.NodeCert) == 0 || len(req.NodeKey) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "init: ca_cert, node_cert, and node_key are all required")
+	}
+	caCertParsed, err := pkgtls.ParseCertPEM(req.CaCert)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: invalid ca_cert PEM: %v", err)
+	}
+	if _, err := pkgtls.ParseCertPEM(req.NodeCert); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: invalid node_cert PEM: %v", err)
+	}
+	// Verify node cert is signed by the provided CA.
+	if err := pkgtls.ValidateCert(req.NodeCert, caCertParsed); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: node_cert not signed by ca_cert: %v", err)
+	}
+
 	tlsDir := filepath.Join(h.configDir, "tls")
 
-	if err := os.MkdirAll(tlsDir, 0755); err != nil {
+	if err := os.MkdirAll(tlsDir, 0700); err != nil {
 		h.logger.Error().Err(err).Str("dir", tlsDir).Msg("init: create tls dir")
 		return nil, status.Errorf(codes.Internal, "init: create tls dir: %v", err)
 	}
@@ -450,6 +467,10 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 	})
 }
 
+// splitEndpointMetadata extracts (tunnelName, endpoint) from the endpointHost field.
+// Preferred format: "name|host:port" (explicit separator).
+// Legacy format: "host:port" (name derived from host) or plain hostname (name = hostname).
+// Callers should prefer the "|" format to avoid tunnel name collisions.
 func splitEndpointMetadata(endpointHost string) (string, string) {
 	trimmedEndpointHost := strings.TrimSpace(endpointHost)
 	if trimmedEndpointHost == "" {

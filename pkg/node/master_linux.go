@@ -169,7 +169,7 @@ func (m *MasterRunner) removeOverlayRoute(overlayIP string) {
 	if _, destNet, parseErr := net.ParseCIDR(cidr); parseErr == nil {
 		router := routing.NewNetlinkRouter()
 		if err := router.RouteDelete(destNet); err != nil {
-			m.node.logger.Warn().Str("overlay_ip", overlayIP).Err(err).Msg("failed to remove overlay route")
+			m.node.logger.Error().Str("overlay_ip", overlayIP).Err(err).Msg("failed to remove overlay route — will retry on next health cycle")
 		}
 	}
 }
