@@ -17,12 +17,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
-	"gopkg.in/yaml.v3"
+
 )
 
 // AgentHandler implements proto.AwgAgentServer for the awg-mesh-node.
@@ -404,25 +405,10 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 	return &proto.AddPeerResponse{Success: true}, nil
 }
 
-// nodeTransportState mirrors node.NodeTransportState for transport.yml
-// serialization. Both structs must be kept in sync — they share the same file
-// format. A refactor to a shared package (e.g. pkg/transport) would eliminate
-// this duplication but requires breaking the pkg/node → pkg/grpc import cycle.
-type nodeTransportState struct {
-	OverlayIP string            `yaml:"overlay_ip"`
-	Tunnels   []tunnelTransport `yaml:"tunnels"`
-}
-
-// tunnelTransport mirrors node.TunnelTransport. See nodeTransportState comment.
-type tunnelTransport struct {
-	Name            string `yaml:"name"`
-	OverlayIP       string `yaml:"overlay_ip,omitempty"`
-	TransportIP     string `yaml:"transport_ip"`
-	PeerTransportIP string `yaml:"peer_transport_ip"`
-	PeerPublicKey   string `yaml:"peer_public_key"`
-	PeerEndpoint    string `yaml:"peer_endpoint"`
-	BalancerIP      string `yaml:"balancer_ip,omitempty"`
-}
+// nodeTransportState and tunnelTransport are type aliases for the shared
+// transport state types in pkg/transport, eliminating the previous duplication.
+type nodeTransportState = transport.NodeTransportState
+type tunnelTransport = transport.TunnelTransport
 
 func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRequest) error {
 	if req == nil || strings.TrimSpace(req.GetTransportSubnet()) == "" {
@@ -499,44 +485,11 @@ func splitEndpointMetadata(endpointHost string) (string, string) {
 }
 
 func loadNodeTransportState(configDir string) (nodeTransportState, error) {
-	configDir = strings.TrimSpace(configDir)
-	if configDir == "" {
-		return nodeTransportState{}, fmt.Errorf("config directory is required")
-	}
-
-	path := filepath.Join(configDir, "transport.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nodeTransportState{}, nil
-		}
-		return nodeTransportState{}, fmt.Errorf("read node transport state %q: %w", path, err)
-	}
-
-	var state nodeTransportState
-	if err := yaml.Unmarshal(data, &state); err != nil {
-		return nodeTransportState{}, fmt.Errorf("unmarshal node transport state %q: %w", path, err)
-	}
-	return state, nil
+	return transport.LoadNodeTransportState(configDir)
 }
 
 func saveNodeTransportState(path string, state nodeTransportState) error {
-	data, err := yaml.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("marshal node transport state %q: %w", path, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create transport state directory for %q: %w", path, err)
-	}
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		return fmt.Errorf("write temporary node transport state %q: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace node transport state %q: %w", path, err)
-	}
-	return nil
+	return transport.SaveNodeTransportState(path, state)
 }
 
 func (h *AgentHandler) RemovePeer(_ context.Context, req *proto.RemovePeerRequest) (*proto.RemovePeerResponse, error) {
