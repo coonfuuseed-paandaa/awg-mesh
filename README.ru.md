@@ -431,7 +431,7 @@ ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.3.0
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest
     restart: unless-stopped
     cap_add:
       - NET_ADMIN

@@ -431,7 +431,7 @@ The container expects configuration at `/config`. Map your node's config directo
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.3.0
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -1048,7 +1048,7 @@ Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()`
 | How built | Version shown |
 |-----------|--------------|
 | `go install ...@v1.5.0` | `v1.5.0` |
-| Local clone at tagged commit | `v1.2.0 (abcd1234)` |
+| Local clone at tagged commit | `v1.5.0 (abcd1234)` |
 | `go run` | `dev` |
 
 ### Docker image build
@@ -1074,7 +1074,7 @@ lint → test → build → docker (smoke test + push to GHCR)
 ```
 
 - **lint**: golangci-lint v2.11.4
-- **test**: `CGO_ENABLED=1 go test -race` with coverage threshold enforcement; privileged tests run in a Linux container with `NET_ADMIN`; govulncheck scans for known CVEs; coverage profiles from all packages are merged before threshold check
+- **test**: `CGO_ENABLED=1 go test -race` with coverage threshold enforcement; privileged tests run with sudo on the CI runner; govulncheck scans for known CVEs; coverage profiles from all packages are merged before threshold check
 - **build**: `CGO_ENABLED=1 go build -trimpath` for both binaries
 - **docker**: matrix build — `awg-mesh-node` and `awg-mesh-client` images built in parallel, each followed by a dedicated smoke test (verifies AWG interface creation and gRPC server startup); both images pushed to `ghcr.io/coonfuuseed-paandaa/awg-mesh` on merge to main
 
