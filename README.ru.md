@@ -10,7 +10,7 @@
 
 # awg-mesh
 
-Docker-native зашифрованная overlay-сеть на базе AmneziaWG — топология как код, двухуровневая балансировка ECMP и анти-DPI обфускация в одном контейнере весом 42 МБ.
+Docker-native зашифрованная overlay-сеть на базе AmneziaWG — топология как код, двухуровневая балансировка ECMP и анти-DPI обфускация в двух Docker-контейнерах (42 МБ node + 15 МБ client).
 
 Управлять мультирегиональной WireGuard-сетью вручную — значит разбросанные конфиги, ручной обмен ключами и отсутствие failover. awg-mesh заменяет всё это одним файлом `mesh-topology.yml` и тремя командами CLI. Вы описываете желаемую сеть — masters, endpoints, clients — и система автоматически выдаёт ключи, сертификаты, туннели, правила фаервола и записи балансировщика через нативные интерфейсы ядра Linux (netlink, nftables, eBPF) без порождения дочерних процессов.
 
@@ -66,6 +66,15 @@ graph TB
 ```
 
 ## Что нового
+
+### v1.5.0
+
+- **Персистентность состояния клиента** — DSCP-маршрутизация и DNS-конфигурация сохраняются при перезапуске без topology-файла. После первого `mesh-ctl client init` политики маршрутизации и конфиг DNS записываются в `/config/client-state.yml` и автоматически восстанавливаются при старте контейнера.
+
+### v1.4.0
+
+- **Интеграция с Traefik** — новый флаг `--traefik` включает Traefik-совместимый режим: gRPC и метрики проксируются через Traefik, UDP-трафик AWG проходит напрямую (обход Traefik обязателен — он подменяет source IP, что ломает WG-хендшейки). Пример конфигурации в разделе [Деплой](#интеграция-с-traefik).
+- **Исправление connmark DSCP для обратного трафика** — исправлена потеря DSCP-метки на обратном трафике: пакеты ответа теперь корректно получают fwmark через connmark, что устраняет асимметричную маршрутизацию.
 
 ### v1.3.0
 
@@ -274,7 +283,7 @@ add name=mesh.zone type=FWD forward-to=192.168.254.4
 
 ```bash
 # 1. Установите mesh-ctl на своей машине администратора
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Создайте файл топологии (все поля описаны в разделе Конфигурация)
@@ -318,7 +327,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Установка mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
 ```
 
 Бинарник окажется в `$(go env GOPATH)/bin`. Убедитесь, что эта директория есть в `PATH`:
@@ -362,7 +371,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Обновление mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
 ```
 
 Директория состояния `~/.mesh-ctl/` (CA, токены, ключи, транспортные выделения) не затрагивается.
@@ -982,7 +991,7 @@ CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 ```
 
-CI-пайплайн требует минимум 40% покрытия.
+CI-пайплайн требует минимум 30% покрытия.
 
 ### E2E-симуляция
 
@@ -1034,8 +1043,8 @@ CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
 
 | Способ сборки | Отображаемая версия |
 |---------------|---------------------|
-| `go install ...@v1.3.0` | `v1.2.0` |
-| Локальный клон на тегированном коммите | `v1.2.0 (abcd1234)` |
+| `go install ...@v1.5.0` | `v1.5.0` |
+| Локальный клон на тегированном коммите | `v1.5.0 (abcd1234)` |
 | `go run` | `dev` |
 
 ### Сборка Docker-образа
@@ -1043,7 +1052,7 @@ CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
 Dockerfile использует многоэтапную сборку: builder на `golang:1.25-alpine` (с `libpcap-dev`), создающий CGO-бинарник, который копируется в runtime-образ `alpine:3.21` с разделяемой библиотекой `libpcap`:
 
 ```bash
-docker build -f deploy/Dockerfile -t awg-mesh:dev .
+docker build -f deploy/Dockerfile.node -t awg-mesh:dev .
 ```
 
 ### Линтинг
@@ -1054,16 +1063,16 @@ golangci-lint run ./...
 
 ### CI-пайплайн
 
-GitHub Actions запускается на каждый push и pull request в `master`:
+GitHub Actions запускается на каждый push и pull request в `main`:
 
 ```
 lint → test → build → docker (smoke test + push to GHCR)
 ```
 
-- **lint**: golangci-lint v1.64.0
-- **test**: `CGO_ENABLED=1 go test -race` с проверкой порога покрытия
+- **lint**: golangci-lint v2.11.4
+- **test**: `CGO_ENABLED=1 go test -race` с проверкой порога покрытия; привилегированные тесты (требующие `NET_ADMIN`) запускаются в отдельном job'е; govulncheck проверяет зависимости на известные CVE; coverage-профили из нескольких job'ов объединяются перед проверкой порога
 - **build**: `CGO_ENABLED=1 go build -trimpath` для обоих бинарников
-- **docker**: многоэтапная сборка образа, smoke test (проверка создания AWG-интерфейса и запуска gRPC-сервера), push в `ghcr.io/coonfuuseed-paandaa/awg-mesh` на master
+- **docker**: матричная сборка двух образов (`awg-mesh-node` и `awg-mesh-client`), smoke test для каждого (проверка создания AWG-интерфейса и запуска gRPC-сервера), push в `ghcr.io/coonfuuseed-paandaa/awg-mesh` на main
 
 ## Участие в разработке
 

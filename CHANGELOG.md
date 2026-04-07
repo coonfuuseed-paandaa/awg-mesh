@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- 48-finding audit remediation across security, correctness, and quality (batches 1–4)
+
+### Refactored
+- Extract transport state types to `pkg/transport` (T016)
+
+### CI
+- Privileged tests, govulncheck, and coverage merge added to CI pipeline
+
+---
+
+## [1.5.0] - 2026-04-07
+
+### Added
+- Client state persistence wired into `ClientRunner` lifecycle
+  - `SaveClientState` / `loadClientState` for DSCP routing and DNS configuration
+  - Client survives restart without topology file present
+  - DNS server startup from persisted state on client init
+
+---
+
+## [1.4.0] - 2026-04-05
+
+### Added
+- `--traefik` flag for `docker-compose` generation — TCP services exposed via Traefik labels, UDP traffic routed directly
+- ADR-0003: Traefik integration hybrid pattern (TCP via Traefik, UDP direct)
+
+### Fixed
+- Connmark DSCP fix — save/restore `fwmark` via conntrack for return traffic (was dropped on asymmetric paths)
+
+### Docs
+- Traefik integration guide with hybrid TCP/UDP pattern
+- Direct Overlay Routing section with MikroTik examples
+- RouterOS 7.21 minimum requirement documented; DSCP routing corrections
+
 ---
 
 ## [1.3.0] - 2026-04-02
@@ -283,7 +318,9 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.0.0...v1.1.0
