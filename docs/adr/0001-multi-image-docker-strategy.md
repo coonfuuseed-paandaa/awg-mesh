@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -45,7 +45,7 @@ One image `awg-mesh`, mode selected at runtime via `--mode` flag.
 
 ### Option 2: Two Images — Client + Server
 
-Split into `awg-mesh-client` (no CGO, no libpcap) and `awg-mesh-server` (full, master/endpoint).
+Split into `awg-mesh-client` (no CGO, no libpcap) and `awg-mesh-node` (full, master/endpoint).
 
 - **Pros**: Client image is smaller (~25 MB vs 42 MB), client binary is CGO-free (static, portable), master/endpoint stay unified (they share code), clear naming
 - **Cons**: Two Dockerfiles, two CI matrix entries, need build tag for capture
@@ -71,7 +71,7 @@ One Dockerfile with multi-stage conditional: `--build-arg VARIANT=client` exclud
 | Image | Binary | CGO | Build Tag | Includes | Modes |
 |-------|--------|-----|-----------|----------|-------|
 | `awg-mesh-client` | `awg-mesh-node` | `CGO_ENABLED=0` | `nocapture` | DNS server, DSCP routing stubs | `--mode client` |
-| `awg-mesh-server` | `awg-mesh-node` | `CGO_ENABLED=1` | (default) | libpcap, eBPF, DNS, DSCP routing | `--mode master`, `--mode endpoint` |
+| `awg-mesh-node` | `awg-mesh-node` | `CGO_ENABLED=1` | (default) | libpcap, eBPF, DNS, DSCP routing | `--mode master`, `--mode endpoint` |
 
 MikroTik and Linux clients use the SAME `awg-mesh-client` image — the distinction is in router config generation (`mesh-ctl routing generate --platform mikrotik|linux`), not in the container binary.
 
@@ -89,12 +89,12 @@ MikroTik and Linux clients use the SAME `awg-mesh-client` image — the distinct
 - Client image ~25 MB (from 42 MB) — meets MikroTik <50 MB requirement
 - Client binary is static — runs on scratch, distroless, Alpine, any Linux
 - Server image unchanged — no regression for existing deployments
-- Clear naming: `awg-mesh-client` vs `awg-mesh-server`
+- Clear naming: `awg-mesh-client` vs `awg-mesh-node`
 - CI matrix: `[client, server]` × `[amd64, arm64]` = 4 builds
 
 ### Negative
 
-- Two Dockerfiles to maintain (`deploy/Dockerfile.client`, `deploy/Dockerfile.server`)
+- Two Dockerfiles to maintain (`deploy/Dockerfile.client`, `deploy/Dockerfile.node`)
 - Need `nocapture` build tag and conditional compilation for capture code
 - Docker Hub / GHCR now has two image names to document
 
@@ -126,10 +126,10 @@ This is a CODE change (in `pkg/node/client_linux.go`), not an image split concer
 
 1. Add `//go:build !nocapture` to `pkg/awggen/capture.go` and `pkg/node/capture_linux.go`
 2. Create `deploy/Dockerfile.client` (CGO_ENABLED=0, no libpcap, scratch base)
-3. Create `deploy/Dockerfile.server` (rename current Dockerfile)
+3. Create `deploy/Dockerfile.node` (rename current Dockerfile)
 4. Update CI matrix: build + push both images
 5. Update README with two image references
-6. Tag existing `awg-mesh` image as `awg-mesh-server` for backwards compatibility
+6. Tag existing `awg-mesh` image as `awg-mesh-node` for backwards compatibility
 
 ## Related Decisions
 
@@ -138,6 +138,6 @@ This is a CODE change (in `pkg/node/client_linux.go`), not an image split concer
 
 ## References
 
-- Current Dockerfile: `deploy/Dockerfile`
+- Current Dockerfile: `deploy/Dockerfile.node`
 - Build tag pattern: `pkg/routing/stubs.go` (`//go:build !linux`)
 - MikroTik container limits: `.agent/specs/mikrotik-client/research.md`

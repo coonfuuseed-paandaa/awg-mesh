@@ -98,7 +98,7 @@ func parseNodeOptions() nodeOptions {
 	configDir := flag.String("config-dir", "/config", "Node config directory")
 	topologyPath := flag.String("topology", "", "Path to topology YAML")
 	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error")
-	metricsAddr := flag.String("metrics-addr", ":9091", "Prometheus metrics listen address")
+	metricsAddr := flag.String("metrics-addr", "127.0.0.1:9091", "Prometheus metrics listen address")
 	flag.Parse()
 
 	return nodeOptions{

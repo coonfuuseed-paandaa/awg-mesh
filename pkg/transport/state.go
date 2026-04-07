@@ -117,7 +117,7 @@ func (a *Allocator) SaveState(path string) error {
 	}
 
 	tempPath := path + ".tmp"
-	if err := os.WriteFile(tempPath, encoded, 0o644); err != nil {
+	if err := os.WriteFile(tempPath, encoded, 0o600); err != nil {
 		return fmt.Errorf("write temporary transport state %q: %w", tempPath, err)
 	}
 

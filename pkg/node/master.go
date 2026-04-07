@@ -151,36 +151,46 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 		func(name string) {
 			m.mu.Lock()
 			t, ok := m.tunnels[name]
+			var overlayIP, balancerIP, tunnelName string
 			if ok {
 				t.Healthy = false
+				overlayIP = t.OverlayIP
+				balancerIP = t.BalancerIP
+				tunnelName = t.Name
 			}
 			m.mu.Unlock()
 
-			if ok && t != nil {
-				m.removeOverlayRoute(t.OverlayIP)
-				m.rebuildECMP(t.BalancerIP)
+			if ok {
+				m.removeOverlayRoute(overlayIP)
+				m.rebuildECMP(balancerIP)
 				m.node.logger.Info().
-					Str("tunnel", t.Name).
-					Str("overlay_ip", t.OverlayIP).
-					Str("balancer_ip", t.BalancerIP).
+					Str("tunnel", tunnelName).
+					Str("overlay_ip", overlayIP).
+					Str("balancer_ip", balancerIP).
 					Msg("tunnel down, overlay route removed, ECMP rebuilt")
 			}
 		},
 		func(name string) {
 			m.mu.Lock()
 			t, ok := m.tunnels[name]
+			var overlayIP, balancerIP, tunnelName, epTransportIP, ifaceName string
 			if ok {
 				t.Healthy = true
+				overlayIP = t.OverlayIP
+				balancerIP = t.BalancerIP
+				tunnelName = t.Name
+				epTransportIP = t.EndpointTransportIP
+				ifaceName = t.InterfaceName
 			}
 			m.mu.Unlock()
 
-			if ok && t != nil {
-				m.restoreOverlayRoute(t.OverlayIP, t.EndpointTransportIP, t.InterfaceName)
-				m.rebuildECMP(t.BalancerIP)
+			if ok {
+				m.restoreOverlayRoute(overlayIP, epTransportIP, ifaceName)
+				m.rebuildECMP(balancerIP)
 				m.node.logger.Info().
-					Str("tunnel", t.Name).
-					Str("overlay_ip", t.OverlayIP).
-					Str("balancer_ip", t.BalancerIP).
+					Str("tunnel", tunnelName).
+					Str("overlay_ip", overlayIP).
+					Str("balancer_ip", balancerIP).
 					Msg("tunnel recovered, overlay route restored, ECMP rebuilt")
 			}
 		},
@@ -334,6 +344,7 @@ func (m *MasterRunner) listMasterTunnels() []MasterTunnel {
 
 func (m *MasterRunner) healthTargets() []HealthTarget {
 	tunnels := m.listMasterTunnels()
+	UpdateTunnelMetrics(tunnels)
 	targets := make([]HealthTarget, 0, len(tunnels))
 	for _, t := range tunnels {
 		pingAddr := t.EndpointTransportIP

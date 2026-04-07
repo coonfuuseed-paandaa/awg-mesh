@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"google.golang.org/grpc/codes"
@@ -306,11 +307,13 @@ func TestNewAgentHandlerConstructors(t *testing.T) {
 func TestInitWritesInitArtifacts(t *testing.T) {
 	t.Parallel()
 
+	caCertPEM, nodeCertPEM, nodeKeyPEM := generateTestCerts(t)
+
 	handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
 	resp, err := handler.Init(context.Background(), &proto.InitRequest{
-		CaCert:   []byte("ca-cert"),
-		NodeCert: []byte("node-cert"),
-		NodeKey:  []byte("node-key"),
+		CaCert:   caCertPEM,
+		NodeCert: nodeCertPEM,
+		NodeKey:  nodeKeyPEM,
 		Config:   &proto.NodeConfig{},
 	})
 	if err != nil {
@@ -324,9 +327,9 @@ func TestInitWritesInitArtifacts(t *testing.T) {
 	}
 
 	configDir := handler.configDir
-	assertFileContents(t, filepath.Join(configDir, "tls", "ca.crt"), "ca-cert")
-	assertFileContents(t, filepath.Join(configDir, "tls", "node.crt"), "node-cert")
-	assertFileContents(t, filepath.Join(configDir, "tls", "node.key"), "node-key")
+	assertFileContents(t, filepath.Join(configDir, "tls", "ca.crt"), string(caCertPEM))
+	assertFileContents(t, filepath.Join(configDir, "tls", "node.crt"), string(nodeCertPEM))
+	assertFileContents(t, filepath.Join(configDir, "tls", "node.key"), string(nodeKeyPEM))
 	assertFileContents(t, filepath.Join(configDir, "node-config.json"), "{}")
 }
 
@@ -339,12 +342,14 @@ func TestInitReturnsPublicKeyFromKeyProvider(t *testing.T) {
 	}
 	pubKey := key.PublicKey()
 
+	caCertPEM, nodeCertPEM, nodeKeyPEM := generateTestCerts(t)
+
 	kp := &testKeyProvider{key: pubKey}
 	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, nil, nil, kp)
 	resp, initErr := handler.Init(context.Background(), &proto.InitRequest{
-		CaCert:   []byte("ca"),
-		NodeCert: []byte("cert"),
-		NodeKey:  []byte("key"),
+		CaCert:   caCertPEM,
+		NodeCert: nodeCertPEM,
+		NodeKey:  nodeKeyPEM,
 	})
 	if initErr != nil {
 		t.Fatalf("Init returned error: %v", initErr)
@@ -717,9 +722,12 @@ func TestRotateTokenWritesFile(t *testing.T) {
 	t.Parallel()
 
 	configDir := t.TempDir()
+	// Use a valid bcrypt hash (cost=12, matches RotateToken validation).
+	validHash := "$2a$12$LJ3m4sFQmP.YBpOuQ0v8ru8Fx0g9FPHEMdKEaFVaMEMaYgK0Nb3k."
+
 	handler := NewAgentHandler(configDir, zerolog.Nop())
 	resp, err := handler.RotateToken(context.Background(), &proto.RotateTokenRequest{
-		NewTokenHash: "hashed-token",
+		NewTokenHash: validHash,
 	})
 	if err != nil {
 		t.Fatalf("RotateToken returned error: %v", err)
@@ -728,7 +736,86 @@ func TestRotateTokenWritesFile(t *testing.T) {
 		t.Fatalf("expected success response, got %#v", resp)
 	}
 
-	assertFileContents(t, filepath.Join(configDir, "mesh.token"), "hashed-token")
+	assertFileContents(t, filepath.Join(configDir, "mesh.token"), validHash)
+}
+
+func TestRotateTokenRejectsInvalidHash(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		hash string
+	}{
+		{name: "empty", hash: ""},
+		{name: "plain text", hash: "not-a-bcrypt-hash"},
+		{name: "too long", hash: strings.Repeat("a", 101)},
+		{name: "sha256 hex", hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
+			_, err := handler.RotateToken(context.Background(), &proto.RotateTokenRequest{
+				NewTokenHash: tt.hash,
+			})
+			assertCode(t, err, codes.InvalidArgument)
+		})
+	}
+}
+
+func TestInitRejectsInvalidCerts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		caCert   []byte
+		nodeCert []byte
+		nodeKey  []byte
+	}{
+		{name: "empty ca_cert", caCert: nil, nodeCert: []byte("cert"), nodeKey: []byte("key")},
+		{name: "empty node_cert", caCert: []byte("ca"), nodeCert: nil, nodeKey: []byte("key")},
+		{name: "empty node_key", caCert: []byte("ca"), nodeCert: []byte("cert"), nodeKey: nil},
+		{name: "non-PEM ca_cert", caCert: []byte("not-pem"), nodeCert: []byte("cert"), nodeKey: []byte("key")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
+			_, err := handler.Init(context.Background(), &proto.InitRequest{
+				CaCert:   tt.caCert,
+				NodeCert: tt.nodeCert,
+				NodeKey:  tt.nodeKey,
+			})
+			assertCode(t, err, codes.InvalidArgument)
+		})
+	}
+}
+
+func TestAddTunnelRejectsInvalidNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		tunnelName string
+	}{
+		{name: "too long", tunnelName: "this-is-too-long"},
+		{name: "path traversal", tunnelName: "../../evil"},
+		{name: "spaces", tunnelName: "has space"},
+		{name: "dots", tunnelName: "has.dot"},
+		{name: "slash", tunnelName: "has/slash"},
+	}
+
+	tm := &testTunnelManager{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tm, nil, nil, nil, nil, nil, nil)
+			_, err := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
+				Name:         tt.tunnelName,
+				EndpointHost: "host:51820",
+			})
+			assertCode(t, err, codes.InvalidArgument)
+		})
+	}
 }
 
 func TestCaptureRefresh(t *testing.T) {
@@ -1245,6 +1332,21 @@ func TestGetRoutesNonLinux(t *testing.T) {
 	handler := NewAgentHandler(t.TempDir(), zerolog.Nop())
 	_, err := handler.GetRoutes(context.Background(), &proto.Empty{})
 	assertCode(t, err, codes.Unimplemented)
+}
+
+// generateTestCerts creates a CA + signed node certificate for Init tests.
+func generateTestCerts(t *testing.T) (caCertPEM, nodeCertPEM, nodeKeyPEM []byte) {
+	t.Helper()
+	caCert, caKey, err := pkgtls.GenerateCA("test-ca")
+	if err != nil {
+		t.Fatalf("generate CA: %v", err)
+	}
+	caCertPEM = pkgtls.EncodeCertPEM(caCert)
+	nodeCertPEM, nodeKeyPEM, err = pkgtls.IssueCert(caCert, caKey, "test-node", nil)
+	if err != nil {
+		t.Fatalf("issue cert: %v", err)
+	}
+	return caCertPEM, nodeCertPEM, nodeKeyPEM
 }
 
 func assertFileContents(t *testing.T, path string, expected string) {

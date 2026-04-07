@@ -67,7 +67,7 @@ func (e *EndpointRunner) createInterface() error {
 	if fwErr != nil {
 		e.node.logger.Error().Err(fwErr).Msg("nftables unavailable — firewall rules not applied")
 	} else {
-		if err := fw.SetupNAT("eth0"); err != nil {
+		if err := fw.SetupNAT(discoverWANInterface()); err != nil {
 			e.node.logger.Warn().Err(err).Msg("nftables: failed to enable masquerade")
 		}
 		if err := fw.ClampMSSToPMTU(); err != nil {

@@ -114,37 +114,31 @@ func writeConfig(w io.Writer, cfg Config) error {
 		}
 	}
 
-	awgIntFields := map[string]*int{
-		"jc":   cfg.Jc,
-		"jmin": cfg.Jmin,
-		"jmax": cfg.Jmax,
-		"s1":   cfg.S1,
-		"s2":   cfg.S2,
-		"s3":   cfg.S3,
-		"s4":   cfg.S4,
-	}
-	for key, val := range awgIntFields {
-		if val != nil {
-			if err := writeKV(w, key, strconv.Itoa(*val)); err != nil {
+	// AWG int fields written in deterministic order for reproducible UAPI output.
+	for _, kv := range []struct {
+		key string
+		val *int
+	}{
+		{"jc", cfg.Jc}, {"jmin", cfg.Jmin}, {"jmax", cfg.Jmax},
+		{"s1", cfg.S1}, {"s2", cfg.S2}, {"s3", cfg.S3}, {"s4", cfg.S4},
+	} {
+		if kv.val != nil {
+			if err := writeKV(w, kv.key, strconv.Itoa(*kv.val)); err != nil {
 				return err
 			}
 		}
 	}
 
-	awgStringFields := map[string]*string{
-		"h1": cfg.H1,
-		"h2": cfg.H2,
-		"h3": cfg.H3,
-		"h4": cfg.H4,
-		"i1": cfg.I1,
-		"i2": cfg.I2,
-		"i3": cfg.I3,
-		"i4": cfg.I4,
-		"i5": cfg.I5,
-	}
-	for key, val := range awgStringFields {
-		if val != nil {
-			if err := writeKV(w, key, *val); err != nil {
+	// AWG string fields written in deterministic order.
+	for _, kv := range []struct {
+		key string
+		val *string
+	}{
+		{"h1", cfg.H1}, {"h2", cfg.H2}, {"h3", cfg.H3}, {"h4", cfg.H4},
+		{"i1", cfg.I1}, {"i2", cfg.I2}, {"i3", cfg.I3}, {"i4", cfg.I4}, {"i5", cfg.I5},
+	} {
+		if kv.val != nil {
+			if err := writeKV(w, kv.key, *kv.val); err != nil {
 				return err
 			}
 		}

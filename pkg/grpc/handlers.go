@@ -2,24 +2,29 @@ package grpcserver
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
+	"golang.org/x/crypto/bcrypt"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
-	"gopkg.in/yaml.v3"
+
 )
 
 // AgentHandler implements proto.AwgAgentServer for the awg-mesh-node.
@@ -72,9 +77,29 @@ func NewAgentHandlerFull(
 // them to disk, and returns success. After Init completes, the node can
 // transition from token-only auth to full mTLS.
 func (h *AgentHandler) Init(_ context.Context, req *proto.InitRequest) (*proto.InitResponse, error) {
+	// Validate TLS material before writing to disk.
+	if len(req.CaCert) == 0 || len(req.NodeCert) == 0 || len(req.NodeKey) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "init: ca_cert, node_cert, and node_key are all required")
+	}
+	caCertParsed, err := pkgtls.ParseCertPEM(req.CaCert)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: invalid ca_cert PEM: %v", err)
+	}
+	if _, err := pkgtls.ParseCertPEM(req.NodeCert); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: invalid node_cert PEM: %v", err)
+	}
+	// Verify node cert is signed by the provided CA.
+	if err := pkgtls.ValidateCert(req.NodeCert, caCertParsed); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: node_cert not signed by ca_cert: %v", err)
+	}
+	// Verify cert and key form a valid pair.
+	if _, err := tls.X509KeyPair(req.NodeCert, req.NodeKey); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "init: node_cert and node_key do not match: %v", err)
+	}
+
 	tlsDir := filepath.Join(h.configDir, "tls")
 
-	if err := os.MkdirAll(tlsDir, 0755); err != nil {
+	if err := os.MkdirAll(tlsDir, 0700); err != nil {
 		h.logger.Error().Err(err).Str("dir", tlsDir).Msg("init: create tls dir")
 		return nil, status.Errorf(codes.Internal, "init: create tls dir: %v", err)
 	}
@@ -195,6 +220,10 @@ func (h *AgentHandler) CaptureRefresh(_ context.Context, req *proto.CaptureReque
 	}, nil
 }
 
+// validTunnelName limits tunnel names to 12 safe characters.
+// The derived interface name ("wg-" + name) must fit within IFNAMSIZ (15 chars).
+var validTunnelName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,12}$`)
+
 // AddTunnel creates a tunnel on master mode nodes.
 func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest) (*proto.AddTunnelResponse, error) {
 	if req == nil {
@@ -207,6 +236,9 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 	tunnelName := strings.TrimSpace(req.GetName())
 	if tunnelName == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if !validTunnelName.MatchString(tunnelName) {
+		return nil, status.Errorf(codes.InvalidArgument, "tunnel name %q must match [a-zA-Z0-9_-]{1,12}", tunnelName)
 	}
 
 	endpointHost := strings.TrimSpace(req.GetEndpointHost())
@@ -378,25 +410,10 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 	return &proto.AddPeerResponse{Success: true}, nil
 }
 
-// nodeTransportState mirrors node.NodeTransportState for transport.yml
-// serialization. Both structs must be kept in sync — they share the same file
-// format. A refactor to a shared package (e.g. pkg/transport) would eliminate
-// this duplication but requires breaking the pkg/node → pkg/grpc import cycle.
-type nodeTransportState struct {
-	OverlayIP string            `yaml:"overlay_ip"`
-	Tunnels   []tunnelTransport `yaml:"tunnels"`
-}
-
-// tunnelTransport mirrors node.TunnelTransport. See nodeTransportState comment.
-type tunnelTransport struct {
-	Name            string `yaml:"name"`
-	OverlayIP       string `yaml:"overlay_ip,omitempty"`
-	TransportIP     string `yaml:"transport_ip"`
-	PeerTransportIP string `yaml:"peer_transport_ip"`
-	PeerPublicKey   string `yaml:"peer_public_key"`
-	PeerEndpoint    string `yaml:"peer_endpoint"`
-	BalancerIP      string `yaml:"balancer_ip,omitempty"`
-}
+// nodeTransportState and tunnelTransport are type aliases for the shared
+// transport state types in pkg/transport, eliminating the previous duplication.
+type nodeTransportState = transport.NodeTransportState
+type tunnelTransport = transport.TunnelTransport
 
 func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRequest) error {
 	if req == nil || strings.TrimSpace(req.GetTransportSubnet()) == "" {
@@ -410,6 +427,9 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 
 	peerPublicKey := hex.EncodeToString(req.GetPublicKey())
 	tunnelName, peerEndpoint := splitEndpointMetadata(strings.TrimSpace(req.GetEndpointHost()))
+	if tunnelName != "" && (strings.Contains(tunnelName, "..") || strings.ContainsAny(tunnelName, "/\\")) {
+		return fmt.Errorf("derived tunnel name %q contains unsafe path characters", tunnelName)
+	}
 	entry := tunnelTransport{
 		Name:            tunnelName,
 		TransportIP:     req.GetLocalTransportIp(),
@@ -441,6 +461,10 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 	})
 }
 
+// splitEndpointMetadata extracts (tunnelName, endpoint) from the endpointHost field.
+// Preferred format: "name|host:port" (explicit separator).
+// Legacy format: "host:port" (name derived from host) or plain hostname (name = hostname).
+// Callers should prefer the "|" format to avoid tunnel name collisions.
 func splitEndpointMetadata(endpointHost string) (string, string) {
 	trimmedEndpointHost := strings.TrimSpace(endpointHost)
 	if trimmedEndpointHost == "" {
@@ -469,44 +493,11 @@ func splitEndpointMetadata(endpointHost string) (string, string) {
 }
 
 func loadNodeTransportState(configDir string) (nodeTransportState, error) {
-	configDir = strings.TrimSpace(configDir)
-	if configDir == "" {
-		return nodeTransportState{}, fmt.Errorf("config directory is required")
-	}
-
-	path := filepath.Join(configDir, "transport.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nodeTransportState{}, nil
-		}
-		return nodeTransportState{}, fmt.Errorf("read node transport state %q: %w", path, err)
-	}
-
-	var state nodeTransportState
-	if err := yaml.Unmarshal(data, &state); err != nil {
-		return nodeTransportState{}, fmt.Errorf("unmarshal node transport state %q: %w", path, err)
-	}
-	return state, nil
+	return transport.LoadNodeTransportState(configDir)
 }
 
 func saveNodeTransportState(path string, state nodeTransportState) error {
-	data, err := yaml.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("marshal node transport state %q: %w", path, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create transport state directory for %q: %w", path, err)
-	}
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		return fmt.Errorf("write temporary node transport state %q: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace node transport state %q: %w", path, err)
-	}
-	return nil
+	return transport.SaveNodeTransportState(path, state)
 }
 
 func (h *AgentHandler) RemovePeer(_ context.Context, req *proto.RemovePeerRequest) (*proto.RemovePeerResponse, error) {
@@ -671,9 +662,17 @@ func (h *AgentHandler) GetHealth(_ context.Context, _ *proto.Empty) (*proto.Heal
 
 // RotateToken updates the node's MESH_TOKEN hash atomically (write-to-temp + rename).
 func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequest) (*proto.RotateTokenResponse, error) {
+	newHash := req.NewTokenHash
+	if len(newHash) == 0 || len(newHash) > 100 {
+		return nil, status.Errorf(codes.InvalidArgument, "token hash must be 1-100 bytes")
+	}
+	if _, err := bcrypt.Cost([]byte(newHash)); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid bcrypt hash: %v", err)
+	}
+
 	tokenPath := filepath.Join(h.configDir, "mesh.token")
 	tmpPath := tokenPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(req.NewTokenHash), 0600); err != nil {
+	if err := os.WriteFile(tmpPath, []byte(newHash), 0600); err != nil {
 		h.logger.Error().Err(err).Msg("rotate token: write temp hash")
 		return nil, status.Errorf(codes.Internal, "rotate token: %v", err)
 	}
@@ -687,6 +686,9 @@ func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequ
 	return &proto.RotateTokenResponse{Success: true}, nil
 }
 
+// mapParamsToConfig converts proto AWG params to wg.Config.
+// Note: zero-value fields (e.g. Jc=0) are indistinguishable from "not set" in proto3
+// and will be skipped. To clear a parameter, use the rotation API which replaces all params.
 func mapParamsToConfig(params *proto.AwgParams) (wg.Config, bool) {
 	cfg := wg.Config{}
 	hasParams := false

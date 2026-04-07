@@ -56,6 +56,24 @@ func LoadCACert(path string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
+// EncodeCertPEM encodes an X.509 certificate as a PEM block.
+func EncodeCertPEM(cert *x509.Certificate) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+}
+
+// ParseCertPEM parses a PEM-encoded X.509 certificate.
+func ParseCertPEM(certPEM []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse certificate: %w", err)
+	}
+	return cert, nil
+}
+
 // ValidateCert verifies that certPEM was signed by caCert.
 func ValidateCert(certPEM []byte, caCert *x509.Certificate) error {
 	block, _ := pem.Decode(certPEM)

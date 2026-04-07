@@ -57,6 +57,11 @@ func NewServer(cfg ServerConfig, handler proto.AwgAgentServer, logger zerolog.Lo
 		return nil, fmt.Errorf("grpc server: load CA cert: %w", err)
 	}
 
+	// VerifyClientCertIfGiven allows connections without a client certificate,
+	// falling through to bearer-token auth. This is intentional: during bootstrap
+	// (pre-Init), nodes have no CA-signed cert yet and authenticate via token only.
+	// Post-Init, clients present mTLS certs and token auth serves as fallback.
+	// If the token file is missing at startup, all token comparisons fail (DoS, not bypass).
 	tlsConfig := &tls.Config{
 		ClientAuth:   tls.VerifyClientCertIfGiven,
 		ClientCAs:    pool,
@@ -386,7 +391,11 @@ func makeUnaryAuthInterceptor(tokenProvider func() string, logger zerolog.Logger
 					if pkgtls.VerifyToken(token, tokenProvider()) {
 						return handler(ctx, req)
 					}
-					logger.Warn().Str("method", info.FullMethod).Msg("invalid bearer token")
+					logEvt := logger.Warn().Str("method", info.FullMethod)
+					if p, ok := peer.FromContext(ctx); ok {
+						logEvt = logEvt.Str("peer", p.Addr.String())
+					}
+					logEvt.Msg("invalid bearer token")
 				}
 			}
 		}

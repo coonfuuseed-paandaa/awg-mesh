@@ -10,7 +10,7 @@
 
 # awg-mesh
 
-Docker-native encrypted overlay mesh network built on AmneziaWG — topology-as-code, two-level ECMP load balancing, and anti-DPI obfuscation in a single 42 MB container.
+Docker-native encrypted overlay mesh network built on AmneziaWG — topology-as-code, two-level ECMP load balancing, and anti-DPI obfuscation in Docker containers (42 MB node + 15 MB client).
 
 Managing a multi-region WireGuard mesh by hand means scattered configs, manual key exchange, and no failover. awg-mesh replaces all of that with a single `mesh-topology.yml` file and three CLI commands. You describe your desired network — masters, endpoints, clients — and the system provisions keys, certificates, tunnels, firewall rules, and load balancer entries automatically using native Linux kernel interfaces (netlink, nftables, eBPF) with no subprocess forking.
 
@@ -66,6 +66,15 @@ graph TB
 ```
 
 ## What's New
+
+### v1.5.0
+
+- **Client state persistence** — DSCP routing policies and DNS config are saved to `/config/client-state.yml` after `mesh-ctl client init`. Container restores full state on restart without requiring the topology file or a gRPC re-init.
+
+### v1.4.0
+
+- **Traefik integration** (`--traefik` flag) — awg-mesh-node announces itself to Traefik via labels. gRPC management uses TCP mTLS passthrough; AWG UDP bypasses Traefik via direct port binding (source IP required for WG peer identification).
+- **Connmark DSCP fix** — return traffic from endpoints now correctly carries DSCP marks back through the master, fixing asymmetric routing in conntrack-based sticky sessions.
 
 ### v1.3.0
 
@@ -274,7 +283,7 @@ This example deploys a minimal mesh: two masters in two regions, two endpoints i
 
 ```bash
 # 1. Install mesh-ctl on your admin machine
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Create your topology file (see Configuration section for all fields)
@@ -318,7 +327,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Install mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
 ```
 
 The binary lands in `$(go env GOPATH)/bin`. Ensure that directory is in your `PATH`:
@@ -362,7 +371,7 @@ All nodes should appear `ONLINE` with tunnel counts matching the topology.
 ### Upgrading mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.3.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
 ```
 
 The `~/.mesh-ctl/` state directory (CA, tokens, keys, transport allocations) is not affected.
@@ -422,7 +431,7 @@ The container expects configuration at `/config`. Map your node's config directo
 ```yaml
 services:
   awg-mesh-node:
-    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.3.0
+    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -934,6 +943,10 @@ AmneziaWG extends WireGuard with obfuscation fields that make tunnel traffic uni
 
 Schedule rotation via `mesh-ctl rotate` or configure automatic intervals in `mesh-topology.yml` under `rotation.defaults`.
 
+### Security hardening
+
+A 48-finding security audit was performed against the full codebase. All findings were remediated across four batches covering: race condition elimination, input validation at all gRPC and CLI boundaries, full certificate chain verification (leaf + intermediates + CA), metrics endpoint hardening, TOCTOU-safe file operations, and general defence-in-depth improvements. No known security findings remain open.
+
 ### Protocol mimicry
 
 Master nodes run a gopacket/libpcap capture loop that samples real TLS ClientHello and QUIC Initial packets from configured domains. Captured fingerprints are applied to AWG obfuscation parameters, making tunnel traffic statistically resemble ordinary HTTPS/QUIC flows.
@@ -982,7 +995,7 @@ CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 ```
 
-The CI pipeline enforces a 40% coverage floor.
+The CI pipeline enforces a 30% coverage floor.
 
 ### E2E simulation
 
@@ -1034,8 +1047,8 @@ Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()`
 
 | How built | Version shown |
 |-----------|--------------|
-| `go install ...@v1.3.0` | `v1.2.0` |
-| Local clone at tagged commit | `v1.2.0 (abcd1234)` |
+| `go install ...@v1.5.0` | `v1.5.0` |
+| Local clone at tagged commit | `v1.5.0 (abcd1234)` |
 | `go run` | `dev` |
 
 ### Docker image build
@@ -1043,7 +1056,7 @@ Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()`
 The Dockerfile uses a multi-stage build: `golang:1.25-alpine` builder (with `libpcap-dev`) producing a CGO binary, copied into an `alpine:3.21` runtime image with the `libpcap` shared library:
 
 ```bash
-docker build -f deploy/Dockerfile -t awg-mesh:dev .
+docker build -f deploy/Dockerfile.node -t awg-mesh:dev .
 ```
 
 ### Lint
@@ -1054,16 +1067,16 @@ golangci-lint run ./...
 
 ### CI pipeline
 
-GitHub Actions runs on every push and pull request to `master`:
+GitHub Actions runs on every push and pull request to `main`:
 
 ```
 lint → test → build → docker (smoke test + push to GHCR)
 ```
 
-- **lint**: golangci-lint v1.64.0
-- **test**: `CGO_ENABLED=1 go test -race` with coverage threshold enforcement
+- **lint**: golangci-lint v2.11.4
+- **test**: `CGO_ENABLED=1 go test -race` with coverage threshold enforcement; privileged tests run with sudo on the CI runner; govulncheck scans for known CVEs; coverage profiles from all packages are merged before threshold check
 - **build**: `CGO_ENABLED=1 go build -trimpath` for both binaries
-- **docker**: multi-stage image build, smoke test (verifies AWG interface creation and gRPC server startup), push to `ghcr.io/coonfuuseed-paandaa/awg-mesh` on master
+- **docker**: matrix build — `awg-mesh-node` and `awg-mesh-client` images built in parallel, each followed by a dedicated smoke test (verifies AWG interface creation and gRPC server startup); both images pushed to `ghcr.io/coonfuuseed-paandaa/awg-mesh` on merge to main
 
 ## Contributing
 

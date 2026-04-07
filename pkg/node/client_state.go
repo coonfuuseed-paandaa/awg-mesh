@@ -1,6 +1,8 @@
 package node
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,7 +60,7 @@ func saveClientState(configDir string, state ClientState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create client state directory: %w", err)
 	}
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("write client state: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
@@ -78,14 +80,16 @@ func loadClientState(configDir string) (ClientState, error) {
 	path := filepath.Join(configDir, clientStateFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return ClientState{}, nil
 		}
 		return ClientState{}, err
 	}
 
 	var state ClientState
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&state); err != nil {
 		return ClientState{}, err
 	}
 	return state, nil

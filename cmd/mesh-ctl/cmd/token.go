@@ -53,9 +53,10 @@ func newTokenRotateCommand() *cobra.Command {
 				return fmt.Errorf("hash new token: %w", err)
 			}
 
+			// Use CA-verified TLS for token rotation (post-Init, CA cert is available).
 			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 				Target:     host + ":9090",
-				Insecure: true,
+				CACertPath: caPath(configDir),
 				Token:      oldToken,
 			})
 			if err != nil {

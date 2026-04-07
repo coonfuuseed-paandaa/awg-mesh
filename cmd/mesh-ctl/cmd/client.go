@@ -52,9 +52,7 @@ func newClientPrepareCommand() *cobra.Command {
 
 			switch client.Type {
 			case "linux":
-				caCert, caKey, err := ensureCA(configDir)
-				_ = caCert
-				_ = caKey
+				_, _, err := ensureCA(configDir)
 				if err != nil {
 					return fmt.Errorf("ensure CA: %w", err)
 				}

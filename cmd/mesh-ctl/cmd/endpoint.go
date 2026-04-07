@@ -49,9 +49,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 				return fmt.Errorf("endpoint %q not found in topology", name)
 			}
 
-			caCert, caKey, err := ensureCA(configDir)
-			_ = caCert
-			_ = caKey
+			_, _, err = ensureCA(configDir)
 			if err != nil {
 				return fmt.Errorf("ensure CA: %w", err)
 			}

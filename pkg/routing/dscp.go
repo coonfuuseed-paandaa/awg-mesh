@@ -3,8 +3,10 @@
 package routing
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"syscall"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
@@ -46,10 +48,15 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 		Priority: nftables.ChainPriorityMangle,
 	})
 
+	seenDSCP := make(map[int]bool, len(policies))
 	for _, p := range policies {
 		if p.DSCP < 1 || p.DSCP > 63 {
 			return fmt.Errorf("DSCP value %d out of range (1-63)", p.DSCP)
 		}
+		if seenDSCP[p.DSCP] {
+			return fmt.Errorf("duplicate DSCP value %d in routing policies", p.DSCP)
+		}
+		seenDSCP[p.DSCP] = true
 
 		// Match IP DSCP field and set fwmark.
 		// DSCP is stored in TOS byte bits 7-2 (shifted left by 2).
@@ -191,8 +198,8 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 		rule.Table = p.TableID
 		rule.Priority = 100 + p.DSCP
 		if err := netlink.RuleAdd(rule); err != nil {
-			// Ignore "file exists" — rule may already exist from previous run.
-			if err.Error() != "file exists" {
+			// Ignore EEXIST — rule may already exist from previous run.
+			if !errors.Is(err, syscall.EEXIST) {
 				return fmt.Errorf("ip rule add fwmark %d table %d: %w", p.Fwmark, p.TableID, err)
 			}
 		}
@@ -259,7 +266,8 @@ func TeardownDSCPPolicyRouting() error {
 	return nil
 }
 
-// encodeUint32 encodes a uint32 in native byte order for nftables expressions.
+// encodeUint32 encodes a uint32 in little-endian byte order for nftables register values.
+// This matches the native byte order on x86_64/arm64 (the only target architectures).
 func encodeUint32(v uint32) []byte {
 	return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)}
 }

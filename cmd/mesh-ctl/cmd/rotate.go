@@ -272,7 +272,7 @@ func connectMasterAgent(master topology.MasterNode) (*grpcclient.Client, error) 
 
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 		Target:     net.JoinHostPort(master.Host, rotateAgentPort),
-		Insecure: true,
+		CACertPath: caPath(configDir),
 		Token:      token,
 	})
 	if err != nil {

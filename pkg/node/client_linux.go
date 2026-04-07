@@ -33,12 +33,14 @@ type clientPlatformState struct {
 	mu      sync.Mutex
 	links   []*transportLink
 	byKey   map[string]*transportLink
+	pending map[string]bool // pubkey creation in progress
 	nextIdx int
 }
 
 func initClientPlatformState() clientPlatformState {
 	return clientPlatformState{
-		byKey: make(map[string]*transportLink),
+		byKey:   make(map[string]*transportLink),
+		pending: make(map[string]bool),
 	}
 }
 
@@ -74,9 +76,23 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 		return c.configurePeerOnIface(existingLink.iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
 	}
 
+	// Mark this key as pending to prevent concurrent AddPeer from creating a duplicate.
+	if c.platformState.pending[pubkeyHex] {
+		c.platformState.mu.Unlock()
+		return fmt.Errorf("AddPeer for %s already in progress", pubkeyHex[:8])
+	}
+	c.platformState.pending[pubkeyHex] = true
+
 	ifaceName := fmt.Sprintf("%s%d", clientInterfacePrefix, c.platformState.nextIdx)
 	c.platformState.nextIdx++
 	c.platformState.mu.Unlock()
+
+	// Ensure pending flag is cleared on any exit path.
+	defer func() {
+		c.platformState.mu.Lock()
+		delete(c.platformState.pending, pubkeyHex)
+		c.platformState.mu.Unlock()
+	}()
 
 	privateKey, _, err := EnsureKeypair(c.node.config.ConfigDir)
 	if err != nil {
@@ -111,12 +127,6 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	}
 
 	c.platformState.mu.Lock()
-	if existing, exists := c.platformState.byKey[pubkeyHex]; exists {
-		c.platformState.mu.Unlock()
-		_ = iface.Close()
-		return c.configurePeerOnIface(existing.iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
-	}
-
 	nextLinks := append(append([]*transportLink(nil), c.platformState.links...), newLink)
 	c.platformState.links = nextLinks
 	c.platformState.byKey[pubkeyHex] = newLink
@@ -452,13 +462,7 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 		return nil
 	}
 
-	if err := router.AddrAdd(interfaceName, addr); err != nil {
-		if strings.Contains(err.Error(), "file exists") {
-			return nil
-		}
-		return err
-	}
-	return nil
+	return router.AddrAdd(interfaceName, addr)
 }
 
 func (c *ClientRunner) updateDefaultRoute(links []*transportLink) error {
@@ -608,12 +612,32 @@ func (c *ClientRunner) rebuildECMP(balancerIP string) error {
 	return nil
 }
 
-// SetBalancerIP sets the balancer IP for a specific peer link.
+// SetBalancerIP sets the balancer IP for a specific peer link using copy-on-write.
 func (c *ClientRunner) SetBalancerIP(pubkeyHex, balancerIP string) {
+	key := strings.TrimSpace(pubkeyHex)
+	newIP := strings.TrimSpace(balancerIP)
+
 	c.platformState.mu.Lock()
-	link, exists := c.platformState.byKey[strings.TrimSpace(pubkeyHex)]
-	if exists && link != nil {
-		link.balancerIP = strings.TrimSpace(balancerIP)
+	old, exists := c.platformState.byKey[key]
+	if exists && old != nil {
+		updated := &transportLink{
+			iface:            old.iface,
+			pubkeyHex:        old.pubkeyHex,
+			localTransportIP: old.localTransportIP,
+			peerTransportIP:  old.peerTransportIP,
+			balancerIP:       newIP,
+			healthy:          old.healthy,
+		}
+		c.platformState.byKey[key] = updated
+		nextLinks := make([]*transportLink, len(c.platformState.links))
+		for i, link := range c.platformState.links {
+			if link == old {
+				nextLinks[i] = updated
+			} else {
+				nextLinks[i] = link
+			}
+		}
+		c.platformState.links = nextLinks
 	}
 	c.platformState.mu.Unlock()
 }

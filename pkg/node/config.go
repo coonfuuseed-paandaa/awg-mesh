@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +23,12 @@ type NodeState struct {
 	OverlayIP  string `yaml:"overlay_ip"`
 }
 
+// String returns a safe representation with the private key redacted.
+func (s NodeState) String() string {
+	return fmt.Sprintf("NodeState{Name:%s Mode:%s OverlayIP:%s PublicKey:%s PrivateKey:[REDACTED]}",
+		s.Name, s.Mode, s.OverlayIP, s.PublicKey)
+}
+
 // SaveNodeState writes node state to node.yml in dir.
 func SaveNodeState(dir string, state NodeState) error {
 	cleanDir := strings.TrimSpace(dir)
@@ -39,8 +46,13 @@ func SaveNodeState(dir string, state NodeState) error {
 	}
 
 	statePath := filepath.Join(cleanDir, nodeStateFileName)
-	if err := os.WriteFile(statePath, data, 0o600); err != nil {
-		return fmt.Errorf("write node state file: %w", err)
+	tmpPath := statePath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return fmt.Errorf("write node state temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, statePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename node state file: %w", err)
 	}
 
 	return nil
@@ -60,7 +72,9 @@ func LoadNodeState(dir string) (*NodeState, error) {
 	}
 
 	var state NodeState
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&state); err != nil {
 		return nil, fmt.Errorf("unmarshal node state yaml: %w", err)
 	}
 
@@ -85,7 +99,18 @@ func EnsureKeypair(dir string) (privateKey wg.Key, publicKey wg.Key, err error) 
 	}
 
 	if !errors.Is(loadErr, os.ErrNotExist) {
-		return wg.Key{}, wg.Key{}, fmt.Errorf("load node state: %w", loadErr)
+		// Only auto-recover from YAML parse errors (corrupt/truncated file).
+		// Filesystem errors (permission denied, I/O error) should propagate.
+		var yamlErr *yaml.TypeError
+		isYAMLErr := errors.As(loadErr, &yamlErr) || strings.Contains(loadErr.Error(), "unmarshal node state yaml")
+		if !isYAMLErr {
+			return wg.Key{}, wg.Key{}, fmt.Errorf("load node state: %w", loadErr)
+		}
+
+		statePath := filepath.Join(strings.TrimSpace(dir), nodeStateFileName)
+		if removeErr := os.Remove(statePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return wg.Key{}, wg.Key{}, fmt.Errorf("remove corrupt node state: %w (original: %w)", removeErr, loadErr)
+		}
 	}
 
 	privateKey, err = wg.GeneratePrivateKey()

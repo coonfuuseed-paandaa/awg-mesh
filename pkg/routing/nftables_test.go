@@ -11,7 +11,7 @@ func TestNewNftablesFirewall(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("requires root (nftables)")
 	}
-	t.Parallel()
+	// No t.Parallel() — nftables tests share a single kernel table (awg_mesh).
 	fw, err := NewNftablesFirewall()
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
@@ -27,13 +27,11 @@ func TestNftablesSetupAndTeardownNAT(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("requires root (nftables)")
 	}
-	t.Parallel()
+	// No t.Parallel() — nftables tests share a single kernel table (awg_mesh).
 	fw, err := NewNftablesFirewall()
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
 	}
-	defer func() { _ = fw.TeardownNAT() }()
-
 	if err := fw.SetupNAT("lo"); err != nil {
 		t.Fatalf("SetupNAT: %v", err)
 	}
@@ -48,7 +46,7 @@ func TestNftablesClampMSSToPMTU(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("requires root (nftables)")
 	}
-	t.Parallel()
+	// No t.Parallel() — nftables tests share a single kernel table (awg_mesh).
 	fw, err := NewNftablesFirewall()
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
@@ -64,7 +62,7 @@ func TestNftablesEnableStickyECMP(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("requires root (nftables)")
 	}
-	t.Parallel()
+	// No t.Parallel() — nftables tests share a single kernel table (awg_mesh).
 	fw, err := NewNftablesFirewall()
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
@@ -80,7 +78,7 @@ func TestNftablesTeardownIdempotent(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("requires root (nftables)")
 	}
-	t.Parallel()
+	// No t.Parallel() — nftables tests share a single kernel table (awg_mesh).
 	fw, err := NewNftablesFirewall()
 	if err != nil {
 		t.Skipf("nftables not available: %v", err)
