@@ -44,9 +44,25 @@ jobs:
       - name: Run Tests
         run: CGO_ENABLED=1 go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      - name: Run Privileged Tests
+        run: |
+          sudo CGO_ENABLED=1 $(which go) test -race -coverprofile=coverage-priv.out -covermode=atomic \
+            ./pkg/routing/ ./pkg/node/ -v -count=1
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Merge Coverage Profiles
+        run: |
+          go install github.com/wadey/gocovmerge@latest
+          gocovmerge coverage.out coverage-priv.out > coverage-merged.out
+
       - name: Check Coverage Threshold
         run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          COVERAGE=$(go tool cover -func=coverage-merged.out | grep total | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
           if [ "$(echo "$COVERAGE < 30" | bc -l)" -eq 1 ]; then
             echo "::error::Coverage ${COVERAGE}% is below 30% threshold"
@@ -57,7 +73,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: coverage
-          path: coverage.out
+          path: coverage-merged.out
 
   build:
     runs-on: ubuntu-latest
