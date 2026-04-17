@@ -340,29 +340,78 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # GHCR retag — always.
+      # Inputs reach shell bodies via env to prevent command injection —
+      # `${{ inputs.x }}` is substituted before bash sees the line, which
+      # would let a crafted input execute arbitrary commands in a runner
+      # that has packages:write + DOCKERHUB_TOKEN. `workflow_dispatch`
+      # requires write access so blast radius is limited, but the hardening
+      # is free.
+      #
+      # Tag set matches the normal tag-push path: v<version>, <major>.<minor>,
+      # <major> (suppressed for v0.x). Without the aliases, consumers pinning
+      # :1.8 or :1 keep pulling stale digests after a retag.
       - name: Retag GHCR
+        env:
+          VERSION: ${{ inputs.retag_version }}
+          SOURCE: ${{ inputs.source_sha }}
+          IMAGE: ghcr.io/coonfuuseed-paandaa/${{ matrix.image }}
         run: |
           set -e
-          docker buildx imagetools create \
-            --tag ghcr.io/coonfuuseed-paandaa/${{ matrix.image }}:${{ inputs.retag_version }} \
-            ghcr.io/coonfuuseed-paandaa/${{ matrix.image }}:${{ inputs.source_sha }}
+          SEMVER="${VERSION#v}"
+          MAJOR="${SEMVER%%.*}"
+          REST="${SEMVER#*.}"
+          MINOR="${REST%%.*}"
+          TAGS=(--tag "$IMAGE:$VERSION" --tag "$IMAGE:$MAJOR.$MINOR")
+          if [ "$MAJOR" != "0" ]; then
+            TAGS+=(--tag "$IMAGE:$MAJOR")
+          fi
+          docker buildx imagetools create "${TAGS[@]}" "$IMAGE:$SOURCE"
 
       # Docker Hub retag — only for primary images, not the GHCR-only alias.
       - name: Retag Docker Hub
         if: matrix.mirror_dockerhub
+        env:
+          VERSION: ${{ inputs.retag_version }}
+          SOURCE: ${{ inputs.source_sha }}
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
         run: |
           set -e
-          docker buildx imagetools create \
-            --tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ inputs.retag_version }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ inputs.source_sha }}
+          SEMVER="${VERSION#v}"
+          MAJOR="${SEMVER%%.*}"
+          REST="${SEMVER#*.}"
+          MINOR="${REST%%.*}"
+          TAGS=(--tag "$IMAGE:$VERSION" --tag "$IMAGE:$MAJOR.$MINOR")
+          if [ "$MAJOR" != "0" ]; then
+            TAGS+=(--tag "$IMAGE:$MAJOR")
+          fi
+          docker buildx imagetools create "${TAGS[@]}" "$IMAGE:$SOURCE"
 
       - name: Verify retagged manifest (GHCR)
+        env:
+          VERSION: ${{ inputs.retag_version }}
+          IMAGE: ghcr.io/coonfuuseed-paandaa/${{ matrix.image }}
         run: |
           set -e
-          MANIFEST=$(docker buildx imagetools inspect ghcr.io/coonfuuseed-paandaa/${{ matrix.image }}:${{ inputs.retag_version }})
+          MANIFEST=$(docker buildx imagetools inspect "$IMAGE:$VERSION")
           echo "$MANIFEST"
           for platform in linux/amd64 linux/386 linux/arm64 linux/arm/v7 linux/arm/v6; do
             echo "$MANIFEST" | grep -q "$platform" || \
-              (echo "::error::GHCR ${{ matrix.image }}:${{ inputs.retag_version }} missing $platform" && exit 1)
+              (echo "::error::GHCR $IMAGE:$VERSION missing $platform" && exit 1)
+          done
+
+      # Docker Hub partial failures (auth scope regression, rate limit,
+      # transient 5xx) otherwise surface during user `docker pull`. Verify
+      # the mirror matches the GHCR manifest list coverage.
+      - name: Verify retagged manifest (Docker Hub)
+        if: matrix.mirror_dockerhub
+        env:
+          VERSION: ${{ inputs.retag_version }}
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
+        run: |
+          set -e
+          MANIFEST=$(docker buildx imagetools inspect "$IMAGE:$VERSION")
+          echo "$MANIFEST"
+          for platform in linux/amd64 linux/386 linux/arm64 linux/arm/v7 linux/arm/v6; do
+            echo "$MANIFEST" | grep -q "$platform" || \
+              (echo "::error::Docker Hub $IMAGE:$VERSION missing $platform" && exit 1)
           done
