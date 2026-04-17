@@ -83,8 +83,13 @@ func buildEnvCommands(envListName string, envVars map[string]string) []string {
 	commands := make([]string, 0, len(keys))
 	for _, key := range keys {
 		value := envVars[key]
+		// RouterOS 7.21+ renamed the /container/envs/add parameter from
+		// `name=` to `list=`. The project documents 7.21 as the minimum
+		// supported release (see README and ADR-0002), so we emit `list=`
+		// here. Operators on 7.20 or earlier would need to downgrade the
+		// parameter manually — that's out of support scope.
 		command := fmt.Sprintf(
-			"/container/envs/add name=%s key=%s value=%s",
+			"/container/envs/add list=%s key=%s value=%s",
 			escapeRouterOSToken(envListName),
 			escapeRouterOSToken(key),
 			quoteRouterOSValue(value),

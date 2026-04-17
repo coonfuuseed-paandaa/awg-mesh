@@ -30,9 +30,9 @@ const rotateScriptTemplate = `# awg-mesh AWG parameter rotation script
 
 :local envList {{ .EnvListLiteral }}
 :local params {{ .ParamsLiteral }}
-:local existing [/container/envs/find where name=$envList and key="MESH_AWG_PARAMS"]
+:local existing [/container/envs/find where list=$envList and key="MESH_AWG_PARAMS"]
 :if ([:len $existing] = 0) do={
-    /container/envs/add name=$envList key=MESH_AWG_PARAMS value=$params
+    /container/envs/add list=$envList key=MESH_AWG_PARAMS value=$params
 } else={
     /container/envs/set $existing value=$params
 }
