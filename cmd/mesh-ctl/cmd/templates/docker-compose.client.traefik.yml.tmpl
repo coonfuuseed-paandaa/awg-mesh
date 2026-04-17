@@ -8,20 +8,21 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     environment:
-      - MESH_TOKEN={{.Token}}
+      # Bootstrap: written to /config/mesh.token on first boot, then ignored.
+      - MESH_TOKEN_HASH={{.TokenHash}}
       - MESH_MODE=client
+      - MESH_NAME={{.Name}}
       - MESH_OVERLAY_IP={{.OverlayIP}}
-      - MESH_MASTERS={{.Masters}}
+      - MESH_CONFIG_DIR=/config
+      # Bind to all interfaces so Traefik can scrape metrics from the sidecar.
+      - MESH_METRICS_ADDR=0.0.0.0:9091
     volumes:
       - /srv/awg-mesh/{{.Name}}:/config
     labels:
-      # gRPC management — via Traefik TCP with mTLS passthrough
+      # gRPC management — via Traefik TCP with mTLS passthrough.
       - "traefik.enable=true"
       - "traefik.tcp.routers.awg-grpc-{{.Name}}.entrypoints=awg-grpc"
       - "traefik.tcp.routers.awg-grpc-{{.Name}}.rule=HostSNI(`*`)"
       - "traefik.tcp.routers.awg-grpc-{{.Name}}.tls.passthrough=true"
       - "traefik.tcp.routers.awg-grpc-{{.Name}}.service=awg-grpc-{{.Name}}-svc"
       - "traefik.tcp.services.awg-grpc-{{.Name}}-svc.loadbalancer.server.port=9090"
-    command:
-      - --mode=client
-      - --name={{.Name}}

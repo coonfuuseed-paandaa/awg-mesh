@@ -82,7 +82,7 @@ func newClientPrepareCommand() *cobra.Command {
 					OverlayIP  string
 					Image      string
 					ListenPort int
-					Token      string
+					TokenHash  string
 					Masters    string
 				}{
 					Name:       client.Name,
@@ -90,7 +90,7 @@ func newClientPrepareCommand() *cobra.Command {
 					OverlayIP:  client.OverlayIP,
 					Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
 					ListenPort: 51820,
-					Token:      token,
+					TokenHash:  hash,
 					Masters:    strings.Join(client.Masters, ","),
 				}
 
@@ -107,14 +107,7 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("render docker-compose: %w", err)
 				}
 
-				fmt.Printf("Client %q prepared.\n\nToken: %s\n\nDocker Compose written to: %s\n\nNext steps:\n  1. Copy %s to the target host\n  2. docker compose -f %s up -d\n  3. mesh-ctl client init %s\n",
-					name,
-					token,
-					outputPath,
-					outputPath,
-					outputPath,
-					name,
-				)
+				printNextSteps("client", name, token, outputPath)
 
 			case "mikrotik":
 				nd := nodeDir(configDir, name)

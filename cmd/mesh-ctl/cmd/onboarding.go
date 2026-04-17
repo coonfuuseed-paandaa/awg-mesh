@@ -139,6 +139,46 @@ func nodeDir(configDir, name string) string {
 	return filepath.Join(configDir, "nodes", name)
 }
 
+// printNextSteps writes a precise, actionable deploy sequence to stdout.
+// The compose file already carries MESH_TOKEN_HASH, so the operator never has
+// to ship the token file by hand — the binary bootstraps it on first boot.
+// The plaintext token (role below) is still printed because `mesh-ctl <role>
+// init` uses it as the pre-Init bearer credential.
+func printNextSteps(role, name, token, outputPath string) {
+	fmt.Printf(`%s %q prepared.
+
+Bearer token (keep locally — needed for '%s init'):
+  %s
+
+Docker Compose written to: %s
+
+Next steps on the target host:
+  1. mkdir -p /var/lib/awg-mesh/%s
+  2. scp %s <target-host>:/etc/docker/compose/%s-docker-compose.yml   # or wherever you keep compose files
+  3. ssh <target-host> 'docker compose -f /etc/docker/compose/%s-docker-compose.yml up -d'
+
+Then, back on this workstation:
+  4. mesh-ctl %s init %s
+
+Notes:
+  - The compose file embeds the bcrypt token hash as MESH_TOKEN_HASH. The
+    node bootstraps /config/mesh.token from that env var on first boot and
+    ignores it afterwards. Treat the compose file as a secret.
+  - /var/lib/awg-mesh/%s is the bind-mount target for the node's /config.
+    The directory is created automatically on first 'docker compose up -d'
+    when the parent exists.
+`,
+		strings.Title(role), name, //nolint:staticcheck // strings.Title suffices here
+		role, token,
+		outputPath,
+		name,
+		outputPath, name,
+		name,
+		role, name,
+		name,
+	)
+}
+
 func caPath(configDir string) string {
 	return filepath.Join(configDir, "ca.crt")
 }

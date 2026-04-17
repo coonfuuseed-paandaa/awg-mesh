@@ -78,14 +78,14 @@ func newMasterPrepareCommand() *cobra.Command {
 				OverlayIP  string
 				Image      string
 				ListenPort int
-				Token      string
+				TokenHash  string
 			}{
 				Name:       master.Name,
 				Host:       master.Host,
 				OverlayIP:  master.OverlayIP,
 				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
 				ListenPort: master.ListenPort,
-				Token:      token,
+				TokenHash:  hash,
 			}
 
 			templateName := "docker-compose.master.yml.tmpl"
@@ -103,14 +103,7 @@ func newMasterPrepareCommand() *cobra.Command {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
-			fmt.Printf("Master %q prepared.\n\nToken: %s\n\nDocker Compose written to: %s\n\nNext steps:\n  1. Copy %s to the target host\n  2. docker compose -f %s up -d\n  3. mesh-ctl master init %s\n",
-				name,
-				token,
-				outputPath,
-				outputPath,
-				outputPath,
-				name,
-			)
+			printNextSteps("master", name, token, outputPath)
 			return nil
 		},
 	}

@@ -79,14 +79,14 @@ func newEndpointPrepareCommand() *cobra.Command {
 				OverlayIP  string
 				Image      string
 				ListenPort int
-				Token      string
+				TokenHash  string
 			}{
 				Name:       ep.Name,
 				Host:       ep.Host,
 				OverlayIP:  ep.OverlayIP,
 				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
 				ListenPort: ep.ListenPort,
-				Token:      token,
+				TokenHash:  hash,
 			}
 
 			templateName := "docker-compose.endpoint.yml.tmpl"
@@ -103,14 +103,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
-			fmt.Printf("Endpoint %q prepared.\n\nToken: %s\n\nDocker Compose written to: %s\n\nNext steps:\n  1. Copy %s to the target host\n  2. docker compose -f %s up -d\n  3. mesh-ctl endpoint init %s\n",
-				name,
-				token,
-				outputPath,
-				outputPath,
-				outputPath,
-				name,
-			)
+			printNextSteps("endpoint", name, token, outputPath)
 			return nil
 		},
 	}
