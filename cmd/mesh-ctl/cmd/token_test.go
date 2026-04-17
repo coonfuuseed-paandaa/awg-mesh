@@ -59,7 +59,7 @@ func captureOutput(t *testing.T, f func()) (stdout, stderr string) {
 // real command.
 func emitTokenGated(token, tokenPath, command string, showToken bool) {
 	if showToken {
-		fmt.Fprintln(os.Stdout, token)
+		_, _ = fmt.Fprintln(os.Stdout, token)
 		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
 		logger.Warn().
 			Str("event", "show_token_flag").
