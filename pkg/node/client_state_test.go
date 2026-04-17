@@ -1,6 +1,7 @@
 package node
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,5 +78,48 @@ func TestClientStateLoadMissing(t *testing.T) {
 func TestClientStateSaveErrors(t *testing.T) {
 	if err := saveClientState("", ClientState{}); err == nil {
 		t.Error("expected error for empty config dir")
+	}
+}
+
+func TestLoadClientStateCorruptSentinel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content []byte
+	}{
+		{
+			name:    "truncated YAML",
+			content: []byte("overlay_ip: 10.0.0.1\nrouting_policies: [unclosed"),
+		},
+		{
+			name:    "non-YAML bytes",
+			content: []byte{0xff, 0x00, 0xde, 0xad},
+		},
+		{
+			name:    "unknown field",
+			content: []byte("overlay_ip: 10.0.0.1\nunknown_field: bad\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			path := filepath.Join(dir, clientStateFile)
+			if err := os.WriteFile(path, tt.content, 0o600); err != nil {
+				t.Fatalf("WriteFile returned error: %v", err)
+			}
+
+			_, err := loadClientState(dir)
+			if err == nil {
+				t.Fatal("expected error for corrupt YAML, got nil")
+			}
+			if !errors.Is(err, ErrCorruptClientState) {
+				t.Fatalf("expected errors.Is(err, ErrCorruptClientState)=true, got err=%v", err)
+			}
+		})
 	}
 }

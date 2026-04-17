@@ -11,6 +11,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ErrCorruptClientState indicates client-state.yml YAML could not be decoded.
+// Callers can use errors.Is to distinguish corrupt state from I/O errors.
+var ErrCorruptClientState = errors.New("client state is corrupt")
+
 // ClientState persists client configuration for restart recovery.
 // Saved after mesh-ctl client init, loaded on container restart.
 type ClientState struct {
@@ -83,14 +87,14 @@ func loadClientState(configDir string) (ClientState, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return ClientState{}, nil
 		}
-		return ClientState{}, err
+		return ClientState{}, fmt.Errorf("read client state file: %w", err)
 	}
 
 	var state ClientState
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&state); err != nil {
-		return ClientState{}, err
+		return ClientState{}, fmt.Errorf("unmarshal client state yaml: %w: %w", ErrCorruptClientState, err)
 	}
 	return state, nil
 }

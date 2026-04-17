@@ -16,6 +16,11 @@ import (
 // Files written by older releases will have SchemaVersion == 0 (legacy).
 const CurrentSchemaVersion = 1
 
+// ErrCorruptTransportState indicates transport.yml YAML could not be decoded.
+// Callers can use errors.Is to distinguish corrupt state from I/O errors and
+// decide whether to delete and regenerate the file.
+var ErrCorruptTransportState = errors.New("transport state is corrupt")
+
 // NodeTransportState is persisted to /config/transport.yml on the node after
 // AddTunnel/AddPeer. Shared between pkg/node and pkg/grpc to ensure a single
 // source of truth for the transport.yml schema.
@@ -117,7 +122,7 @@ func LoadNodeTransportState(configDir string) (NodeTransportState, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&state); err != nil {
-		return NodeTransportState{}, fmt.Errorf("unmarshal node transport state %q: %w", path, err)
+		return NodeTransportState{}, fmt.Errorf("unmarshal node transport state %q: %w: %w", path, ErrCorruptTransportState, err)
 	}
 	return state, nil
 }
