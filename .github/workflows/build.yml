@@ -347,20 +347,27 @@ jobs:
     steps:
       # Input validation — reject malformed inputs BEFORE any auth step so
       # credentials never load for a bogus request. Defense-in-depth beyond
-      # env-routing (Finding #1 of security review). `printf | grep -qE`
-      # is safe because $VERSION/$SOURCE are env vars, not interpolated
-      # into the shell line.
+      # env-routing (Finding #1 of security review).
+      #
+      # Uses bash `[[ =~ ]]` (whole-string match) rather than `grep -qE`
+      # because grep matches per-line: an input containing an embedded
+      # `\n` where the first line matches the pattern would pass `grep`
+      # while smuggling extra content into $VERSION/$SOURCE — later
+      # interpolated into docker tag args and `git cat-file`. `[[ =~ ]]`
+      # treats `$` as end-of-string, closing that bypass.
+      # GitHub Actions Linux runners use `bash -e {0}` by default, so
+      # `[[ =~ ]]` is available without extra shebang.
       - name: Validate inputs
         env:
           VERSION: ${{ inputs.retag_version }}
           SOURCE: ${{ inputs.source_sha }}
         run: |
           set -e
-          if ! printf '%s' "$VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
             echo "::error::retag_version '$VERSION' must match v<major>.<minor>.<patch>[-prerelease]"
             exit 1
           fi
-          if ! printf '%s' "$SOURCE" | grep -qE '^[0-9a-f]{40}$'; then
+          if [[ ! "$SOURCE" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::source_sha '$SOURCE' must be a 40-char lowercase hex commit SHA"
             exit 1
           fi
