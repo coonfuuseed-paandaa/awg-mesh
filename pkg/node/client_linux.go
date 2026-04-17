@@ -70,6 +70,12 @@ func clientIfaceName(pk wg.Key) string {
 
 // uniqueClientIfaceName resolves name collisions by appending numeric suffixes.
 // Must be called with c.platformState.mu held.
+//
+// Checks BOTH in-memory links AND kernel interfaces for conflicts. The kernel
+// check closes the window where a prior crash left a stale wg-c<hash>
+// interface on the host that is not yet tracked in c.platformState.links
+// (reconcile has not yet cleaned it up). Without this, wg.NewInterface would
+// fail with EEXIST on the second run after an ungraceful shutdown.
 func (c *ClientRunner) uniqueClientIfaceName(pk wg.Key) string {
 	name := clientIfaceName(pk)
 	pkHex := hex.EncodeToString(pk[:])
@@ -80,18 +86,26 @@ func (c *ClientRunner) uniqueClientIfaceName(pk wg.Key) string {
 	// Collision: different pubkey holds target name — append -1, -2, ...
 	base := name
 	for suffix := 1; ; suffix++ {
-		conflict := false
-		for _, link := range c.platformState.links {
-			if link.ifaceName() == name {
-				conflict = true
-				break
-			}
-		}
-		if !conflict {
+		if !c.clientIfaceNameConflicts(name) {
 			return name
 		}
 		name = fmt.Sprintf("%s-%d", base, suffix)
 	}
+}
+
+// clientIfaceNameConflicts returns true if name is already claimed by an
+// in-memory link OR an existing kernel interface.
+func (c *ClientRunner) clientIfaceNameConflicts(name string) bool {
+	for _, link := range c.platformState.links {
+		if link.ifaceName() == name {
+			return true
+		}
+	}
+	// Kernel check — closes the crash-recovery race window.
+	if _, err := netlink.LinkByName(name); err == nil {
+		return true
+	}
+	return false
 }
 
 // routerDep returns the configured router or the production netlink router.

@@ -529,16 +529,17 @@ func TestClientIfaceName_Format(t *testing.T) {
 	}
 }
 
-// TestClientIfaceName_DifferentKeysMapToDifferentNames verifies 10 random keys produce 10 distinct names.
+// TestClientIfaceName_DifferentKeysMapToDifferentNames verifies distinct inputs
+// produce distinct names. Deterministic inputs eliminate birthday-paradox flake
+// (16-bit namespace; random generation had ~0.07% collision probability at N=10).
 func TestClientIfaceName_DifferentKeysMapToDifferentNames(t *testing.T) {
 	t.Parallel()
 
 	seen := make(map[string]bool)
 	for i := 0; i < 10; i++ {
-		pk, err := wg.GenerateKey()
-		if err != nil {
-			t.Fatalf("GenerateKey[%d]: %v", i, err)
-		}
+		var pk wg.Key
+		// Deterministic distinct inputs so the test cannot flake.
+		pk[0] = byte(i + 1)
 		name := clientIfaceName(pk)
 		if seen[name] {
 			t.Errorf("collision: key %d produced already-seen name %q", i, name)
