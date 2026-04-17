@@ -20,7 +20,7 @@
 # Prerequisites:
 #   - docker running (for S0-S2)
 #   - mesh-ctl in PATH or go installed (for S3-S7)
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

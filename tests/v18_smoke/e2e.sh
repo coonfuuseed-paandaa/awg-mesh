@@ -22,7 +22,7 @@
 #   - docker running
 #   - awg-mesh-node:local-v18 and awg-mesh-client:local-v18 images built
 #   - mesh-ctl installed in PATH (go install ./cmd/mesh-ctl from repo root)
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -46,6 +46,9 @@ MASTER_B_IP="172.31.10.11"
 
 # mesh-ctl config dir — scoped to this test run
 CTL_CONFIG_DIR=$(mktemp -d /tmp/v18smoke-ctl-XXXXXX)
+
+# Topology file — created later but declared here so cleanup() can remove it
+TOPO_FILE=""
 
 FAILURES=0
 SKIPS=0
@@ -83,6 +86,7 @@ cleanup() {
     echo "[e2e] Cleaning up..."
     compose down -v --remove-orphans 2>/dev/null || true
     rm -rf "${CTL_CONFIG_DIR}"
+    [[ -n "${TOPO_FILE}" ]] && rm -f "${TOPO_FILE}" || true
     echo "[e2e] Cleanup done."
 }
 
@@ -152,6 +156,7 @@ fi
 
 # Topology file for init commands — uses bridge IPs so mesh-ctl on host can reach containers
 TOPO_FILE=$(mktemp /tmp/v18smoke-topo-XXXXXX.yml)
+# TOPO_FILE is now declared; cleanup() will remove it on EXIT
 cat > "${TOPO_FILE}" << EOF
 overlay:
   space: 172.20.71.0/24
@@ -199,8 +204,6 @@ transport:
   pool: 10.255.0.0/16
   prefix_length: 30
 EOF
-# Ensure topology cleaned up
-trap 'rm -f "${TOPO_FILE}"; dump_logs; cleanup' EXIT
 
 # ---------------------------------------------------------------------------
 # E1: docker compose up
@@ -492,14 +495,21 @@ echo ""
 echo "[E11] Failover: kill master-a → traffic via master-b within ${FAILOVER_WAIT}s..."
 
 docker stop "${COMPOSE_PROJECT}-master-a" > /dev/null 2>&1 || true
-echo "  master-a stopped. Waiting ${FAILOVER_WAIT}s for healthcheck-driven failover..."
-sleep "${FAILOVER_WAIT}"
+echo "  master-a stopped. Polling for healthcheck-driven failover (timeout ${FAILOVER_WAIT}s)..."
 
-FAILOVER_ROUTE=$(docker exec "${COMPOSE_PROJECT}-client-lin" \
-    ip route show 172.20.71.0/24 2>/dev/null || echo "no route")
+FAILOVER_ROUTE="no route"
+E11_DEADLINE=$(( $(date +%s) + FAILOVER_WAIT ))
+while [[ $(date +%s) -lt ${E11_DEADLINE} ]]; do
+    FAILOVER_ROUTE=$(docker exec "${COMPOSE_PROJECT}-client-lin" \
+        ip route show 172.20.71.0/24 2>/dev/null || echo "no route")
+    if echo "${FAILOVER_ROUTE}" | grep -qE "${MASTER_B_IP}"; then
+        break
+    fi
+    sleep 2
+done
 echo "  Route after failover: ${FAILOVER_ROUTE}"
 
-if echo "${FAILOVER_ROUTE}" | grep -qE "${MASTER_B_IP}|via"; then
+if echo "${FAILOVER_ROUTE}" | grep -qE "${MASTER_B_IP}"; then
     pass "E11: client-lin has route via master-b after master-a failure"
 else
     if [[ "${HAVE_MESHCTL}" == "false" ]]; then
@@ -521,11 +531,18 @@ echo ""
 echo "[E12] Recovery: restart master-a → both nexthops restored within ${RECOVERY_WAIT}s..."
 
 docker start "${COMPOSE_PROJECT}-master-a" > /dev/null 2>&1 || true
-echo "  master-a restarted. Waiting ${RECOVERY_WAIT}s for convergence..."
-sleep "${RECOVERY_WAIT}"
+echo "  master-a restarted. Polling for ECMP convergence (timeout ${RECOVERY_WAIT}s)..."
 
-RECOVERY_ROUTE=$(docker exec "${COMPOSE_PROJECT}-client-lin" \
-    ip route show 172.20.71.0/24 2>/dev/null || echo "no route")
+RECOVERY_ROUTE="no route"
+E12_DEADLINE=$(( $(date +%s) + RECOVERY_WAIT ))
+while [[ $(date +%s) -lt ${E12_DEADLINE} ]]; do
+    RECOVERY_ROUTE=$(docker exec "${COMPOSE_PROJECT}-client-lin" \
+        ip route show 172.20.71.0/24 2>/dev/null || echo "no route")
+    if echo "${RECOVERY_ROUTE}" | grep -q "${MASTER_A_IP}"; then
+        break
+    fi
+    sleep 3
+done
 echo "  Route after recovery: ${RECOVERY_ROUTE}"
 
 if echo "${RECOVERY_ROUTE}" | grep -q "${MASTER_A_IP}"; then
@@ -534,7 +551,7 @@ else
     if [[ "${HAVE_MESHCTL}" == "false" ]]; then
         skip "E12: cannot verify recovery — mesh init was not performed (no mesh-ctl)"
     else
-        echo "  WARNING: master-a nexthop not yet re-added after ${RECOVERY_WAIT}s (may need more time)"
+        echo "  WARNING: master-a nexthop not yet re-added within ${RECOVERY_WAIT}s"
         skip "E12: master-a nexthop not restored within ${RECOVERY_WAIT}s — may be a timing issue"
     fi
 fi
