@@ -45,10 +45,11 @@ Data plane: awg-mesh-node (one container per host)
 
 Single version for the entire module (`go.mod` module path). Both binaries (`mesh-ctl`, `awg-mesh-node`) and the Docker image share the same version.
 
-**Version detection:** `runtime/debug.ReadBuildInfo()` — no ldflags needed.
-- `go install ...@v0.3.0` → shows `v0.3.0`
-- `go install ./cmd/mesh-ctl` (local clone) → shows `v0.3.0 (abcd1234)` (base tag + commit)
-- `go run` → shows `dev`
+**Version detection:** two paths.
+- `go install ...@v0.3.0` → `runtime/debug.ReadBuildInfo()` shows `v0.3.0`
+- `go install ./cmd/mesh-ctl` (local clone) → `runtime/debug.ReadBuildInfo()` shows `v0.3.0 (abcd1234)` (base tag + commit)
+- `go run` → `runtime/debug.ReadBuildInfo()` shows `dev`
+- Docker builds → `main.versionFromBuild` is injected via ldflag from `--build-arg VERSION=...`
 
 **When to bump:**
 - **PATCH** (v0.3.0 → v0.3.1): bug fix, docs fix, test fix, dependency update, no behavior change

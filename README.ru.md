@@ -1094,12 +1094,13 @@ CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
 CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
 ```
 
-Версия определяется автоматически во время работы через `runtime/debug.ReadBuildInfo()` — ldflags не нужны:
+Для сборок через `go install` версия определяется автоматически во время работы через `runtime/debug.ReadBuildInfo()`. Docker-сборки передают `--build-arg VERSION=...` и инжектируют это значение в `main.versionFromBuild` через ldflag.
 
 | Способ сборки | Отображаемая версия |
 |---------------|---------------------|
 | `go install ...@v1.7.0` | `v1.7.0` |
 | Локальный клон на тегированном коммите | `v1.7.0 (abcd1234)` |
+| Docker build (with `--build-arg VERSION`) | injected value |
 | `go run` | `dev` |
 
 ### Сборка Docker-образа

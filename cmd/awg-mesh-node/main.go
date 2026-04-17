@@ -238,7 +238,18 @@ func isValidMode(mode string) bool {
 	}
 }
 
+// versionFromBuild is injected at build time via
+//
+//	go build -ldflags "-X main.versionFromBuild=<ref>"
+//
+// Empty when not injected — falls through to debug.ReadBuildInfo().
+var versionFromBuild = ""
+
 func version() string {
+	if versionFromBuild != "" {
+		return versionFromBuild
+	}
+
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "dev"

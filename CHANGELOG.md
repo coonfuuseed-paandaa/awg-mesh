@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Docker-built `awg-mesh-node` and `mesh-ctl` binaries now report the actual version via `main.versionFromBuild`, injected at build time via ldflag. Previously they reported `"dev"` because the Docker ldflag targeted a variable that did not exist. `deploy/Dockerfile.client` now injects the same ldflag as well, and `.github/workflows/build.yml` now derives the version string per event type: semver tag on tag push, `{branch}@{short-sha}` on branch push, and `pr-{N}@{short-sha}` on PR events instead of passing `github.sha` (40-char hex) to every build. local tracker issue #91.
+
 ## [1.8.1] - 2026-04-17
 
 CI/supply-chain hardening release. No changes to `awg-mesh-node` or `mesh-ctl`

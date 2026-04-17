@@ -1103,12 +1103,13 @@ CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
 CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
 ```
 
-Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()` — no ldflags required:
+Version is detected automatically at runtime for `go install` builds via `runtime/debug.ReadBuildInfo()`. Docker builds pass `--build-arg VERSION=...` and inject that value into `main.versionFromBuild` via ldflag.
 
 | How built | Version shown |
 |-----------|--------------|
 | `go install ...@v1.7.0` | `v1.7.0` |
 | Local clone at tagged commit | `v1.7.0 (abcd1234)` |
+| Docker build (with `--build-arg VERSION`) | injected value |
 | `go run` | `dev` |
 
 ### Docker image build
