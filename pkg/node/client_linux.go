@@ -4,6 +4,7 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/vishvananda/netlink"
 )
 
 const clientInterfacePrefix = "wg-c"
@@ -31,12 +33,19 @@ type transportLink struct {
 	healthy          bool
 }
 
+// ifaceName returns the kernel interface name for this transport link.
+func (l *transportLink) ifaceName() string {
+	if l.iface == nil {
+		return ""
+	}
+	return l.iface.Name()
+}
+
 type clientPlatformState struct {
 	mu      sync.Mutex
 	links   []*transportLink
 	byKey   map[string]*transportLink
 	pending map[string]bool // pubkey creation in progress
-	nextIdx int
 
 	// Injectable for testing. nil = use production implementations.
 	router   routing.Router
@@ -48,6 +57,40 @@ func initClientPlatformState() clientPlatformState {
 	return clientPlatformState{
 		byKey:   make(map[string]*transportLink),
 		pending: make(map[string]bool),
+	}
+}
+
+// clientIfaceName returns a deterministic WireGuard interface name for a peer.
+// "wg-c" + first 4 hex chars of SHA-256(pubkey) → 16-bit name space.
+// Deterministic: same pubkey → same name across restarts.
+func clientIfaceName(pk wg.Key) string {
+	sum := sha256.Sum256(pk[:])
+	return clientInterfacePrefix + hex.EncodeToString(sum[:2])
+}
+
+// uniqueClientIfaceName resolves name collisions by appending numeric suffixes.
+// Must be called with c.platformState.mu held.
+func (c *ClientRunner) uniqueClientIfaceName(pk wg.Key) string {
+	name := clientIfaceName(pk)
+	pkHex := hex.EncodeToString(pk[:])
+	// Idempotent: same pubkey already exists → reuse its name
+	if existing, ok := c.platformState.byKey[pkHex]; ok {
+		return existing.ifaceName()
+	}
+	// Collision: different pubkey holds target name — append -1, -2, ...
+	base := name
+	for suffix := 1; ; suffix++ {
+		conflict := false
+		for _, link := range c.platformState.links {
+			if link.ifaceName() == name {
+				conflict = true
+				break
+			}
+		}
+		if !conflict {
+			return name
+		}
+		name = fmt.Sprintf("%s-%d", base, suffix)
 	}
 }
 
@@ -119,8 +162,13 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	}
 	c.platformState.pending[pubkeyHex] = true
 
-	ifaceName := fmt.Sprintf("%s%d", clientInterfacePrefix, c.platformState.nextIdx)
-	c.platformState.nextIdx++
+	peerKey, keyErr := wg.NewKey(publicKey)
+	if keyErr != nil {
+		delete(c.platformState.pending, pubkeyHex)
+		c.platformState.mu.Unlock()
+		return fmt.Errorf("parse peer public key for naming: %w", keyErr)
+	}
+	ifaceName := c.uniqueClientIfaceName(peerKey)
 	c.platformState.mu.Unlock()
 
 	// Ensure pending flag is cleared on any exit path.
@@ -464,6 +512,35 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 	c.node.logger.Info().
 		Int("tunnels", reconciled).
 		Msg("reconciled client transport from saved state")
+
+	// Legacy wg-c* interfaces cleanup — removes names that don't match the
+	// deterministic naming for any current peer. Safe no-op on fresh nodes.
+	knownNames := make(map[string]bool)
+	c.platformState.mu.Lock()
+	for _, link := range c.platformState.links {
+		knownNames[link.ifaceName()] = true
+	}
+	c.platformState.mu.Unlock()
+
+	allLinks, listErr := netlink.LinkList()
+	if listErr != nil {
+		c.node.logger.Warn().Err(listErr).Msg("list links for legacy cleanup failed")
+		return nil
+	}
+	for _, l := range allLinks {
+		name := l.Attrs().Name
+		if !strings.HasPrefix(name, clientInterfacePrefix) {
+			continue
+		}
+		if knownNames[name] {
+			continue
+		}
+		if err := netlink.LinkDel(l); err != nil {
+			c.node.logger.Warn().Str("iface", name).Err(err).Msg("legacy iface cleanup failed")
+			continue
+		}
+		c.node.logger.Info().Str("iface", name).Str("event", "legacy_iface_cleanup").Msg("removed stale client wg interface")
+	}
 
 	return nil
 }
