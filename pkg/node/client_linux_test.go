@@ -242,15 +242,16 @@ func newTestNode(topo *topology.Topology) *Node {
 }
 
 // newTestRunner creates a ClientRunner with injected mocks.
+// Mutates platformState in place to avoid copying clientPlatformState (which
+// holds sync.Mutex — copylocks violation under govet).
 func newTestRunner(node *Node, router *mockRouter, fw *mockFirewall, sc *mockSysctl) *ClientRunner {
-	ps := initClientPlatformState()
-	ps.router = router
-	ps.firewall = fw
-	ps.sysctl = sc
-	return &ClientRunner{
-		node:          node,
-		platformState: ps,
-	}
+	runner := &ClientRunner{node: node}
+	runner.platformState.byKey = make(map[string]*transportLink)
+	runner.platformState.pending = make(map[string]bool)
+	runner.platformState.router = router
+	runner.platformState.firewall = fw
+	runner.platformState.sysctl = sc
+	return runner
 }
 
 // stubIface returns a zero-value *wg.Interface suitable for test link stubs.
