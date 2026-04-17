@@ -14,6 +14,57 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// TestValidateImageRef verifies that validateImageRef accepts valid Docker image
+// references and rejects values containing shell metacharacters.
+func TestValidateImageRef(t *testing.T) {
+	valid := []string{
+		"ubuntu",
+		"ubuntu:22.04",
+		"ghcr.io/org/repo:latest",
+		"ghcr.io/org/repo:v1.2.3",
+		"registry.example.com:5000/name@sha256:abc123",
+		"a/b/c:tag",
+	}
+	for _, ref := range valid {
+		if err := validateImageRef(ref); err != nil {
+			t.Errorf("validateImageRef(%q) returned unexpected error: %v", ref, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"img; rm -rf /",
+		"img`touch /pwned`",
+		"img$(id)",
+		"img|sh",
+		"img\necho",
+		"img && bad",
+	}
+	for _, ref := range invalid {
+		if err := validateImageRef(ref); err == nil {
+			t.Errorf("validateImageRef(%q) expected error, got nil", ref)
+		}
+	}
+}
+
+// TestShellQuote verifies that shellQuote wraps values in single quotes.
+func TestShellQuote(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"ubuntu", "'ubuntu'"},
+		{"ghcr.io/org/repo:latest", "'ghcr.io/org/repo:latest'"},
+		{"registry:5000/name@sha256:abc", "'registry:5000/name@sha256:abc'"},
+	}
+	for _, c := range cases {
+		got := shellQuote(c.input)
+		if got != c.want {
+			t.Errorf("shellQuote(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}
+
 // TestBootstrapHelpFlags verifies that the bootstrap subcommand exposes all
 // required flags in its help output. This does not establish a real SSH
 // connection — it only exercises the cobra command setup.
@@ -286,5 +337,13 @@ func TestMockSSHSession(t *testing.T) {
 
 	if strings.TrimSpace(out) != "hello" {
 		t.Errorf("expected 'hello', got %q", out)
+	}
+
+	// Close the client so the server goroutine can finish and write to errCh.
+	sshClient.Close()
+
+	// Drain the server goroutine result to catch any server-side errors.
+	if serverErr := <-errCh; serverErr != nil {
+		t.Errorf("mock SSH server error: %v", serverErr)
 	}
 }

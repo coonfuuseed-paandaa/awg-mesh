@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +18,39 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+// imageRefRE matches valid Docker image references:
+//
+//	[registry/]name[:tag][@digest]
+//
+// Allowed characters: alphanumerics, dots, dashes, underscores, forward
+// slashes, colons, and the '@' separator before a digest. Anything else
+// (semicolons, backticks, pipes, dollar signs, etc.) would be a shell
+// metacharacter and is explicitly rejected.
+var imageRefRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$`)
+
+// validateImageRef returns an error when ref contains characters that are
+// invalid in a Docker image reference. This prevents shell metacharacters
+// from being injected into remote commands that concatenate the image name.
+func validateImageRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("image reference must not be empty")
+	}
+	if !imageRefRE.MatchString(ref) {
+		return fmt.Errorf("image reference %q contains invalid characters (only alphanumerics, ., -, _, /, :, @ are allowed)", ref)
+	}
+	return nil
+}
+
+// shellQuote wraps s in single quotes for safe inclusion in a remote shell
+// command. Single quotes are not valid in Docker image references so this
+// function panics when s contains one — call validateImageRef first.
+func shellQuote(s string) string {
+	if strings.ContainsRune(s, '\'') {
+		panic("shellQuote: value contains a single quote — validateImageRef must be called first")
+	}
+	return "'" + s + "'"
+}
 
 // bootstrapOpts holds all CLI options for the bootstrap command.
 type bootstrapOpts struct {
@@ -62,6 +96,12 @@ Use --accept-new-host-key only for first-contact with a host you trust.`,
 
 // runBootstrap orchestrates the bootstrap sequence on the remote host.
 func runBootstrap(opts bootstrapOpts) error {
+	// Validate image reference before opening any network connections — an
+	// invalid value would later be concatenated into a remote shell command.
+	if err := validateImageRef(opts.image); err != nil {
+		return fmt.Errorf("invalid --image: %w", err)
+	}
+
 	logger := log.With().
 		Str("host", opts.host).
 		Str("user", opts.user).
@@ -140,7 +180,7 @@ func runBootstrap(opts bootstrapOpts) error {
 
 	// Step 5: get image digest
 	digest, err := runRemoteOutput(client,
-		fmt.Sprintf("docker inspect --format='{{index .RepoDigests 0}}' %s 2>/dev/null || echo unknown", opts.image))
+		fmt.Sprintf("docker inspect --format='{{index .RepoDigests 0}}' %s 2>/dev/null || echo unknown", shellQuote(opts.image)))
 	if err != nil {
 		digest = "unknown"
 	}
@@ -159,11 +199,15 @@ func runBootstrap(opts bootstrapOpts) error {
 }
 
 // dialSSH establishes an SSH client connection using agent, key file, or both.
+// The SSH agent socket connection (if used) is closed automatically after the
+// handshake completes — callers do not need to manage its lifetime.
 func dialSSH(opts bootstrapOpts, logger zerolog.Logger) (*ssh.Client, error) {
-	authMethods, err := buildAuthMethods(opts, logger)
+	authMethods, cleanup, err := buildAuthMethods(opts, logger)
 	if err != nil {
 		return nil, fmt.Errorf("build auth methods: %w", err)
 	}
+	// Close the agent socket connection once auth is complete (after ssh.Dial).
+	defer cleanup()
 
 	hostKeyCallback, err := buildHostKeyCallback(opts)
 	if err != nil {
@@ -181,9 +225,13 @@ func dialSSH(opts bootstrapOpts, logger zerolog.Logger) (*ssh.Client, error) {
 	return ssh.Dial("tcp", addr, config)
 }
 
-// buildAuthMethods returns SSH auth methods: SSH agent (if available) + private key file.
-func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMethod, error) {
+// buildAuthMethods returns SSH auth methods (agent first, then key file), plus
+// a cleanup function that closes the agent socket connection. The cleanup MUST
+// be called after ssh.Dial returns — authentication is complete by then and
+// the agent connection is no longer needed.
+func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMethod, func(), error) {
 	var methods []ssh.AuthMethod
+	cleanup := func() {} // no-op by default; replaced when agent conn is opened
 
 	// Prefer SSH agent when SSH_AUTH_SOCK is set.
 	if agentSock := os.Getenv("SSH_AUTH_SOCK"); agentSock != "" {
@@ -191,6 +239,7 @@ func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMeth
 		if err != nil {
 			logger.Warn().Err(err).Msg("SSH agent available but dial failed — falling back to key file")
 		} else {
+			cleanup = func() { _ = conn.Close() }
 			agentClient := agent.NewClient(conn)
 			methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
 			logger.Debug().Msg("Using SSH agent for authentication")
@@ -207,7 +256,8 @@ func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMeth
 		signer, err := loadPrivateKey(keyPath)
 		if err != nil {
 			if len(methods) == 0 {
-				return nil, fmt.Errorf("load SSH private key %q: %w", keyPath, err)
+				cleanup()
+				return nil, nil, fmt.Errorf("load SSH private key %q: %w", keyPath, err)
 			}
 			logger.Warn().Err(err).Str("key_path", keyPath).Msg("Could not load key file — agent-only auth")
 		} else {
@@ -217,10 +267,11 @@ func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMeth
 	}
 
 	if len(methods) == 0 {
-		return nil, fmt.Errorf("no SSH auth method available: no agent and no private key found")
+		cleanup()
+		return nil, nil, fmt.Errorf("no SSH auth method available: no agent and no private key found")
 	}
 
-	return methods, nil
+	return methods, cleanup, nil
 }
 
 // resolveDefaultSSHKey returns the first existing default key path.
@@ -335,7 +386,7 @@ func pullImage(client *ssh.Client, image string, logger zerolog.Logger) error {
 	sess.Stderr = &prefixWriter{prefix: "[bootstrap] ", w: os.Stderr}
 
 	logger.Info().Str("image", image).Msg("Running: docker pull")
-	if err := sess.Run("docker pull " + image); err != nil {
+	if err := sess.Run("docker pull " + shellQuote(image)); err != nil {
 		return fmt.Errorf("docker pull %q: %w", image, err)
 	}
 
