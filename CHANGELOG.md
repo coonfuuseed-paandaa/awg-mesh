@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-04-17
+
 ### Fixed
 - 48-finding audit remediation across security, correctness, and quality (batches 1–4)
 - Production deployment field report (2026-04-17) — `mesh-ctl <role> prepare` now
