@@ -54,7 +54,7 @@ func ensureCA(configDir string) (*x509.Certificate, crypto.PrivateKey, error) {
 }
 
 func saveToken(nodeDir, token string) error {
-	if err := os.MkdirAll(nodeDir, 0755); err != nil {
+	if err := os.MkdirAll(nodeDir, 0700); err != nil {
 		return fmt.Errorf("create node dir: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(nodeDir, "token"), []byte(token), 0600); err != nil {
@@ -142,9 +142,18 @@ func nodeDir(configDir, name string) string {
 // printNextSteps writes a precise, actionable deploy sequence to stdout.
 // The compose file already carries MESH_TOKEN_HASH, so the operator never has
 // to ship the token file by hand — the binary bootstraps it on first boot.
-// The plaintext token (role below) is still printed because `mesh-ctl <role>
-// init` uses it as the pre-Init bearer credential.
-func printNextSteps(role, name, token, outputPath string) {
+// The plaintext token is still printed because `mesh-ctl <role> init` uses
+// it as the pre-Init bearer credential.
+//
+// useTraefik selects the state directory to match the generated compose: the
+// default (host-network) templates bind /var/lib/awg-mesh/<name>, the Traefik
+// variants bind /srv/awg-mesh/<name>. Getting this wrong leaves the operator
+// with an empty mount and a confused node, so it's routed through explicitly.
+func printNextSteps(role, name, token, outputPath string, useTraefik bool) {
+	stateDir := "/var/lib/awg-mesh/" + name
+	if useTraefik {
+		stateDir = "/srv/awg-mesh/" + name
+	}
 	fmt.Printf(`%s %q prepared.
 
 Bearer token (keep locally — needed for '%s init'):
@@ -153,30 +162,40 @@ Bearer token (keep locally — needed for '%s init'):
 Docker Compose written to: %s
 
 Next steps on the target host:
-  1. mkdir -p /var/lib/awg-mesh/%s
-  2. scp %s <target-host>:/etc/docker/compose/%s-docker-compose.yml   # or wherever you keep compose files
-  3. ssh <target-host> 'docker compose -f /etc/docker/compose/%s-docker-compose.yml up -d'
+  1. scp %s <target-host>:/etc/docker/compose/%s-docker-compose.yml   # or wherever you keep compose files
+  2. ssh <target-host> 'docker compose -f /etc/docker/compose/%s-docker-compose.yml up -d'
+     (Docker creates %s automatically when the parent path exists.)
 
 Then, back on this workstation:
-  4. mesh-ctl %s init %s
+  3. mesh-ctl %s init %s
 
 Notes:
   - The compose file embeds the bcrypt token hash as MESH_TOKEN_HASH. The
     node bootstraps /config/mesh.token from that env var on first boot and
-    ignores it afterwards. Treat the compose file as a secret.
-  - /var/lib/awg-mesh/%s is the bind-mount target for the node's /config.
-    The directory is created automatically on first 'docker compose up -d'
-    when the parent exists.
+    ignores it afterwards. The hash remains visible via 'docker inspect' —
+    treat the compose file itself as a secret and keep it off public hosts.
+  - %s is the host-side bind-mount that becomes /config inside the
+    container. All node state (keys, transport allocations, client-state)
+    lives there.
 `,
-		strings.Title(role), name, //nolint:staticcheck // strings.Title suffices here
+		titleCase(role), name,
 		role, token,
 		outputPath,
-		name,
 		outputPath, name,
 		name,
+		stateDir,
 		role, name,
-		name,
+		stateDir,
 	)
+}
+
+// titleCase upper-cases the first rune of s. Replaces the deprecated strings.Title
+// for our narrow use-case (single-word ASCII role names: master/endpoint/client).
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func caPath(configDir string) string {

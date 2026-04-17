@@ -107,7 +107,7 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("render docker-compose: %w", err)
 				}
 
-				printNextSteps("client", name, token, outputPath)
+				printNextSteps("client", name, token, outputPath, useTraefik)
 
 			case "mikrotik":
 				nd := nodeDir(configDir, name)

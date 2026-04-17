@@ -103,7 +103,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
-			printNextSteps("endpoint", name, token, outputPath)
+			printNextSteps("endpoint", name, token, outputPath, useTraefik)
 			return nil
 		},
 	}
@@ -325,7 +325,7 @@ func newEndpointInitCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %v\n", master.Name, peerErr)
 					continue
 				}
-				if !peerResp.Success {
+				if peerResp == nil || !peerResp.Success {
 					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %s\n", master.Name, "[RPC failure]")
 					continue
 				}

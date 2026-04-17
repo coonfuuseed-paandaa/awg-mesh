@@ -41,6 +41,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### CI
 - Privileged tests, govulncheck, and coverage merge added to CI pipeline
 
+### Migration from v1.5.0
+
+Operators running compose files produced by `mesh-ctl prepare` under v1.5.0 must
+re-run `prepare` before upgrading the node image. The old templates embedded a
+plaintext `MESH_TOKEN` env var that this release's binary no longer reads — the
+new binary expects `MESH_TOKEN_HASH` (bcrypt) and bootstraps `/config/mesh.token`
+from it on first boot. Without the regenerated compose, `mesh-ctl <role> init`
+will fail authentication because no token hash is present on the node.
+
+Steps per already-deployed node:
+
+1. `mesh-ctl <role> prepare <name>` on the admin workstation (generates new compose
+   with `MESH_TOKEN_HASH`).
+2. On the target host: stop the old container, replace the compose file, delete
+   the old `/config/mesh.token` (if any), then `docker compose up -d` with the
+   new image.
+3. `mesh-ctl <role> init <name>` — the new bearer token printed by `prepare`
+   is used once, and the bootstrap writes it into `/config/mesh.token`.
+
 ---
 
 ## [1.5.0] - 2026-04-07

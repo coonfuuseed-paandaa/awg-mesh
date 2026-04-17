@@ -103,7 +103,7 @@ func newMasterPrepareCommand() *cobra.Command {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
-			printNextSteps("master", name, token, outputPath)
+			printNextSteps("master", name, token, outputPath, useTraefik)
 			return nil
 		},
 	}
@@ -253,7 +253,7 @@ func newMasterInitCommand() *cobra.Command {
 					continue
 				}
 
-				if !addResp.Success {
+				if addResp == nil || !addResp.Success {
 					fmt.Fprintf(os.Stderr, "warning: add tunnel to endpoint %q failed: %s\n", ep.Name, "[RPC failure]")
 					continue
 				}
@@ -298,7 +298,7 @@ func newMasterInitCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warning: add peer to endpoint %q failed: %v\n", ep.Name, peerErr)
 					continue
 				}
-				if !peerResp.Success {
+				if peerResp == nil || !peerResp.Success {
 					fmt.Fprintf(os.Stderr, "warning: add peer to endpoint %q failed: %s\n", ep.Name, "[RPC failure]")
 					continue
 				}
