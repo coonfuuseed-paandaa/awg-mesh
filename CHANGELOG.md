@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-04-17
+
+CI/supply-chain hardening release. No changes to `awg-mesh-node` or `mesh-ctl`
+binaries — this patch upgrades the release pipeline only. First release
+published via the new `on.push.tags: ['v*']` path with full SemVer docker tag
+set and SLSA provenance + SBOM attestations on every image.
+
+### Added
+
+- **Automatic semver docker tagging on tag push** — `.github/workflows/build.yml`
+  now triggers on `v*` tags. `docker/metadata-action@v5` derives the full tag set
+  (`v1.8.1`, `1.8`, `1`, `latest`, `<sha>`) for each published image. Applies to
+  `awg-mesh-node`, `awg-mesh-client`, and the `awg-mesh` alias. Closes the
+  architectural gap where v1.7.0 and v1.8.0 releases had no `:vN.M.P` docker
+  tags at all. Via #44.
+- **Retroactive retag mechanism** — `workflow_dispatch` with `retag_version` +
+  `source_sha` inputs uses `docker buildx imagetools create --tag` to backfill
+  semver tags onto existing manifests without rebuild. Preserves manifest digest
+  bit-identically. Used to backfill v1.8.0 immediately after #44 merged. Via #44.
+- **SLSA provenance + SBOM attestations** on every pushed image —
+  `provenance: mode=max` (source revision, build parameters, materials) +
+  `sbom: true` (SPDX). Consumers can verify via `docker buildx imagetools inspect
+  --format '{{ json .Provenance }}'`. Job gained `id-token: write` +
+  `attestations: write` permissions for buildx to sign attestations. Via #45.
+
+### Security
+
+- **All GitHub Actions pinned by commit SHA** in `build.yml` and
+  `dependabot-automerge.yml` — tag-movement attacks against upstream actions
+  can no longer reach this pipeline without rewriting commit history.
+  Dependabot (existing `github-actions` block in `.github/dependabot.yml`)
+  auto-bumps SHAs monthly back to the major-version tip via the `# vN`
+  stream comment on each `uses:` line. Via #45.
+- **`workflow_dispatch` input hardening** on the retag job — `retag_version`
+  and `source_sha` routed through `env:` (not direct `${{ }}` interpolation)
+  to prevent command injection. Whole-string `[[ =~ ]]` regex validation
+  (SemVer 2.0 for version, 40-char lowercase hex for SHA) fails before any
+  credential loads. Via #45.
+- **`source_sha` main-reachability check** — retag job now runs `actions/checkout`
+  with `fetch-depth: 0` and verifies via `git cat-file -e` + `git merge-base
+  --is-ancestor "$SOURCE" origin/main` that the provided SHA is a real commit
+  in this repo AND reachable from main. Closes the STRIDE Tampering path where
+  a compromised `packages:write` scope could push a malicious image and retag
+  it as an official release. Via #45.
+
+### Fixed
+
+- **`Verify multi-arch manifest` step** now uses the bare commit SHA tag
+  (matches existing registry naming convention) instead of the prior
+  `sha-<sha>` prefix attempt. Via #44.
+
+### Notes for operators
+
+- Pulling `ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1` (or `:1.8`, `:1`)
+  now works end-to-end — no retag dispatch needed for this or future releases.
+- The `retag` workflow remains available as backfill safety for any releases
+  published before v1.8.1 that lack semver docker tags.
+- Image pulls can be cryptographically verified against their SLSA provenance.
+
+### Merged PRs
+
+- #44: ci: semver docker tagging + retroactive retag
+- #45: ci: harden workflow — SHA pinning, input validation, provenance/SBOM, source_sha verification
+
 ## [1.8.0] - 2026-04-17
 
 Internal review hardening — closes 5 open issues (#20, #21, #23, #24, #25) from the
