@@ -7,6 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-04-17
+
+Internal review hardening — closes 5 open issues (#20, #21, #23, #24, #25) from the
+pre-v1.7.0 code review with zero new runtime dependencies.
+
+### Fixed
+
+- **ICMP healthcheck demux rewrite** — shared raw ICMP socket per `HealthChecker` with
+  demux-by-seq routing, eliminating cross-goroutine packet starvation on Linux and
+  bounding the per-call read loop. Closes [#20] (C2 CRITICAL) and [#25] (M5 MEDIUM) via
+  #40. See `docs/adr/0006-icmp-shared-socket-demux.md`. Race-free `socketMu sync.RWMutex`
+  + `sync.Once` Close idempotency + atomic `seqCounter` on the hot path.
+- **Plaintext token no longer on stdout by default** — `--show-token` flag gates the
+  emit; default path writes a confirmation to stderr pointing at the on-disk token
+  (mode 0600). WARN log fires when `--show-token` is set to warn about
+  shell-history/tmux leak. Closes [#21] (H2 HIGH) via #39.
+- **DSCP range validation** (1..63) — `topology.ValidateDSCP` rejects out-of-range
+  values at topology load AND codegen, preventing `tableID = 100 + DSCP` from clobbering
+  Linux kernel-reserved tables 253 (default) and 254 (main). Closes [#23] (M2 MEDIUM)
+  via #37.
+- **Typed YAML corrupt-state sentinel** — `ErrCorruptNodeState` replaces fragile
+  `strings.Contains` classification in `EnsureKeypair`. Extended pattern to
+  `ErrCorruptTransportState` and `ErrCorruptClientState`. Closes [#24] (M4 MEDIUM)
+  via #38. See `docs/adr/0007-typed-error-sentinel-for-yaml.md`.
+- **`mesh-ctl bootstrap` command injection prevention** (discovered in PR #41 review) —
+  `validateImageRef` rejects shell metacharacters in `--image`; `shellQuote` single-quotes
+  the value at all remote execution sites.
+- **`SaveTokenHash` directory permissions** tightened from 0755 to 0700 (discovered in
+  PR #39 review).
+
+### Added
+
+- **`mesh-ctl bootstrap --host IP`** — SSH-based VPS provisioning: installs Docker (if
+  missing) and pulls the `awg-mesh-node` image. Strict host-key verification via
+  `~/.ssh/known_hosts` by default; `--accept-new-host-key` flag for first contact. SSH
+  agent preferred over on-disk key. T006a from the original awg-mesh spec, via #41.
+- **`--show-token` flag** on `mesh-ctl token rotate`, `master prepare`, `endpoint
+  prepare`, `client prepare`. Default false — token goes only to disk.
+- **`topology.ValidateDSCP(dscp int) error`** + `ErrInvalidDSCP` sentinel — library
+  surface for DSCP range validation.
+- **`pkg/node.ErrCorruptNodeState`**, **`pkg/transport.ErrCorruptTransportState`**,
+  **`pkg/node.ErrCorruptClientState`** — typed sentinels for `errors.Is` classification.
+- **`HealthChecker.Start()`** / **`Close()`** lifecycle methods + shared socket +
+  demuxLoop goroutine.
+- **`Makefile` target `grep-token-leak`** + CI step in `build.yml` — guards against
+  future regressions that reintroduce unguarded `fmt.Printf` on tokens.
+- **`docs/adr/0006-icmp-shared-socket-demux.md`** and **`docs/adr/0007-typed-error-sentinel-for-yaml.md`**
+  with full context, decision drivers, rollback paths, and alternatives-considered sections.
+- **`docs/MIGRATION.md`** — operator guide for migrating from the legacy 5× MikroTik
+  layout to `awg-mesh` 2× master + endpoints + clients. T079 from the original awg-mesh
+  spec.
+- **`tests/v18_smoke/`** — smoke + e2e Docker fixture (`smoke.sh`, `e2e.sh`, `compose.yml`,
+  `build.sh`, `README.md`). Release gate: `make release-gate` runs both before tag
+  creation, per operator directive.
+- 20+ new tests covering every FR and regression path — `TestValidateDSCP`,
+  `TestEnsureKeypairRecoversTruncatedYAML`, `TestLoadNodeStateCorruptSentinel`,
+  `TestTokenRotate_*` (3 tests), `TestPingICMPConcurrentDemux`,
+  `TestPingICMPBoundedReadLoop`, `TestValidateImageRef`, `TestBootstrapHelpFlags`, etc.
+
+### Breaking Changes
+
+- **`mesh-ctl token rotate`, `master prepare`, `endpoint prepare`, `client prepare` no
+  longer print the raw bearer token to stdout by default.** Operators who relied on
+  piping the command output into downstream tools MUST either (a) read the token from
+  its persisted path (`cat <config-dir>/nodes/<name>/token`, mode 0600), or (b) pass
+  `--show-token` to restore the old stdout behavior (NOT recommended — token becomes
+  visible in shell history, `ps` arg list, tmux scrollback).
+- **Topology files with `routing_policies[].dscp` outside 1..63 are now rejected at
+  load time.** Previous silent behavior could clobber kernel tables 253/254.
+
+### Migration from v1.7.0
+
+No mandatory action. Drop-in upgrade:
+
+```
+docker pull ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.0
+docker pull ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.8.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.8.0
+```
+
+See `docs/MIGRATION.md` for the legacy MikroTik → awg-mesh migration path if you are
+still on the pre-v1.0 layout.
+
+If your operator scripts parse stdout of `mesh-ctl ... prepare` or `token rotate` for
+the token, update the parser to read `<config-dir>/nodes/<name>/token` instead, or add
+`--show-token` to the invocation.
+
+### Merged PRs
+
+- [#37] fix: DSCP range validation 1-63 (closes #23) — `572493f`
+- [#38] refactor: typed YAML error sentinel (closes #24) — `bbdea1b`
+- [#39] fix: gate plaintext token behind --show-token flag (closes #21) — `7965b14`
+- [#40] fix: shared-socket ICMP demux + bounded read loop (closes #20, #25) — `44f8797`
+- [#41] feat(mesh-ctl): add bootstrap --host command for VPS provisioning — `1a91f95`
+- [#42] test(v18): smoke + e2e docker fixture for v1.8.0 release gate
+- [#43] chore: release v1.8.0 (ADRs, CHANGELOG, README, MIGRATION)
+
+[#20]: https://github.com/coonfuuseed-paandaa/awg-mesh/issues/20
+[#21]: https://github.com/coonfuuseed-paandaa/awg-mesh/issues/21
+[#23]: https://github.com/coonfuuseed-paandaa/awg-mesh/issues/23
+[#24]: https://github.com/coonfuuseed-paandaa/awg-mesh/issues/24
+[#25]: https://github.com/coonfuuseed-paandaa/awg-mesh/issues/25
+[#37]: https://github.com/coonfuuseed-paandaa/awg-mesh/pull/37
+[#38]: https://github.com/coonfuuseed-paandaa/awg-mesh/pull/38
+[#39]: https://github.com/coonfuuseed-paandaa/awg-mesh/pull/39
+[#40]: https://github.com/coonfuuseed-paandaa/awg-mesh/pull/40
+[#41]: https://github.com/coonfuuseed-paandaa/awg-mesh/pull/41
+[#42]: https://github.com/coonfuuseed-paandaa/awg-mesh/pull/42
+
 ## [1.7.0] - 2026-04-17
 
 ### Added
