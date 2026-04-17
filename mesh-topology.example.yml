@@ -12,6 +12,13 @@ overlay:
     - name: clients
       cidr: 172.20.70.128/25
 
+# Optional: pin docker image versions (recommended for production).
+# Resolution priority: mesh-ctl --image flag > this field > built-in :latest.
+# defaults:
+#   image:
+#     node:   ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1
+#     client: ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.8.1
+
 masters:
   - name: master-01
     host: 198.51.100.10

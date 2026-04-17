@@ -388,6 +388,59 @@ ssh user@198.51.100.10 'docker compose -f master-01-docker-compose.yml up -d'
 
 The generated compose file includes the correct image, capabilities, port mappings, and startup flags for that node. You can integrate the `awg-mesh-node` service block into your existing infrastructure compose file if preferred — see [Deployment](#deployment).
 
+### Pinning image versions
+
+By default, `mesh-ctl prepare` writes the built-in `:latest` tag into the generated compose file. Rolling tags make deployments non-reproducible: a `docker compose pull` on two different days can silently pull different code. Pin to a semver tag to ensure every node in your fleet runs the exact same image digest.
+
+**Resolution priority** (first non-empty value wins):
+
+1. `--image` CLI flag passed to the prepare command
+2. `defaults.image.node` (master/endpoint) or `defaults.image.client` (client) from `mesh-topology.yml`
+3. Built-in fallback: `ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest` (node) or `ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest` (client)
+
+**Available image tags** are published on GHCR and Docker Hub — see the [GHCR package page](https://github.com/coonfuuseed-paandaa/awg-mesh/pkgs/container/awg-mesh) for the full list. Semver tags (`:v1.8.1`), minor-level aliases (`:1.8`), and `:latest` are all present.
+
+#### Pin via CLI flag
+
+Pass `--image` to any prepare subcommand to override the image for that invocation:
+
+```bash
+# Pin master node to a specific release
+mesh-ctl master   prepare master-01    -t mesh-topology.yml \
+    --image ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1
+
+# Pin endpoint node
+mesh-ctl endpoint prepare node-asia-01 -t mesh-topology.yml \
+    --image ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1
+
+# Pin Linux client (uses the lighter client image)
+mesh-ctl client   prepare my-router    -t mesh-topology.yml \
+    --image ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.8.1
+```
+
+Use a full image reference (`registry/repo:tag`) or a short tag recognized by your Docker daemon. The value is passed through verbatim — no registry lookup is performed at prepare time.
+
+#### Pin via topology defaults
+
+Set `defaults.image` in `mesh-topology.yml` once and every subsequent `prepare` call picks it up automatically — no need to repeat `--image` on each command:
+
+```yaml
+defaults:
+  image:
+    node:   ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1   # used by master + endpoint prepare
+    client: ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.8.1  # used by client prepare
+
+# masters, endpoints, clients, overlay, ... (rest of topology unchanged)
+```
+
+Both fields are optional. Setting only `node` leaves `client` at the built-in fallback, and vice versa.
+
+#### Recommendations
+
+- **Production / stable environments:** pin to a semver tag (`:v1.8.1`). Re-run `prepare` and redeploy when you intentionally upgrade.
+- **Edge / preview environments:** `:latest` is acceptable if you want rolling updates on every `docker compose pull`.
+- **Hotfix a single node without touching the shared topology:** pass `--image <hotfix-ref>` on the CLI — it overrides the topology default for that one prepare invocation only.
+
 ### Verify
 
 ```bash
