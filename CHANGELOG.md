@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - 48-finding audit remediation across security, correctness, and quality (batches 1–4)
+- Production deployment field report (2026-04-17) — `mesh-ctl <role> prepare` now
+  generates a compose file that actually starts on a clean Ubuntu host:
+  - Host-network templates no longer set container sysctls (runc rejected them)
+  - All templates mount `/dev/net/tun` — required for TUN device creation
+  - Templates embed `MESH_TOKEN_HASH` (bcrypt) instead of plaintext `MESH_TOKEN`;
+    the node bootstraps `/config/mesh.token` from that env var on first boot
+  - Host volume now binds to `/config` (the binary's default ConfigDir), not
+    `/var/lib/awg-mesh:/var/lib/awg-mesh`
+  - `MESH_NAME` and `MESH_CONFIG_DIR` now present in every template
+- `mesh-ctl master init` no longer emits alarming "warning:" noise when an
+  endpoint has not yet been prepared; partial-rollout skips are reported once
+  on stderr as "note: endpoint %q not yet prepared"
+
+### Added
+- Node binary reads `MESH_*` env vars as fallbacks for every CLI flag (12-factor
+  container config). Flags still win when explicitly set. Env names:
+  `MESH_MODE`, `MESH_NAME`, `MESH_OVERLAY_IP`, `MESH_LISTEN_PORT`,
+  `MESH_CONFIG_DIR`, `MESH_TOPOLOGY`, `MESH_LOG_LEVEL`, `MESH_METRICS_ADDR`.
+- First-boot bootstrap: the node writes `<config>/mesh.token` from
+  `MESH_TOKEN_HASH` when the file is absent. Invalid bcrypt input fails fast
+  so plaintext tokens cannot silently lock the node out.
+- Template contract tests (`cmd/mesh-ctl/cmd/templates_test.go`) — pin the
+  structural invariants (no sysctls on host net, `/dev/net/tun` mounted,
+  `MESH_TOKEN_HASH` embedded, `MESH_NAME` present, `/config` volume) so this
+  class of deployment regression is caught in CI.
 
 ### Refactored
 - Extract transport state types to `pkg/transport` (T016)

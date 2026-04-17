@@ -225,7 +225,13 @@ func newMasterInitCommand() *cobra.Command {
 				epPubkeyPath := filepath.Join(nodeDir(configDir, ep.Name), "pubkey")
 				peerPublicKey, err := os.ReadFile(epPubkeyPath)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: endpoint %q pubkey missing for master %q: %v\n", ep.Name, master.Name, err)
+					if os.IsNotExist(err) {
+						// Endpoint is not yet prepared — skip quietly. This is the
+						// partial-rollout case and is expected, not an error.
+						fmt.Fprintf(os.Stderr, "note: endpoint %q not yet prepared, skipping\n", ep.Name)
+					} else {
+						fmt.Fprintf(os.Stderr, "warning: endpoint %q pubkey read for master %q: %v\n", ep.Name, master.Name, err)
+					}
 					continue
 				}
 
@@ -254,7 +260,13 @@ func newMasterInitCommand() *cobra.Command {
 
 				epToken, err := loadToken(nodeDir(configDir, ep.Name))
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: endpoint %q token missing for master %q: %v\n", ep.Name, master.Name, err)
+					if os.IsNotExist(err) {
+						// Endpoint token not generated yet — the matching
+						// 'mesh-ctl endpoint prepare' has not run.
+						fmt.Fprintf(os.Stderr, "note: endpoint %q has no local token, skipping peer setup\n", ep.Name)
+					} else {
+						fmt.Fprintf(os.Stderr, "warning: endpoint %q token read for master %q: %v\n", ep.Name, master.Name, err)
+					}
 					continue
 				}
 
