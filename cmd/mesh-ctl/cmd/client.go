@@ -96,8 +96,10 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:      client.Name,
 					Host:      "",
 					OverlayIP: client.OverlayIP,
-					Image:     "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
-					TokenHash: hash,
+					Image: "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+					// Escape $ → $$ to survive Docker Compose variable
+					// interpolation. Bcrypt hashes contain literal `$`.
+					TokenHash: composeEscapeDollar(hash),
 					Masters:   strings.Join(masterAddrs, ","),
 				}
 

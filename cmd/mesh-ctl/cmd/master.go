@@ -85,7 +85,9 @@ func newMasterPrepareCommand() *cobra.Command {
 				OverlayIP:  master.OverlayIP,
 				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
 				ListenPort: master.ListenPort,
-				TokenHash:  hash,
+				// Escape $ → $$ to survive Docker Compose variable
+				// interpolation. Bcrypt hashes contain literal `$`.
+				TokenHash: composeEscapeDollar(hash),
 			}
 
 			templateName := "docker-compose.master.yml.tmpl"

@@ -86,7 +86,9 @@ func newEndpointPrepareCommand() *cobra.Command {
 				OverlayIP:  ep.OverlayIP,
 				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
 				ListenPort: ep.ListenPort,
-				TokenHash:  hash,
+				// Escape $ → $$ to survive Docker Compose variable
+				// interpolation. Bcrypt hashes contain literal `$`.
+				TokenHash: composeEscapeDollar(hash),
 			}
 
 			templateName := "docker-compose.endpoint.yml.tmpl"

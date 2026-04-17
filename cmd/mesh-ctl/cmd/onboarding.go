@@ -139,6 +139,17 @@ func nodeDir(configDir, name string) string {
 	return filepath.Join(configDir, "nodes", name)
 }
 
+// composeEscapeDollar doubles every `$` so Docker Compose does not treat it
+// as variable interpolation when parsing an environment value. Bcrypt hashes
+// always start with `$2a$12$...`, and without this escape Compose expands
+// `$2a` and `$12` to empty strings — the node then rejects the mangled value
+// via bcrypt.Cost(...) and refuses to bootstrap `/config/mesh.token`.
+// Apply only for docker-compose output. RouterOS `.rsc` does not interpolate
+// `$`, so mikrotik deploy scripts carry the raw hash via quoteRouterOSValue.
+func composeEscapeDollar(s string) string {
+	return strings.ReplaceAll(s, "$", "$$")
+}
+
 // resolveMasterAddresses maps master names to "host:listen_port" strings so a
 // client can dial each master on the port actually configured in topology —
 // anti-DPI deployments commonly run masters on 443/udp, not the default 51820,

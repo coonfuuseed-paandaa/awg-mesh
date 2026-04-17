@@ -160,6 +160,12 @@ func envFallbackInt(setFlags map[string]bool, flagName string, flagValue int, en
 	}
 	parsed, err := strconv.Atoi(raw)
 	if err != nil {
+		// Logger is not yet constructed here; emit the diagnostic directly
+		// so an operator with a typo in MESH_LISTEN_PORT (e.g. "51820x")
+		// sees the fall-back happen instead of silently getting the default.
+		fmt.Fprintf(os.Stderr,
+			"warning: %s=%q is not a valid integer, using flag default %d (%v)\n",
+			envName, raw, flagValue, err)
 		return flagValue
 	}
 	return parsed

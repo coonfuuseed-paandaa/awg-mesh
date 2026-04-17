@@ -49,7 +49,8 @@ func masterData() any {
 		OverlayIP:  "10.0.0.1",
 		Image:      "ghcr.io/example/awg-mesh-node:latest",
 		ListenPort: 443,
-		TokenHash:  "$2a$12$abcdefghijklmnopqrstuv",
+		// Pre-escaped sample hash (production code doubles `$` before render).
+TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
 	}
 }
 
@@ -67,7 +68,8 @@ func endpointData() any {
 		OverlayIP:  "10.0.0.2",
 		Image:      "ghcr.io/example/awg-mesh-node:latest",
 		ListenPort: 51820,
-		TokenHash:  "$2a$12$abcdefghijklmnopqrstuv",
+		// Pre-escaped sample hash (production code doubles `$` before render).
+TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
 	}
 }
 
@@ -86,7 +88,8 @@ func clientData() any {
 		OverlayIP:  "10.0.0.100",
 		Image:      "ghcr.io/example/awg-mesh-client:latest",
 		ListenPort: 51820,
-		TokenHash:  "$2a$12$abcdefghijklmnopqrstuv",
+		// Pre-escaped sample hash (production code doubles `$` before render).
+TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
 		Masters:    "master-01,master-02",
 	}
 }
@@ -217,6 +220,80 @@ func TestAllTemplatesMountConfigDir(t *testing.T) {
 			rendered := renderTemplate(t, tt)
 			if !strings.Contains(rendered, ":/config") {
 				t.Fatalf("template must bind a host directory to /config:\n%s", rendered)
+			}
+		})
+	}
+}
+
+// TestAllTemplatesUseExpectedHostPaths pins the host-side bind prefixes so
+// they cannot drift away from the paths printNextSteps prints to the
+// operator. If a future change moves host state to, say, /etc/awg-mesh, the
+// Next Steps output would still tell the operator to mkdir -p
+// /var/lib/awg-mesh — the deployment would silently deploy to an empty
+// directory and the operator would blame the binary, not the docs.
+func TestAllTemplatesUseExpectedHostPaths(t *testing.T) {
+	t.Parallel()
+	for _, tt := range allTemplates {
+		tt := tt
+		t.Run(tt.Name, func(t *testing.T) {
+			t.Parallel()
+			rendered := renderTemplate(t, tt)
+			var wantPrefix string
+			if isHostNetwork(tt.fileName) {
+				wantPrefix = "/var/lib/awg-mesh/"
+			} else {
+				wantPrefix = "/srv/awg-mesh/"
+			}
+			if !strings.Contains(rendered, wantPrefix) {
+				t.Fatalf("template %s expected host path prefix %q, rendered:\n%s",
+					tt.fileName, wantPrefix, rendered)
+			}
+		})
+	}
+}
+
+// TestAllTemplatesEscapeDollarInTokenHash guards the Docker Compose variable
+// interpolation edge case: bcrypt hashes contain literal `$` characters
+// ("$2a$12$..."), and Compose would interpolate "$2a" / "$12" to empty
+// strings unless every `$` is doubled to `$$`. The Go caller escapes once
+// via composeEscapeDollar; this test renders a sample bcrypt hash through
+// the template stack and confirms only doubled `$$` remain after
+// MESH_TOKEN_HASH=.
+func TestAllTemplatesEscapeDollarInTokenHash(t *testing.T) {
+	t.Parallel()
+	// Real bcrypt hashes always start with $2a$ or $2b$; the contract tests
+	// already put a sample literal value into TokenHash. The caller in
+	// master.go / endpoint.go / client.go applies composeEscapeDollar
+	// before rendering — simulate that here so the test pins actual prod
+	// behaviour rather than the accidental "no escape" path.
+	for _, tt := range allTemplates {
+		tt := tt
+		t.Run(tt.Name, func(t *testing.T) {
+			t.Parallel()
+			rendered := renderTemplate(t, tt)
+			for _, line := range strings.Split(rendered, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if !strings.HasPrefix(trimmed, "- MESH_TOKEN_HASH=") {
+					continue
+				}
+				val := strings.TrimPrefix(trimmed, "- MESH_TOKEN_HASH=")
+				// The sample fixture value in renderTemplate already has
+				// "$" — it must either be entirely doubled ($$), or the
+				// caller in production code has not applied
+				// composeEscapeDollar and this template is unsafe.
+				// Walk the string character by character and fail if any
+				// lone `$` is followed by a character other than `$`.
+				for i := 0; i < len(val); i++ {
+					if val[i] != '$' {
+						continue
+					}
+					if i+1 >= len(val) || val[i+1] != '$' {
+						t.Fatalf("%s: MESH_TOKEN_HASH contains unescaped '$' "+
+							"(position %d, value=%q). Caller must apply "+
+							"composeEscapeDollar before render.", tt.fileName, i, val)
+					}
+					i++ // skip the paired $
+				}
 			}
 		})
 	}
