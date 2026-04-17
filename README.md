@@ -67,6 +67,17 @@ graph TB
 
 ## What's New
 
+### v1.8.0
+
+- **Internal review hardening** — closes 5 open issues (#20, #21, #23, #24, #25) with zero new runtime dependencies. All cover correctness, security, or observability.
+- **ICMP healthcheck rewrite** — shared raw ICMP socket per `HealthChecker` with demux-by-seq; eliminates cross-goroutine packet starvation on Linux. Race-free `socketMu sync.RWMutex` + `sync.Once` Close + atomic `seqCounter` on the hot path. See [ADR-0006](docs/adr/0006-icmp-shared-socket-demux.md).
+- **Plaintext token removed from stdout** — `mesh-ctl` no longer prints the bearer token to stdout by default. Token still persists to disk (mode 0600). Opt-in via `--show-token` flag (WARN log fires when set). **Breaking** for operators parsing `mesh-ctl ... prepare` stdout — update to `cat <config-dir>/nodes/<name>/token`.
+- **DSCP range validation** — topology loader rejects `routing_policies[].dscp` outside 1..63, preventing `tableID = 100 + DSCP` from clobbering kernel-reserved tables 253 (default) / 254 (main).
+- **Typed YAML corruption sentinel** — `ErrCorruptNodeState`, `ErrCorruptTransportState`, `ErrCorruptClientState` replace fragile `strings.Contains` classification. See [ADR-0007](docs/adr/0007-typed-error-sentinel-for-yaml.md).
+- **`mesh-ctl bootstrap --host IP`** — new SSH-based VPS provisioning: installs Docker (if missing) and pulls the node image. Strict host-key verification via `~/.ssh/known_hosts` by default. SSH agent preferred over on-disk key. Command-injection-safe `--image` parsing.
+- **Legacy migration guide** — `docs/MIGRATION.md` covers the legacy 5× MikroTik container layout → `awg-mesh` 2× master + endpoints + clients cut-over with rollback paths.
+- **Smoke + e2e Docker fixture** — `tests/v18_smoke/` + `make release-gate` validates every v1.8.0 behavior end-to-end before release.
+
 ### v1.7.0
 
 - **Client-side ECMP hardening** — unified `rebuildClientECMP` path applies health filtering, CONNMARK sticky sessions, and L4 multipath hash uniformly across VIP and legacy topologies. No more divergent semantics.

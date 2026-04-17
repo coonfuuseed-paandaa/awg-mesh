@@ -67,6 +67,17 @@ graph TB
 
 ## Что нового
 
+### v1.8.0
+
+- **Закрытие находок внутреннего код-ревью** — 5 issues (#20, #21, #23, #24, #25) без новых runtime-зависимостей. Корректность, безопасность, наблюдаемость.
+- **Переписан ICMP healthcheck** — один shared raw ICMP socket на `HealthChecker` с демультиплексированием по seq; устраняет starvation между goroutines под Linux. Race-free `socketMu sync.RWMutex` + `sync.Once` для Close + атомарный `seqCounter` на горячем пути. См. [ADR-0006](docs/adr/0006-icmp-shared-socket-demux.md).
+- **Bearer-токен убран из stdout по умолчанию** — `mesh-ctl` больше не печатает токен в stdout при `token rotate` и `* prepare`. Токен сохраняется на диск (mode 0600); путь выводится на stderr. Прежнее поведение возвращается флагом `--show-token` (при этом пишется WARN-лог). **Ломающее** изменение для скриптов, парсящих stdout — переходить на `cat <config-dir>/nodes/<name>/token`.
+- **Валидация DSCP** — загрузчик топологии отвергает `routing_policies[].dscp` вне диапазона 1..63; раньше `tableID = 100 + DSCP` мог молча перезаписать зарезервированные ядром таблицы 253 (default) / 254 (main).
+- **Типизированный сентинел порчи YAML** — `ErrCorruptNodeState`, `ErrCorruptTransportState`, `ErrCorruptClientState` заменяют хрупкую классификацию через `strings.Contains`. Переименование текста ошибки больше не ломает авто-восстановление. См. [ADR-0007](docs/adr/0007-typed-error-sentinel-for-yaml.md).
+- **`mesh-ctl bootstrap --host IP`** — новая команда one-shot провижининга VPS: SSH-подключение, установка Docker (если отсутствует), pull образа ноды. Строгая проверка host-key через `~/.ssh/known_hosts`, опциональный `--accept-new-host-key` для первого контакта. SSH agent приоритетнее ключа на диске. `--image` защищён от command injection.
+- **Миграционный гайд** — `docs/MIGRATION.md` описывает переход с исторической схемы «5× MikroTik контейнеров» на `awg-mesh` 2× master + endpoints + clients, с путями отката на каждом этапе.
+- **Smoke + e2e тесты в Docker** — `tests/v18_smoke/` + `make release-gate` проверяет все поведения v1.8.0 перед тегом релиза.
+
 ### v1.7.0
 
 - **Унификация клиентского ECMP** — единый путь `rebuildClientECMP`: health-фильтрация, CONNMARK-sticky sessions и L4 multipath hash применяются одинаково и к VIP-, и к legacy-топологиям. Двух разных семантик больше нет.
