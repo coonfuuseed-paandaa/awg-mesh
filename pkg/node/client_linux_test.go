@@ -4,6 +4,7 @@ package node
 
 import (
 	"net"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -486,5 +487,63 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 	}
 	if router.setECMPCallCount() <= beforeCount {
 		t.Error("expected SetECMPRoute to be called again on link up")
+	}
+}
+
+// =============================================================================
+// Phase 4: deterministic client interface naming tests (T012)
+// =============================================================================
+
+// TestClientIfaceName_Deterministic verifies same pubkey always produces same name.
+func TestClientIfaceName_Deterministic(t *testing.T) {
+	t.Parallel()
+
+	pk, err := wg.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	first := clientIfaceName(pk)
+	for i := 0; i < 10; i++ {
+		got := clientIfaceName(pk)
+		if got != first {
+			t.Errorf("iteration %d: got %q, want %q", i, got, first)
+		}
+	}
+}
+
+// TestClientIfaceName_Format verifies the name matches ^wg-c[0-9a-f]{4}$.
+func TestClientIfaceName_Format(t *testing.T) {
+	t.Parallel()
+
+	re := regexp.MustCompile(`^wg-c[0-9a-f]{4}$`)
+
+	pk, err := wg.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	name := clientIfaceName(pk)
+	if !re.MatchString(name) {
+		t.Errorf("clientIfaceName returned %q, does not match %s", name, re.String())
+	}
+}
+
+// TestClientIfaceName_DifferentKeysMapToDifferentNames verifies distinct inputs
+// produce distinct names. Deterministic inputs eliminate birthday-paradox flake
+// (16-bit namespace; random generation had ~0.07% collision probability at N=10).
+func TestClientIfaceName_DifferentKeysMapToDifferentNames(t *testing.T) {
+	t.Parallel()
+
+	seen := make(map[string]bool)
+	for i := 0; i < 10; i++ {
+		var pk wg.Key
+		// Deterministic distinct inputs so the test cannot flake.
+		pk[0] = byte(i + 1)
+		name := clientIfaceName(pk)
+		if seen[name] {
+			t.Errorf("collision: key %d produced already-seen name %q", i, name)
+		}
+		seen[name] = true
 	}
 }
