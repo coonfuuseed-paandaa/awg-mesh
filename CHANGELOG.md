@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-04-17
+
 ### Added
 - **Client-side ECMP hardening** (`.agent/specs/client-ecmp/`):
   - `TunnelTransport` now persists `AllowedIPs`, `PersistentKeepalive`, and `SchemaVersion` — the peer's AllowedIPs from `AddPeer` are restored verbatim on reconcile instead of being hardcoded to `0.0.0.0/0` (#27)
@@ -387,7 +389,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.3.0...v1.4.0
