@@ -60,8 +60,11 @@ type HealthChecker struct {
 	// id is set once in NewHealthChecker and never modified.
 	id      uint16
 	socket  *icmp.PacketConn
-	demux   map[uint16]chan icmpReply
-	demuxMu sync.Mutex
+	// socketMu guards all reads and writes of the socket field.
+	// PingICMP and demuxLoop take RLock to read; Close takes Lock to nil it out.
+	socketMu sync.RWMutex
+	demux    map[uint16]chan icmpReply
+	demuxMu  sync.Mutex
 	// readerDone is closed by demuxLoop when it exits.
 	readerDone chan struct{}
 	// startOnce and closeOnce protect against concurrent Start/Close calls.
@@ -114,16 +117,22 @@ func (h *HealthChecker) Close() error {
 	}
 	var closeErr error
 	h.closeOnce.Do(func() {
-		if h.socket == nil {
-			return
-		}
-		// Closing the socket causes demuxLoop's ReadFrom to return an error, which
-		// drives the goroutine to exit and close readerDone.
-		closeErr = h.socket.Close()
-		<-h.readerDone
-		// Prevent any subsequent PingICMP from dereferencing a closed socket.
+		// Grab the socket under write lock: swap it for nil atomically so that
+		// concurrent PingICMP callers (holding RLock) either see the live socket
+		// or see nil and return an error — never a dangling pointer.
+		h.socketMu.Lock()
+		sock := h.socket
 		h.socket = nil
 		h.started = false
+		h.socketMu.Unlock()
+
+		if sock == nil {
+			return
+		}
+		// Closing the socket causes demuxLoop's ReadFrom to return an error,
+		// which drives the goroutine to exit and close readerDone.
+		closeErr = sock.Close()
+		<-h.readerDone
 	})
 	if closeErr != nil {
 		return fmt.Errorf("icmp close: %w", closeErr)
@@ -142,12 +151,26 @@ func (h *HealthChecker) Close() error {
 func (h *HealthChecker) demuxLoop() {
 	defer close(h.readerDone)
 
+	// Capture the socket reference once under RLock. demuxLoop is the sole
+	// reader goroutine and holds the socket for its entire lifetime; it does
+	// not race with Close because Close takes the write lock, nils h.socket,
+	// then closes the underlying conn — which causes ReadFrom to return an
+	// error and drives demuxLoop to exit, after which Close unblocks on
+	// <-h.readerDone.
+	h.socketMu.RLock()
+	sock := h.socket
+	h.socketMu.RUnlock()
+
+	if sock == nil {
+		return
+	}
+
 	buf := make([]byte, 1500)
 	// dropCount is accessed only by this single goroutine — no atomic needed.
 	var dropCount int64
 
 	for {
-		n, _, err := h.socket.ReadFrom(buf)
+		n, _, err := sock.ReadFrom(buf)
 		if err != nil {
 			// Socket was closed or had an I/O error; exit the loop.
 			h.logger.Debug().
@@ -354,7 +377,16 @@ func purgeStaleFailures(targets []HealthTarget, failures map[string]int) {
 // Start() must be called before PingICMP. Calling PingICMP after Close() returns
 // (false, error) immediately rather than panicking on the nil socket.
 func (h *HealthChecker) PingICMP(ctx context.Context, ip string, timeout time.Duration) (bool, error) {
-	if h.socket == nil {
+	// Read h.socket under RLock to prevent a race with Close() which takes Lock
+	// to nil it out. We capture the pointer into a local variable; after RUnlock
+	// the field may be nilled by a concurrent Close, but our local sock still
+	// points to the live (or being-closed) *icmp.PacketConn. WriteTo on a
+	// being-closed conn returns an error rather than panicking, so the call is safe.
+	h.socketMu.RLock()
+	sock := h.socket
+	h.socketMu.RUnlock()
+
+	if sock == nil {
 		return false, fmt.Errorf("PingICMP called on stopped HealthChecker")
 	}
 
@@ -398,7 +430,7 @@ func (h *HealthChecker) PingICMP(ctx context.Context, ip string, timeout time.Du
 	}
 
 	dst := &net.IPAddr{IP: parsedIP}
-	if _, err := h.socket.WriteTo(msgBytes, dst); err != nil {
+	if _, err := sock.WriteTo(msgBytes, dst); err != nil {
 		return false, fmt.Errorf("icmp write: %w", err)
 	}
 
