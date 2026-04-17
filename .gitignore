@@ -41,3 +41,10 @@ TECHNICAL_DEBT.md
 .audit*
 audit_*
 .mcp.json
+
+# Graphify knowledge graph
+graphify-out/
+
+# Tool state (not for git)
+.engram-project
+.serena/
