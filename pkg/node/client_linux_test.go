@@ -597,7 +597,7 @@ func TestRebuildClientECMP_Idempotent(t *testing.T) {
 	}
 
 	// First call — installs routes and sticky rules.
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("first rebuildClientECMP: %v", err)
 	}
 
@@ -608,7 +608,7 @@ func TestRebuildClientECMP_Idempotent(t *testing.T) {
 
 	// Second call — same links, same balancerIP.
 	// EnableStickyECMP must NOT fire again (NFR-4: idempotent).
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("second rebuildClientECMP: %v", err)
 	}
 
