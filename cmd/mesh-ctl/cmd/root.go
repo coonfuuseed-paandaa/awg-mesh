@@ -16,9 +16,9 @@ var (
 // NewRootCommand creates the root mesh-ctl command with global flags.
 func NewRootCommand(version string) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "mesh-ctl",
-		Short: "Control plane CLI for awg-mesh",
-		Long:  "mesh-ctl manages AWG mesh topology, node onboarding, rotation, and monitoring.",
+		Use:          "mesh-ctl",
+		Short:        "Control plane CLI for awg-mesh",
+		Long:         "mesh-ctl manages AWG mesh topology, node onboarding, rotation, and monitoring.",
 		SilenceUsage: true,
 	}
 
@@ -36,6 +36,7 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(newIPCommand())
 	rootCmd.AddCommand(newConfigCommand())
 	rootCmd.AddCommand(newRoutingCommand())
+	rootCmd.AddCommand(newBootstrapCommand())
 
 	return rootCmd
 }
