@@ -67,6 +67,25 @@ graph TB
 
 ## What's New
 
+### v1.7.0
+
+- **Client-side ECMP hardening** — unified `rebuildClientECMP` path applies health filtering, CONNMARK sticky sessions, and L4 multipath hash uniformly across VIP and legacy topologies. No more divergent semantics.
+- **Deterministic client interface names** — `wg-c<4-hex>` derived from peer pubkey SHA-256. Stable across restarts; legacy `wg-cN` interfaces are cleaned up on reconcile. External monitoring scraping interface names must be updated.
+- **Schema-versioned transport state** — `transport.yml` now carries `schema_version: 1` plus per-tunnel `allowed_ips` and `persistent_keepalive`. Pre-v1.6.0 state files auto-migrate on first boot with one WARN log; migration is durable. Closes the hardcoded-`0.0.0.0/0` reconcile bug.
+- **CIDR-scoped sticky ECMP** — `EnableStickyECMP` rules now carry `ip daddr <cidr>` match; `DisableStickyECMP` actually removes the rules (was a no-op). Runtime `balancer_ip` changes produce clean conntrack state.
+- **Partial-mesh boot tolerance** — reconcile errors are no longer fatal to `Run()`; the client starts with whatever tunnels are healthy and converges via healthcheck.
+- **Structured ECMP logging** — every `ecmp_install` / `ecmp_withdraw` / `sticky_enable` / `sticky_disable` carries `reason` (`init` / `onUp` / `onDown` / `reconcile` / `balancer_change` / `no_healthy_links`).
+- **Docker-compose fixture** — `tests/client_ecmp/` ships a 4-service reproducible stack plus `verify.sh` for manual US1 (failover) and US2 (stickiness) regression tests.
+
+### v1.6.0
+
+- **12-factor env var bootstrap** — node binary reads `MESH_MODE`, `MESH_NAME`, `MESH_OVERLAY_IP`, `MESH_LISTEN_PORT`, `MESH_CONFIG_DIR`, `MESH_TOPOLOGY`, `MESH_LOG_LEVEL`, `MESH_METRICS_ADDR` as fallbacks for every CLI flag. Flags still win when explicit.
+- **First-boot token bootstrap** — `MESH_TOKEN_HASH` (bcrypt) is written into `/config/mesh.token` on first start; ignored on subsequent boots. Operators no longer ship token files by hand.
+- **Multi-arch docker images** — `linux/amd64`, `linux/386`, `linux/arm64`, `linux/arm/v7`, `linux/arm/v6`. Covers Intel/AMD servers, legacy 32-bit x86, Raspberry Pi 3/4/5 (arm64), Pi 2/3 (arm/v7), Pi Zero/1 (arm/v6), and MikroTik hAP ax.
+- **Template contract tests** pin deploy invariants (no sysctls on host-net, `/dev/net/tun` mounted, `MESH_TOKEN_HASH` embedded, `MESH_NAME` present, `/config` volume).
+- **13 production deploy bugs fixed** — host-network sysctls rejection, missing TUN device, bcrypt `$`-escaping in compose, wrong volume layout, missing env vars, TLS capture primer, MikroTik RouterOS 7.21+ `list=` syntax, `MESH_MASTERS host:port` port mismatch, and more.
+- **CI: govulncheck + privileged routing tests + multi-arch manifest verification.**
+
 ### v1.5.0
 
 - **Client state persistence** — DSCP routing policies and DNS config are saved to `/config/client-state.yml` after `mesh-ctl client init`. Container restores full state on restart without requiring the topology file or a gRPC re-init.
@@ -283,7 +302,7 @@ This example deploys a minimal mesh: two masters in two regions, two endpoints i
 
 ```bash
 # 1. Install mesh-ctl on your admin machine
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Create your topology file (see Configuration section for all fields)
@@ -327,7 +346,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Install mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
 ```
 
 The binary lands in `$(go env GOPATH)/bin`. Ensure that directory is in your `PATH`:
@@ -371,7 +390,7 @@ All nodes should appear `ONLINE` with tunnel counts matching the topology.
 ### Upgrading mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
 ```
 
 The `~/.mesh-ctl/` state directory (CA, tokens, keys, transport allocations) is not affected.
@@ -413,7 +432,7 @@ ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest
 ```
 
 - Size: ~42 MB (Alpine base)
-- Architectures: `linux/amd64`, `linux/arm64`
+- Architectures (multi-arch manifest, since v1.6.0): `linux/amd64`, `linux/386`, `linux/arm64`, `linux/arm/v7`, `linux/arm/v6` — covers x86_64 servers, legacy 32-bit x86, Raspberry Pi 3/4/5 (arm64), Pi 2/3 (arm/v7), Pi Zero/1 (arm/v6), and MikroTik hAP ax
 - No external runtime dependencies
 
 ### Volume mount
@@ -684,7 +703,24 @@ transport:
   prefix_length: 30         # /30 = 4 IPs per tunnel (2 usable: master-side + endpoint-side)
 ```
 
-Transport allocations are stored in `~/.mesh-ctl/transport.yml` and visible via `mesh-ctl config show`.
+Transport allocations are stored in `~/.mesh-ctl/transport.yml` (admin side) and mirrored to `/config/transport.yml` on each node (node side). Per-node state example (v1.7.0+ schema):
+
+```yaml
+# /config/transport.yml on a client
+schema_version: 1         # v1.7.0+. Absent → pre-v1.6.0 state; auto-migrates on first boot with a WARN log
+overlay_ip: 172.20.70.130
+tunnels:
+  - name: wg-c<4-hex>     # deterministic name from peer pubkey sha256[:4]
+    transport_ip: 10.255.0.2
+    peer_transport_ip: 10.255.0.1
+    peer_public_key: <hex>
+    peer_endpoint: master-01.example:51820
+    balancer_ip: 172.20.70.1
+    allowed_ips: ["172.20.70.0/24"]     # persisted verbatim from AddPeer; no hardcoded 0.0.0.0/0 fallback in v1.7.0+
+    persistent_keepalive: 25             # seconds; 0 = disabled
+```
+
+On the admin side, `mesh-ctl config show` surfaces the transport allocator state. Visible via `mesh-ctl config show`.
 
 ## Usage
 
@@ -1060,8 +1096,8 @@ Version is detected automatically at runtime via `runtime/debug.ReadBuildInfo()`
 
 | How built | Version shown |
 |-----------|--------------|
-| `go install ...@v1.5.0` | `v1.5.0` |
-| Local clone at tagged commit | `v1.5.0 (abcd1234)` |
+| `go install ...@v1.7.0` | `v1.7.0` |
+| Local clone at tagged commit | `v1.7.0 (abcd1234)` |
 | `go run` | `dev` |
 
 ### Docker image build
