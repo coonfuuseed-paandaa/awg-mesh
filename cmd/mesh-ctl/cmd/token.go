@@ -87,10 +87,10 @@ func newTokenRotateCommand() *cobra.Command {
 			if err := pkgtls.SaveTokenHash(nd, newHash); err != nil {
 				return fmt.Errorf("save new token hash locally: %w", err)
 			}
-			tokenPath := filepath.Join(nd, "token")
 			if err := saveToken(nd, newToken); err != nil {
 				return fmt.Errorf("save new token locally: %w", err)
 			}
+			tokenPath := filepath.Join(nd, "token")
 
 			if showToken {
 				fmt.Fprintln(os.Stdout, newToken) // OK: gated behind --show-token flag
