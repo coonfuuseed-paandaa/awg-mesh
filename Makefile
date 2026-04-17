@@ -44,6 +44,15 @@ test-client-ecmp:
 	@docker info >/dev/null 2>&1 || { echo "Docker daemon not running; skipping"; exit 0; }
 	bash tests/client_ecmp/verify.sh
 
+.PHONY: grep-token-leak
+grep-token-leak:
+	@hits=$$(grep -rnE '(fmt\.(Printf|Println|Fprintln)\(|fmt\.Fprintf\(os\.Stdout)[^)]*\b(newToken|token|bearer)\b' cmd/mesh-ctl/cmd/ | grep -v '_test\.go' | grep -v '// OK:' || true); \
+	if [ -n "$$hits" ]; then \
+		echo "ERROR: unguarded token emit to stdout found:"; echo "$$hits"; exit 1; \
+	else \
+		echo "grep-token-leak: no unguarded token emits found"; \
+	fi
+
 # v1.8.0 release gate targets.
 # smoke-v18: fast (<2 min) binary + CLI checks, builds images from source.
 # e2e-v18:   full mesh-up + FR-2/FR-3/FR-4 verification (<10 min).

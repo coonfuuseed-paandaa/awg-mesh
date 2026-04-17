@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/spf13/cobra"
 )
 
 func newEndpointCommand() *cobra.Command {
@@ -32,6 +32,7 @@ func newEndpointCommand() *cobra.Command {
 
 func newEndpointPrepareCommand() *cobra.Command {
 	var useTraefik bool
+	var showToken bool
 
 	cmd := &cobra.Command{
 		Use:   "prepare [name]",
@@ -105,12 +106,14 @@ func newEndpointPrepareCommand() *cobra.Command {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
-			printNextSteps("endpoint", name, token, outputPath, useTraefik)
+			tokenPath := filepath.Join(nd, "token")
+			printNextSteps("endpoint", name, token, tokenPath, outputPath, useTraefik, showToken)
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
+	cmd.Flags().BoolVar(&showToken, "show-token", false, "print raw token to stdout (default: save to disk only)")
 	return cmd
 }
 
@@ -198,7 +201,7 @@ func newEndpointInitCommand() *cobra.Command {
 			}
 
 			selfClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-				Target:     ep.GRPCAddr(),
+				Target:   ep.GRPCAddr(),
 				Token:    token,
 				Insecure: true,
 			})
@@ -242,9 +245,9 @@ func newEndpointInitCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.GRPCAddr(),
-					Token:      masterToken,
-					Insecure:   true,
+					Target:   master.GRPCAddr(),
+					Token:    masterToken,
+					Insecure: true,
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)
@@ -253,12 +256,12 @@ func newEndpointInitCommand() *cobra.Command {
 
 				masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
-					Name:          ep.Name,
-					EndpointHost:  ep.PeerAddr(),
-					OverlayIp:     ep.OverlayIP,
-					BalancerIp:    balancerIP,
-					PeerPublicKey: resp.NodePublicKey,
-					Weight:        1,
+					Name:                ep.Name,
+					EndpointHost:        ep.PeerAddr(),
+					OverlayIp:           ep.OverlayIP,
+					BalancerIp:          balancerIP,
+					PeerPublicKey:       resp.NodePublicKey,
+					Weight:              1,
 					TransportSubnet:     allocation.Subnet.String(),
 					MasterTransportIp:   allocation.MasterIP.String(),
 					EndpointTransportIp: allocation.EndpointIP.String(),
@@ -374,9 +377,9 @@ func newEndpointRemoveCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.GRPCAddr(),
-					Token:      masterToken,
-					Insecure:   true,
+					Target:   master.GRPCAddr(),
+					Token:    masterToken,
+					Insecure: true,
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)

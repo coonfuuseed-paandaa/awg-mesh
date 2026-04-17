@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,102 @@ func TestEnsureKeypairErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "node state") {
 		t.Fatalf("unexpected error (expected 'node state' in message): %v", err)
+	}
+}
+
+func TestEnsureKeypairRecoversTruncatedYAML(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content []byte
+	}{
+		{
+			name:    "truncated YAML",
+			content: []byte("private_key: abc\npublic_key: [unclosed"),
+		},
+		{
+			name:    "non-YAML bytes",
+			content: []byte{0xff, 0x00, 0xde, 0xad},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			statePath := filepath.Join(dir, nodeStateFileName)
+			if err := os.WriteFile(statePath, tt.content, 0o600); err != nil {
+				t.Fatalf("WriteFile returned error: %v", err)
+			}
+
+			privateKey, publicKey, err := EnsureKeypair(dir)
+			if err != nil {
+				t.Fatalf("EnsureKeypair returned error for %q input: %v", tt.name, err)
+			}
+			if privateKey.IsZero() || publicKey.IsZero() {
+				t.Fatalf("expected non-zero keypair after recovery")
+			}
+			if publicKey != privateKey.PublicKey() {
+				t.Fatalf("public key does not match private key after recovery")
+			}
+
+			regenerated, loadErr := LoadNodeState(dir)
+			if loadErr != nil {
+				t.Fatalf("LoadNodeState after recovery returned error: %v", loadErr)
+			}
+			if regenerated.PrivateKey != privateKey.String() {
+				t.Fatalf("regenerated private key mismatch: got %q want %q", regenerated.PrivateKey, privateKey.String())
+			}
+			if regenerated.PublicKey != publicKey.String() {
+				t.Fatalf("regenerated public key mismatch: got %q want %q", regenerated.PublicKey, publicKey.String())
+			}
+		})
+	}
+}
+
+func TestLoadNodeStateCorruptSentinel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content []byte
+	}{
+		{
+			name:    "truncated YAML",
+			content: []byte("private_key: abc\npublic_key: [unclosed"),
+		},
+		{
+			name:    "non-YAML bytes",
+			content: []byte{0xff, 0x00, 0xde, 0xad},
+		},
+		{
+			name:    "unknown field",
+			content: []byte("private_key: abc\nunknown_field: x\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			statePath := filepath.Join(dir, nodeStateFileName)
+			if err := os.WriteFile(statePath, tt.content, 0o600); err != nil {
+				t.Fatalf("WriteFile returned error: %v", err)
+			}
+
+			_, err := LoadNodeState(dir)
+			if err == nil {
+				t.Fatal("expected error for corrupt YAML, got nil")
+			}
+			if !errors.Is(err, ErrCorruptNodeState) {
+				t.Fatalf("expected errors.Is(err, ErrCorruptNodeState)=true, got err=%v", err)
+			}
+		})
 	}
 }
 
