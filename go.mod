@@ -2,6 +2,8 @@ module github.com/coonfuuseed-paandaa/awg-mesh
 
 go 1.25.0
 
+toolchain go1.25.9
+
 require (
 	github.com/amnezia-vpn/amneziawg-go v1.0.4
 	github.com/cilium/ebpf v0.21.0
@@ -10,6 +12,7 @@ require (
 	github.com/miekg/dns v1.1.72
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.0
 	github.com/spf13/cobra v1.10.2
 	github.com/vishvananda/netlink v1.3.1

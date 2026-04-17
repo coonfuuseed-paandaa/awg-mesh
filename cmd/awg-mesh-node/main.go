@@ -2,13 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rs/zerolog"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/logging"
@@ -45,6 +52,10 @@ func main() {
 			Str("mode", options.mode).
 			Str("valid_modes", modeMaster+","+modeEndpoint+","+modeClient).
 			Msg("invalid node mode")
+	}
+
+	if err := bootstrapTokenHash(options.configDir, logger); err != nil {
+		logger.Fatal().Err(err).Msg("token bootstrap failed")
 	}
 
 	cfg := node.NodeConfig{
@@ -90,27 +101,119 @@ func main() {
 	}
 }
 
+// parseNodeOptions reads CLI flags with MESH_* env var fallback for flags that
+// were not explicitly set on the command line. Flags win over env vars — this
+// matches 12-factor container conventions where env vars are the usual config
+// transport and flags are reserved for debug/override.
 func parseNodeOptions() nodeOptions {
-	mode := flag.String("mode", modeMaster, "Node mode: master|endpoint|client")
-	name := flag.String("name", "", "Node name")
-	overlayIP := flag.String("overlay-ip", "", "Node overlay IP address")
-	listenPort := flag.Int("listen-port", 51820, "AWG listen port")
-	configDir := flag.String("config-dir", "/config", "Node config directory")
-	topologyPath := flag.String("topology", "", "Path to topology YAML")
-	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error")
-	metricsAddr := flag.String("metrics-addr", "127.0.0.1:9091", "Prometheus metrics listen address")
+	mode := flag.String("mode", modeMaster, "Node mode: master|endpoint|client (env: MESH_MODE)")
+	name := flag.String("name", "", "Node name (env: MESH_NAME)")
+	overlayIP := flag.String("overlay-ip", "", "Node overlay IP address (env: MESH_OVERLAY_IP)")
+	listenPort := flag.Int("listen-port", 51820, "AWG listen port (env: MESH_LISTEN_PORT)")
+	configDir := flag.String("config-dir", "/config", "Node config directory (env: MESH_CONFIG_DIR)")
+	topologyPath := flag.String("topology", "", "Path to topology YAML (env: MESH_TOPOLOGY)")
+	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error (env: MESH_LOG_LEVEL)")
+	metricsAddr := flag.String("metrics-addr", "127.0.0.1:9091", "Prometheus metrics listen address (env: MESH_METRICS_ADDR)")
 	flag.Parse()
 
+	setFlags := explicitFlags()
+
 	return nodeOptions{
-		mode:        *mode,
-		name:        *name,
-		overlayIP:   *overlayIP,
-		listenPort:  *listenPort,
-		configDir:   *configDir,
-		topology:    *topologyPath,
-		logLevel:    *logLevel,
-		metricsAddr: *metricsAddr,
+		mode:        envFallbackString(setFlags, "mode", *mode, "MESH_MODE"),
+		name:        envFallbackString(setFlags, "name", *name, "MESH_NAME"),
+		overlayIP:   envFallbackString(setFlags, "overlay-ip", *overlayIP, "MESH_OVERLAY_IP"),
+		listenPort:  envFallbackInt(setFlags, "listen-port", *listenPort, "MESH_LISTEN_PORT"),
+		configDir:   envFallbackString(setFlags, "config-dir", *configDir, "MESH_CONFIG_DIR"),
+		topology:    envFallbackString(setFlags, "topology", *topologyPath, "MESH_TOPOLOGY"),
+		logLevel:    envFallbackString(setFlags, "log-level", *logLevel, "MESH_LOG_LEVEL"),
+		metricsAddr: envFallbackString(setFlags, "metrics-addr", *metricsAddr, "MESH_METRICS_ADDR"),
 	}
+}
+
+// explicitFlags returns the names of flags that were explicitly set on the
+// command line. These take precedence over MESH_* env vars.
+func explicitFlags() map[string]bool {
+	set := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		set[f.Name] = true
+	})
+	return set
+}
+
+func envFallbackString(setFlags map[string]bool, flagName, flagValue, envName string) string {
+	if setFlags[flagName] {
+		return flagValue
+	}
+	if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
+		return v
+	}
+	return flagValue
+}
+
+func envFallbackInt(setFlags map[string]bool, flagName string, flagValue int, envName string) int {
+	if setFlags[flagName] {
+		return flagValue
+	}
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return flagValue
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		// Logger is not yet constructed here; emit the diagnostic directly
+		// so an operator with a typo in MESH_LISTEN_PORT (e.g. "51820x")
+		// sees the fall-back happen instead of silently getting the default.
+		fmt.Fprintf(os.Stderr,
+			"warning: %s=%q is not a valid integer, using flag default %d (%v)\n",
+			envName, raw, flagValue, err)
+		return flagValue
+	}
+	return parsed
+}
+
+// bootstrapTokenHash copies the MESH_TOKEN_HASH env var into <configDir>/mesh.token
+// on first boot. Invalid bcrypt input fails fast — the binary refuses to start
+// with a corrupt or plaintext token value, keeping auth state on the node correct.
+// Subsequent boots see an existing token file and leave the env var untouched.
+func bootstrapTokenHash(configDir string, logger zerolog.Logger) error {
+	hash := strings.TrimSpace(os.Getenv("MESH_TOKEN_HASH"))
+	if hash == "" {
+		return nil
+	}
+
+	cleanDir := strings.TrimSpace(configDir)
+	if cleanDir == "" {
+		return errors.New("config directory is empty — cannot bootstrap token hash")
+	}
+
+	tokenPath := filepath.Join(cleanDir, "mesh.token")
+	if _, err := os.Stat(tokenPath); err == nil {
+		return nil // token already present; env var ignored on subsequent boots
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat token file %q: %w", tokenPath, err)
+	}
+
+	if _, err := bcrypt.Cost([]byte(hash)); err != nil {
+		return fmt.Errorf("MESH_TOKEN_HASH is not a valid bcrypt hash: %w", err)
+	}
+
+	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
+		return fmt.Errorf("create config dir %q: %w", cleanDir, err)
+	}
+
+	tmpPath := tokenPath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(hash), 0o600); err != nil {
+		return fmt.Errorf("write token temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, tokenPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename token file: %w", err)
+	}
+
+	logger.Warn().
+		Str("path", tokenPath).
+		Msg("token hash bootstrapped from MESH_TOKEN_HASH env var — mount a real file for production-grade secret handling")
+	return nil
 }
 
 func shutdownMetricsServer(server *http.Server, logger zerolog.Logger) {

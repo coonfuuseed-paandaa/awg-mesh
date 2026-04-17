@@ -31,6 +31,18 @@ func TestGenerateContainerCommands(t *testing.T) {
 		t.Fatalf("expected sorted env var command second, got %q", commands[1])
 	}
 
+	// Bug 12 regression guard: RouterOS 7.21+ renamed the /container/envs/add
+	// parameter from `name=` to `list=`. Every generated env command MUST use
+	// `list=` or RouterOS will reject the import on any supported release.
+	for i, cmd := range commands[:2] {
+		if !strings.Contains(cmd, "list=") {
+			t.Fatalf("command %d missing list= parameter: %q", i, cmd)
+		}
+		if strings.Contains(cmd, " name=") {
+			t.Fatalf("command %d uses deprecated name= parameter (RouterOS 7.20 only): %q", i, cmd)
+		}
+	}
+
 	last := commands[len(commands)-1]
 	checks := []string{
 		"/container/add",

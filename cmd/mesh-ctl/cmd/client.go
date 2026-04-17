@@ -76,22 +76,31 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("save token: %w", err)
 				}
 
+				// Resolve every referenced master so the client knows which
+				// UDP port to dial per master. Missing masters in the topology
+				// are a hard error — the resulting compose would otherwise
+				// silently reference non-existent endpoints.
+				masterAddrs, err := resolveMasterAddresses(topo, client.Masters)
+				if err != nil {
+					return fmt.Errorf("resolve masters for client %q: %w", name, err)
+				}
+
 				data := struct {
-					Name       string
-					Host       string
-					OverlayIP  string
-					Image      string
-					ListenPort int
-					Token      string
-					Masters    string
+					Name      string
+					Host      string
+					OverlayIP string
+					Image     string
+					TokenHash string
+					Masters   string
 				}{
-					Name:       client.Name,
-					Host:       "",
-					OverlayIP:  client.OverlayIP,
-					Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
-					ListenPort: 51820,
-					Token:      token,
-					Masters:    strings.Join(client.Masters, ","),
+					Name:      client.Name,
+					Host:      "",
+					OverlayIP: client.OverlayIP,
+					Image: "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+					// Escape $ → $$ to survive Docker Compose variable
+					// interpolation. Bcrypt hashes contain literal `$`.
+					TokenHash: composeEscapeDollar(hash),
+					Masters:   strings.Join(masterAddrs, ","),
 				}
 
 				outputPath := client.Name + "-docker-compose.yml"
@@ -107,14 +116,7 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("render docker-compose: %w", err)
 				}
 
-				fmt.Printf("Client %q prepared.\n\nToken: %s\n\nDocker Compose written to: %s\n\nNext steps:\n  1. Copy %s to the target host\n  2. docker compose -f %s up -d\n  3. mesh-ctl client init %s\n",
-					name,
-					token,
-					outputPath,
-					outputPath,
-					outputPath,
-					name,
-				)
+				printNextSteps("client", name, token, outputPath, useTraefik)
 
 			case "mikrotik":
 				nd := nodeDir(configDir, name)
@@ -140,14 +142,13 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("save token: %w", err)
 				}
 
-				// Collect master hosts for the deploy script.
-				masterHosts := make([]string, 0, len(client.Masters))
-				for _, masterName := range client.Masters {
-					m := topo.FindMaster(masterName)
-					if m == nil {
-						return fmt.Errorf("master %q referenced by client %q not found in topology", masterName, name)
-					}
-					masterHosts = append(masterHosts, m.Host)
+				// Collect master host:port pairs for the deploy script so the
+				// RouterOS container can dial each master on its configured
+				// listen_port (anti-DPI deployments commonly use 443/udp, not
+				// the default 51820).
+				masterAddrs, err := resolveMasterAddresses(topo, client.Masters)
+				if err != nil {
+					return fmt.Errorf("resolve masters for client %q: %w", name, err)
 				}
 
 				ds := mikrotik.DeployScript{
@@ -157,10 +158,11 @@ func newClientPrepareCommand() *cobra.Command {
 					VethGateway:   "192.168.100.1/24",
 					OverlayIP:     client.OverlayIP,
 					OverlayNet:    topo.Overlay.Space,
-					ListenPort:    51820,
-					Masters:       masterHosts,
-					AWGConfig:     strings.Join(masterHosts, ","),
-					Token:         token,
+					// ListenPort deliberately left 0: clients do not listen,
+					// they dial masters via MESH_MASTERS (host:port pairs).
+					Masters:   masterAddrs,
+					AWGConfig: strings.Join(masterAddrs, ","),
+					TokenHash: hash,
 				}
 
 				rsc, err := mikrotik.GenerateDeployRSC(ds)

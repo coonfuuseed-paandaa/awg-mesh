@@ -39,6 +39,32 @@ func TestGenerateRoutingRSC(t *testing.T) {
 	if !strings.Contains(script, "my-router") {
 		t.Error("script should contain client name")
 	}
+
+	// Bug 11 regression: the script previously emitted only change-dscp
+	// rules (which run on already-marked traffic), with nothing that
+	// actually marks traffic in the first place. Result: DSCP routing was
+	// a silent no-op on every deployment.
+	//
+	// The generator now emits a header banner explaining the requirement
+	// and a commented classifier template block so the operator has a
+	// ready-to-edit starting point.
+	if !strings.Contains(script, "Classifier rules required") {
+		t.Error("script should surface the classifier-required banner")
+	}
+	if !strings.Contains(script, "CLASSIFIER TEMPLATE") {
+		t.Error("script should include the commented classifier template block")
+	}
+	if !strings.Contains(script, "action=mark-connection") {
+		t.Error("script should include mark-connection examples in the classifier template")
+	}
+	// Each policy must get its own commented starter block so the operator
+	// cannot confuse one policy for another.
+	if !strings.Contains(script, "new-connection-mark=vpn-asia-conn") {
+		t.Error("script should reference vpn-asia-conn in classifier template")
+	}
+	if !strings.Contains(script, "new-connection-mark=vpn-americas-conn") {
+		t.Error("script should reference vpn-americas-conn in classifier template")
+	}
 }
 
 func TestGenerateRoutingRSCErrors(t *testing.T) {

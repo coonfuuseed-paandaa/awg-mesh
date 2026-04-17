@@ -15,10 +15,9 @@ func TestGenerateDeployRSC(t *testing.T) {
 		VethGateway:   "10.50.0.1",
 		OverlayIP:     "10.10.0.10",
 		OverlayNet:    "10.10.0.0/16",
-		ListenPort:    51820,
-		Masters:       []string{"master-a", "master-b"},
+		Masters:       []string{"master-a:443", "master-b:51820"},
 		AWGConfig:     "jc=3,jmin=64",
-		Token:         "secure-token",
+		TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
 	})
 	if err != nil {
 		t.Fatalf("GenerateDeployRSC returned error: %v", err)
@@ -30,11 +29,16 @@ func TestGenerateDeployRSC(t *testing.T) {
 		"/ip/route add dst-address=10.10.0.0/16",
 		"/ip/firewall/filter add chain=forward in-interface=veth-awg action=accept",
 		"/container/envs/add",
-		"key=MESH_TOKEN",
+		"key=MESH_TOKEN_HASH",
 		"key=MESH_MASTERS",
-		"master-a,master-b",
+		"master-a:443,master-b:51820",
+		"key=MESH_NAME",
 		"/container/add interface=veth-awg",
 		"/container/start [find where name=awg-client]",
+	}
+	// Plaintext MESH_TOKEN= must never land in a generated script.
+	if strings.Contains(script, "key=MESH_TOKEN value=") {
+		t.Fatalf("plaintext MESH_TOKEN= leaked into RouterOS script:\n%s", script)
 	}
 	for _, check := range checks {
 		if !strings.Contains(script, check) {
@@ -53,9 +57,8 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 		VethGateway:   "10.50.0.1",
 		OverlayIP:     "10.10.0.10",
 		OverlayNet:    "10.10.0.0/16",
-		ListenPort:    51820,
-		Masters:       []string{"master-a"},
-		Token:         "token",
+		Masters:       []string{"master-a:443"},
+		TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
 	}
 
 	tests := []struct {
@@ -65,7 +68,7 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 	}{
 		{name: "missing container name", mutate: func(ds *DeployScript) { ds.ContainerName = "" }, expectError: "container name is required"},
 		{name: "missing image", mutate: func(ds *DeployScript) { ds.Image = "" }, expectError: "container image is required"},
-		{name: "missing token", mutate: func(ds *DeployScript) { ds.Token = "" }, expectError: "token is required"},
+		{name: "missing token hash", mutate: func(ds *DeployScript) { ds.TokenHash = "" }, expectError: "token hash is required"},
 		{name: "invalid overlay ip", mutate: func(ds *DeployScript) { ds.OverlayIP = "bad-ip" }, expectError: "invalid overlay IP"},
 		{name: "invalid overlay net", mutate: func(ds *DeployScript) { ds.OverlayNet = "bad-cidr" }, expectError: "invalid overlay network"},
 		{name: "invalid gateway", mutate: func(ds *DeployScript) { ds.VethGateway = "bad-gateway" }, expectError: "invalid veth gateway"},

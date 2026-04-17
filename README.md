@@ -424,7 +424,7 @@ The container expects configuration at `/config`. Map your node's config directo
 /srv/awg-mesh  →  /config  (inside container)
 ```
 
-`mesh-ctl prepare` generates all required files into the compose file's volume binding.
+`mesh-ctl prepare` generates all required files into the compose file's volume binding. The generated compose uses `network_mode: host` (direct port binding, source IP preservation), mounts `/dev/net/tun`, and embeds `MESH_TOKEN_HASH` — the node bootstraps `/config/mesh.token` from that env var on first boot. The configuration below is an equivalent bridge-network alternative if you prefer explicit port publishing.
 
 ### Minimal service definition
 

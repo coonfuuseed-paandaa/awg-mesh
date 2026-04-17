@@ -3,6 +3,7 @@
 package awggen
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -187,15 +188,38 @@ func dialCaptureTargets(domains []string, timeout time.Duration) {
 	wg.Wait()
 }
 
+// dialAndPrimeTLSSessions forces a real TLS ClientHello onto the wire so the
+// pcap loop can observe the handshake bytes. The previous implementation
+// used net.DialTimeout for TCP, which completes the 3-way handshake but never
+// emits a TLS record — capture then matched zero packets because every frame
+// on the wire after SYN/ACK was either FIN or a stray server RST.
+//
+// We ignore the TLS error: certificate mismatches, expired certs, or server-
+// side rejections are all irrelevant here. We only need the ClientHello bytes
+// to hit the network before the socket is closed. InsecureSkipVerify is
+// intentional for the same reason.
+//
+// The UDP/QUIC branch was a 1-byte write that real QUIC stacks silently drop.
+// A future revision should craft a real QUIC Initial packet (ideally via a
+// quic-go client). For now we stop sending a spurious byte and leave QUIC
+// fingerprinting as a known gap — see the TODO below.
 func dialAndPrimeTLSSessions(domain string, timeout time.Duration) {
 	serverAddr := net.JoinHostPort(domain, "443")
-	if conn, err := net.DialTimeout("tcp", serverAddr, timeout); err == nil {
+	dialer := &net.Dialer{Timeout: timeout}
+	// MinVersion is documentation — with InsecureSkipVerify=true the server
+	// certificate is never validated and the cipher/version selection is
+	// purely the server's decision. The field is kept as a guard against a
+	// future patch that drops InsecureSkipVerify without re-thinking security.
+	tlsCfg := &tls.Config{
+		ServerName:         domain,
+		InsecureSkipVerify: true, //nolint:gosec // we only want the ClientHello emitted on the wire
+		MinVersion:         tls.VersionTLS12,
+	}
+	if conn, err := tls.DialWithDialer(dialer, "tcp", serverAddr, tlsCfg); err == nil {
 		_ = conn.Close()
 	}
-	if conn, err := net.DialTimeout("udp", serverAddr, timeout); err == nil {
-		_, _ = conn.Write([]byte{0xc0})
-		_ = conn.Close()
-	}
+	// TODO: craft a real QUIC Initial packet for UDP/443 capture. The old
+	// `conn.Write([]byte{0xc0})` was a no-op against real QUIC servers.
 }
 
 func ExtractTLSClientHello(packet gopacket.Packet) ([]byte, error) {

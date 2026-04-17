@@ -78,14 +78,16 @@ func newMasterPrepareCommand() *cobra.Command {
 				OverlayIP  string
 				Image      string
 				ListenPort int
-				Token      string
+				TokenHash  string
 			}{
 				Name:       master.Name,
 				Host:       master.Host,
 				OverlayIP:  master.OverlayIP,
 				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
 				ListenPort: master.ListenPort,
-				Token:      token,
+				// Escape $ → $$ to survive Docker Compose variable
+				// interpolation. Bcrypt hashes contain literal `$`.
+				TokenHash: composeEscapeDollar(hash),
 			}
 
 			templateName := "docker-compose.master.yml.tmpl"
@@ -103,14 +105,7 @@ func newMasterPrepareCommand() *cobra.Command {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
-			fmt.Printf("Master %q prepared.\n\nToken: %s\n\nDocker Compose written to: %s\n\nNext steps:\n  1. Copy %s to the target host\n  2. docker compose -f %s up -d\n  3. mesh-ctl master init %s\n",
-				name,
-				token,
-				outputPath,
-				outputPath,
-				outputPath,
-				name,
-			)
+			printNextSteps("master", name, token, outputPath, useTraefik)
 			return nil
 		},
 	}
@@ -232,7 +227,13 @@ func newMasterInitCommand() *cobra.Command {
 				epPubkeyPath := filepath.Join(nodeDir(configDir, ep.Name), "pubkey")
 				peerPublicKey, err := os.ReadFile(epPubkeyPath)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: endpoint %q pubkey missing for master %q: %v\n", ep.Name, master.Name, err)
+					if os.IsNotExist(err) {
+						// Endpoint is not yet prepared — skip quietly. This is the
+						// partial-rollout case and is expected, not an error.
+						fmt.Fprintf(os.Stderr, "note: endpoint %q not yet prepared, skipping\n", ep.Name)
+					} else {
+						fmt.Fprintf(os.Stderr, "warning: endpoint %q pubkey read for master %q: %v\n", ep.Name, master.Name, err)
+					}
 					continue
 				}
 
@@ -254,14 +255,20 @@ func newMasterInitCommand() *cobra.Command {
 					continue
 				}
 
-				if !addResp.Success {
+				if addResp == nil || !addResp.Success {
 					fmt.Fprintf(os.Stderr, "warning: add tunnel to endpoint %q failed: %s\n", ep.Name, "[RPC failure]")
 					continue
 				}
 
 				epToken, err := loadToken(nodeDir(configDir, ep.Name))
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: endpoint %q token missing for master %q: %v\n", ep.Name, master.Name, err)
+					if os.IsNotExist(err) {
+						// Endpoint token not generated yet — the matching
+						// 'mesh-ctl endpoint prepare' has not run.
+						fmt.Fprintf(os.Stderr, "note: endpoint %q has no local token, skipping peer setup\n", ep.Name)
+					} else {
+						fmt.Fprintf(os.Stderr, "warning: endpoint %q token read for master %q: %v\n", ep.Name, master.Name, err)
+					}
 					continue
 				}
 
@@ -293,7 +300,7 @@ func newMasterInitCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warning: add peer to endpoint %q failed: %v\n", ep.Name, peerErr)
 					continue
 				}
-				if !peerResp.Success {
+				if peerResp == nil || !peerResp.Success {
 					fmt.Fprintf(os.Stderr, "warning: add peer to endpoint %q failed: %s\n", ep.Name, "[RPC failure]")
 					continue
 				}
