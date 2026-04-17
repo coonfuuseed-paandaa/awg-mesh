@@ -40,10 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### CI
 - Privileged tests, govulncheck, and coverage merge added to CI pipeline
-- Multi-arch Docker builds via buildx — `linux/amd64`, `linux/arm64`, `linux/arm/v7`.
-  Closes the ADR-0001 gap that MikroTik (arm64) and Raspberry Pi (arm/v7)
-  could not pull `awg-mesh-client:latest` because only amd64 was published.
-  CI verifies the pushed manifest list advertises all three platforms.
+- Multi-arch Docker builds via buildx — `linux/amd64`, `linux/386`,
+  `linux/arm64`, `linux/arm/v7`, `linux/arm/v6`. Covers the realistic
+  hardware set: Intel/AMD servers, legacy 32-bit x86, MikroTik (arm64),
+  Raspberry Pi 3B+/4/5 (arm64), Raspberry Pi 2/3 32-bit (arm/v7), and
+  Raspberry Pi Zero/1 (arm/v6). Closes the ADR-0001 gap that non-amd64
+  hardware could not pull `awg-mesh-client:latest`. CI verifies the
+  pushed manifest list advertises every platform.
 
 ### Migration from v1.5.0
 

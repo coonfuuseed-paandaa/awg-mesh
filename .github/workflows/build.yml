@@ -114,18 +114,24 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [build]
-    # Multi-arch images: MikroTik (arm64), Raspberry Pi (arm/v7), servers (amd64)
-    # all pull from the same manifest list. Without this the client image is
-    # unusable on non-amd64 hardware — see field report bug 13.
+    # Multi-arch images — one manifest list covers every platform the project
+    # is expected to run on. Published for:
+    #   linux/amd64    Intel/AMD servers, workstations, x86_64 laptops
+    #   linux/386      legacy 32-bit x86 hosts (rare, but common in embedded)
+    #   linux/arm64    Raspberry Pi 3B+/4/5, MikroTik hAP ax/ax3, modern SBCs
+    #   linux/arm/v7   Raspberry Pi 2 and 3 (32-bit), older MikroTik, Orange Pi
+    #   linux/arm/v6   Raspberry Pi Zero, Pi 1, ancient ARM hosts
+    # Without this list, any non-amd64 hardware fails the pull with
+    # "architecture mismatch" — see field report bug 13.
     strategy:
       matrix:
         include:
           - image: node
             dockerfile: deploy/Dockerfile.node
-            platforms: linux/amd64,linux/arm64,linux/arm/v7
+            platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6
           - image: client
             dockerfile: deploy/Dockerfile.client
-            platforms: linux/amd64,linux/arm64,linux/arm/v7
+            platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6
     permissions:
       contents: read
       packages: write
@@ -227,15 +233,16 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
-      # Verify published manifest lists advertise the arm64 and arm/v7
-      # platforms. Catches future regressions where a config change silently
-      # falls back to amd64-only.
+      # Verify the published manifest list advertises every platform the
+      # matrix declared. Catches silent regressions where a config change
+      # drops an arch (the Bug 13 failure mode).
       - name: Verify multi-arch manifest
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           set -e
           MANIFEST=$(docker buildx imagetools inspect ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:${{ github.sha }})
           echo "$MANIFEST"
-          echo "$MANIFEST" | grep -q "linux/amd64"  || (echo "::error::manifest missing linux/amd64"  && exit 1)
-          echo "$MANIFEST" | grep -q "linux/arm64"  || (echo "::error::manifest missing linux/arm64"  && exit 1)
-          echo "$MANIFEST" | grep -q "linux/arm/v7" || (echo "::error::manifest missing linux/arm/v7" && exit 1)
+          for platform in linux/amd64 linux/386 linux/arm64 linux/arm/v7 linux/arm/v6; do
+            echo "$MANIFEST" | grep -q "$platform" || \
+              (echo "::error::manifest missing $platform" && exit 1)
+          done
