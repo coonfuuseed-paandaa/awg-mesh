@@ -48,3 +48,4 @@ graphify-out/
 # Tool state (not for git)
 .engram-project
 .serena/
+.aider*
