@@ -14,6 +14,10 @@ import (
 
 const nodeStateFileName = "node.yml"
 
+// ErrCorruptNodeState indicates node state YAML could not be decoded.
+// Auto-recovery (delete & regenerate) is safe when this sentinel matches.
+var ErrCorruptNodeState = errors.New("node state is corrupt")
+
 // NodeState stores persisted node identity and metadata.
 type NodeState struct {
 	PrivateKey string `yaml:"private_key"`
@@ -75,7 +79,7 @@ func LoadNodeState(dir string) (*NodeState, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&state); err != nil {
-		return nil, fmt.Errorf("unmarshal node state yaml: %w", err)
+		return nil, fmt.Errorf("unmarshal node state yaml: %w: %w", ErrCorruptNodeState, err)
 	}
 
 	return &state, nil
@@ -101,9 +105,7 @@ func EnsureKeypair(dir string) (privateKey wg.Key, publicKey wg.Key, err error) 
 	if !errors.Is(loadErr, os.ErrNotExist) {
 		// Only auto-recover from YAML parse errors (corrupt/truncated file).
 		// Filesystem errors (permission denied, I/O error) should propagate.
-		var yamlErr *yaml.TypeError
-		isYAMLErr := errors.As(loadErr, &yamlErr) || strings.Contains(loadErr.Error(), "unmarshal node state yaml")
-		if !isYAMLErr {
+		if !errors.Is(loadErr, ErrCorruptNodeState) {
 			return wg.Key{}, wg.Key{}, fmt.Errorf("load node state: %w", loadErr)
 		}
 
