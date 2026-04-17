@@ -720,7 +720,7 @@ tunnels:
     persistent_keepalive: 25             # seconds; 0 = disabled
 ```
 
-On the admin side, `mesh-ctl config show` surfaces the transport allocator state. Visible via `mesh-ctl config show`.
+On the admin side, `mesh-ctl config show` surfaces the transport allocator state.
 
 ## Usage
 

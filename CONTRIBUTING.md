@@ -58,7 +58,7 @@ make test-client-ecmp
 
 This fixture builds a 4-service stack (2 masters + 1 endpoint + 1 client) on a
 user-defined bridge and exercises the failover and session-stickiness paths
-described in `.agent/specs/client-ecmp/spec.md`. Not run in CI — needs
+described in `.agent/specs/client-ecmp/spec.md`. Not run in CI — requires
 privileged Docker. See `tests/client_ecmp/README.md` for the full operator
 guide.
 

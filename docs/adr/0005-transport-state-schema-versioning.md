@@ -43,9 +43,16 @@ tunnels:
 - **`CurrentSchemaVersion = 1`** is defined in `pkg/transport`.
 - Every write stamps `state.SchemaVersion = CurrentSchemaVersion` — the node always persists the current schema.
 - `IsLegacySchema(state) bool` returns `true` when `state.SchemaVersion == 0` (absent field deserializes to zero).
-- `ApplyLegacyDefaults(state, logger)` fills `AllowedIPs` with `["0.0.0.0/0"]` and `PersistentKeepalive` with `25` for each tunnel that has empty values, logs exactly ONE `event=transport_state_legacy_schema, tunnel_count=N` WARN, and sets `state.SchemaVersion = CurrentSchemaVersion`.
+- `ApplyLegacyDefaults(state, logger)` fills per-tunnel defaults only when the respective field is unset:
+  - `AllowedIPs` when `len(AllowedIPs) == 0` → `["0.0.0.0/0"]`.
+  - `PersistentKeepalive` when `PersistentKeepalive == 0` → `25`.
+  Emits exactly one WARN per load with structured fields `event=transport_state_legacy_schema` and `tunnel_count=N`, then stamps `state.SchemaVersion = CurrentSchemaVersion`. Populated fields are preserved verbatim.
 - On reconcile, if legacy schema is detected, the migrated state is persisted to disk immediately — so the WARN does not fire again on next boot.
-- In v1.7.0+ schema (`schema_version: 1`), an empty `allowed_ips` for any tunnel is a hard error: reconcile refuses to bring up a tunnel whose AllowedIPs semantics are ambiguous. The operator gets a clear error, not a silently catch-all route.
+- In `schema_version: 1` state, an empty `allowed_ips` for any tunnel is a hard error: reconcile refuses to bring up a tunnel whose AllowedIPs semantics are ambiguous. The operator gets a clear error, not a silent catch-all route.
+
+### Version note
+
+Although the spec's Clarification C1 was drafted before v1.6.0 shipped and uses the wording "pre-v1.6.0 state" (which leaked into the WARN log message), `schema_version` was actually introduced in **v1.7.0** via PR #27 — `git log` on `pkg/transport/node_state.go` confirms the field landed after the `v1.6.0` tag. Operators upgrading from v1.6.0 see the migration exactly the same way as operators upgrading from v1.5.0: one WARN, durable rewrite. The "pre-v1.6.0" text in the log message is historical and does not affect the migration contract.
 
 ### RPC boundary enforcement
 

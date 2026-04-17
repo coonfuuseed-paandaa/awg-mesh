@@ -26,7 +26,7 @@ This caused three operator-visible problems:
 
 Client interface names are derived deterministically from the peer's WireGuard public key:
 
-```
+```text
 name = "wg-c" + hex(sha256(peer_pubkey)[:2])
 ```
 
