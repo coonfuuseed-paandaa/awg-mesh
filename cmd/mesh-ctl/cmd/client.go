@@ -35,6 +35,7 @@ func newClientCommand() *cobra.Command {
 func newClientPrepareCommand() *cobra.Command {
 	var useTraefik bool
 	var showToken bool
+	var imageFlag string
 
 	cmd := &cobra.Command{
 		Use:   "prepare [name]",
@@ -98,7 +99,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:      client.Name,
 					Host:      "",
 					OverlayIP: client.OverlayIP,
-					Image:     "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+					Image:     resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest"),
 					// Escape $ → $$ to survive Docker Compose variable
 					// interpolation. Bcrypt hashes contain literal `$`.
 					TokenHash: composeEscapeDollar(hash),
@@ -156,7 +157,7 @@ func newClientPrepareCommand() *cobra.Command {
 
 				ds := mikrotik.DeployScript{
 					ContainerName: name,
-					Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+					Image:         resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest"),
 					Veth:          "veth-" + name,
 					VethGateway:   "192.168.100.1/24",
 					OverlayIP:     client.OverlayIP,
@@ -207,6 +208,7 @@ func newClientPrepareCommand() *cobra.Command {
 
 	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
 	cmd.Flags().BoolVar(&showToken, "show-token", false, "print raw token to stdout (default: save to disk only)")
+	cmd.Flags().StringVar(&imageFlag, "image", "", "Docker image reference (default: topology defaults.image.client, else ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest)")
 	return cmd
 }
 

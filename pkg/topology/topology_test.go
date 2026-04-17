@@ -168,3 +168,67 @@ func TestSaveTopologyErrors(t *testing.T) {
 		t.Fatalf("expected topology-required error, got %v", err)
 	}
 }
+
+// TestImageDefaultsUnmarshal verifies that the optional defaults.image fields
+// round-trip through YAML correctly and that existing topology files without
+// the field still parse with a zero-value ImageDefaults.
+func TestImageDefaultsUnmarshal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("existing topology without defaults.image has zero-value ImageDefaults", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := strings.Join([]string{
+			"overlay:",
+			"  space: 10.0.0.0/16",
+			"masters:",
+			"  - name: m1",
+			"    host: m1.example",
+			"    overlay_ip: 10.0.1.10",
+			"    listen_port: 51820",
+			"    endpoints: [e1]",
+		}, "\n")
+
+		path := filepath.Join(t.TempDir(), "topology.yml")
+		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		top, err := LoadTopology(path)
+		if err != nil {
+			t.Fatalf("LoadTopology returned error: %v", err)
+		}
+		if top.Defaults.Image != (ImageDefaults{}) {
+			t.Fatalf("expected zero-value ImageDefaults, got %#v", top.Defaults.Image)
+		}
+	})
+
+	t.Run("topology with defaults.image parses node and client", func(t *testing.T) {
+		t.Parallel()
+
+		yaml := strings.Join([]string{
+			"defaults:",
+			"  image:",
+			"    node: foo",
+			"    client: bar",
+			"overlay:",
+			"  space: 10.0.0.0/16",
+		}, "\n")
+
+		path := filepath.Join(t.TempDir(), "topology.yml")
+		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		top, err := LoadTopology(path)
+		if err != nil {
+			t.Fatalf("LoadTopology returned error: %v", err)
+		}
+		if top.Defaults.Image.Node != "foo" {
+			t.Fatalf("expected Image.Node == %q, got %q", "foo", top.Defaults.Image.Node)
+		}
+		if top.Defaults.Image.Client != "bar" {
+			t.Fatalf("expected Image.Client == %q, got %q", "bar", top.Defaults.Image.Client)
+		}
+	})
+}

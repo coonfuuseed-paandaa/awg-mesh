@@ -10,8 +10,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ImageDefaults holds default Docker image references for node roles.
+// Zero value means "unset" — callers fall back to their built-in defaults.
+type ImageDefaults struct {
+	Node   string `yaml:"node,omitempty"`
+	Client string `yaml:"client,omitempty"`
+}
+
+// Defaults holds optional topology-wide default values.
+type Defaults struct {
+	Image ImageDefaults `yaml:"image,omitempty"`
+}
+
 // Topology is the full mesh topology configuration.
 type Topology struct {
+	Defaults  Defaults        `yaml:"defaults,omitempty"`
 	Overlay   OverlayConfig   `yaml:"overlay"`
 	Masters   []MasterNode    `yaml:"masters"`
 	Endpoints []EndpointNode  `yaml:"endpoints"`
