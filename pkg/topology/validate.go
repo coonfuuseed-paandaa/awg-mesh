@@ -1,9 +1,22 @@
 package topology
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 )
+
+// ErrInvalidDSCP is returned when a DSCP value falls outside the allowed range 1..63.
+var ErrInvalidDSCP = errors.New("dscp out of range 1..63")
+
+// ValidateDSCP checks that dscp is in the inclusive range [1, 63].
+// Returns a sentinel-matchable error wrapping ErrInvalidDSCP when out of range.
+func ValidateDSCP(dscp int) error {
+	if dscp < 1 || dscp > 63 {
+		return fmt.Errorf("%w: got %d", ErrInvalidDSCP, dscp)
+	}
+	return nil
+}
 
 // ValidationError describes a topology validation finding.
 type ValidationError struct {
@@ -77,6 +90,7 @@ func ValidateTopology(t *Topology) []ValidationError {
 
 	validateUniqueOverlayIPs(t, addError)
 	validateReferences(t, addError)
+	validateClientDSCPPolicies(t, addError)
 
 	return errors
 }
@@ -168,4 +182,18 @@ func isRangeWithinOverlay(overlay netip.Prefix, candidate netip.Prefix) bool {
 	first := maskedCandidate.Addr()
 	last := prefixLastAddr(maskedCandidate)
 	return overlay.Contains(first) && overlay.Contains(last)
+}
+
+func validateClientDSCPPolicies(t *Topology, addError func(field string, message string, severity string)) {
+	for i, client := range t.Clients {
+		for j, policy := range client.RoutingPolicies {
+			if err := ValidateDSCP(policy.DSCP); err != nil {
+				addError(
+					fmt.Sprintf("clients[%d].routing_policies[%d].dscp", i, j),
+					fmt.Sprintf("client %q policy %q: %v", client.Name, policy.Name, err),
+					"error",
+				)
+			}
+		}
+	}
 }

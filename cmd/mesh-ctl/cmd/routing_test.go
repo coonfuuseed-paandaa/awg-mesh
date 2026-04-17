@@ -190,6 +190,31 @@ transport:
 	}
 }
 
+func TestLinuxRoutingGenerate_RejectsOutOfRangeDSCP(t *testing.T) {
+	t.Parallel()
+
+	client := topology.ClientNode{
+		Name:      "bad-router",
+		OverlayIP: "172.20.70.131",
+		RoutingPolicies: []topology.RoutingPolicy{
+			{Name: "bad-policy", DSCP: 153, Targets: []string{"node-asia-01"}},
+		},
+	}
+
+	err := generateLinux(client, "172.33.23.100")
+	if err == nil {
+		t.Fatal("generateLinux with DSCP=153: expected non-nil error, got nil")
+	}
+
+	errText := strings.ToLower(err.Error())
+	if !strings.Contains(errText, "dscp") {
+		t.Errorf("error message should reference 'dscp', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "1..63") {
+		t.Errorf("error message should reference '1..63', got: %v", err)
+	}
+}
+
 func TestRoutingGenerateNoClient(t *testing.T) {
 	yaml := `
 overlay:
