@@ -32,9 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pin a semver tag (e.g. `:v1.8.1`) in `defaults.image` or via `--image` for production
   deployments; reserve `:latest` for edge/dev environments where the newest build is always
   desired.
-- Follow-up tracked as P3: add `type=ref,event=tag` in `meta-primary`/`meta-alias` of
-  `.github/workflows/build.yml` to auto-publish `:v<semver>` tags on release push,
-  eliminating the manual retag step. See `.agent/CONTINUITY.md` on `main` for context.
+- Semver Docker tagging on `v*` releases is already enabled as of `v1.8.1`. For
+  rollout details and CI continuity context, see `.agent/CONTINUITY.md` on `main`.
 
 ## [1.8.1] - 2026-04-17
 
@@ -591,7 +590,7 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.1...HEAD
 [1.7.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.4.0...v1.5.0

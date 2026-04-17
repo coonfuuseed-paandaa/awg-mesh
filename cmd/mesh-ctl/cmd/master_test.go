@@ -78,7 +78,9 @@ func TestMasterPrepareImage(t *testing.T) {
 // rejects an invalid --image value before performing any topology or CA work.
 // This exercises the validateImageRef gate added to the prepare command's RunE.
 func TestMasterPrepareImageFlagValidation(t *testing.T) {
-	t.Parallel()
+	// Do not run in parallel: NewRootCommand binds cobra persistent flags to
+	// package-level globals (topologyPath/configDir), and concurrent flag
+	// registration causes a data race under -race.
 
 	invalidRefs := []string{
 		"img; rm -rf /",
@@ -90,8 +92,6 @@ func TestMasterPrepareImageFlagValidation(t *testing.T) {
 	for _, ref := range invalidRefs {
 		ref := ref
 		t.Run(ref, func(t *testing.T) {
-			t.Parallel()
-
 			root := NewRootCommand("test")
 			root.SilenceUsage = true
 			root.SilenceErrors = true

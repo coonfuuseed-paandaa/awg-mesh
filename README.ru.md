@@ -405,6 +405,8 @@ mesh-ctl endpoint prepare node-asia-01 --image ghcr.io/coonfuuseed-paandaa/awg-m
 mesh-ctl client prepare my-router --image ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.8.1 -t mesh-topology.yml
 ```
 
+For clients with `type: mikrotik`, `client prepare` generates RouterOS `.rsc` output and does not include a Docker image field, so `--image` has no effect for that client type.
+
 **Поля топологии** `defaults.image.node` и `defaults.image.client` позволяют задать образ один раз для всей сети — без передачи флага на каждый вызов prepare:
 
 ```yaml
