@@ -17,7 +17,19 @@ func main() {
 	}
 }
 
+// versionFromBuild is injected at build time via
+//
+//	go build -ldflags "-X main.versionFromBuild=<ref>"
+//
+// Empty when not injected — falls through to debug.ReadBuildInfo() cascade
+// which handles the "go install module@version" path (clean release tag) and
+// the local clone path (base tag + short SHA + optional "dirty" marker).
+var versionFromBuild = ""
+
 func version() string {
+	if versionFromBuild != "" {
+		return versionFromBuild
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "dev"

@@ -7,7 +7,8 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 go build -tags nocapture -trimpath -ldflags "-s -w" -o /build/bin/awg-mesh-node ./cmd/awg-mesh-node
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -tags nocapture -trimpath -ldflags "-X main.versionFromBuild=${VERSION} -s -w" -o /build/bin/awg-mesh-node ./cmd/awg-mesh-node
 
 FROM alpine:3.21
 
