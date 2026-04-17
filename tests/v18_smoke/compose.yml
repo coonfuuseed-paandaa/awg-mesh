@@ -1,0 +1,123 @@
+# v1.8.0 smoke + e2e test fixture.
+# Tests security hardening: DSCP bounds (FR-3), token stdout gate (FR-2),
+# typed error sentinel (FR-4), ICMP demux (FR-1), and bootstrap command (T006a).
+#
+# Usage:
+#   ./build.sh              # build local images
+#   docker compose -p v18smoke -f tests/v18_smoke/compose.yml up -d
+#   bash tests/v18_smoke/e2e.sh
+#   docker compose -p v18smoke -f tests/v18_smoke/compose.yml down -v
+
+networks:
+  v18smoke:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.10.0/24
+
+services:
+
+  # Primary ingress master — overlay IP 172.20.71.2
+  master-a:
+    image: awg-mesh-node:local-v18
+    container_name: v18smoke-master-a
+    hostname: master-a
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    ports:
+      - "51830:51820/udp"
+    environment:
+      MESH_NAME: v18smoke
+      MESH_MODE: master
+      MESH_OVERLAY_IP: 172.20.71.2
+      MESH_TOKEN_HASH: "$$2a$$12$$v18smokeTESTtokenAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    volumes:
+      - master-a-state:/config
+    networks:
+      v18smoke:
+        ipv4_address: 172.31.10.10
+
+  # Secondary master — overlay IP 172.20.71.3
+  master-b:
+    image: awg-mesh-node:local-v18
+    container_name: v18smoke-master-b
+    hostname: master-b
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    ports:
+      - "51831:51820/udp"
+    environment:
+      MESH_NAME: v18smoke
+      MESH_MODE: master
+      MESH_OVERLAY_IP: 172.20.71.3
+      MESH_TOKEN_HASH: "$$2a$$12$$v18smokeTESTtokenBBBBBBBBBBBBBBBBBBBBBBBBB"
+    volumes:
+      - master-b-state:/config
+    networks:
+      v18smoke:
+        ipv4_address: 172.31.10.11
+
+  # Endpoint — AWG server + NAT — overlay IP 172.20.71.37
+  endpoint-x:
+    image: awg-mesh-node:local-v18
+    container_name: v18smoke-endpoint-x
+    hostname: endpoint-x
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    ports:
+      - "51832:51820/udp"
+    environment:
+      MESH_NAME: v18smoke
+      MESH_MODE: endpoint
+      MESH_OVERLAY_IP: 172.20.71.37
+      MESH_TOKEN_HASH: "$$2a$$12$$v18smokeTESTtokenCCCCCCCCCCCCCCCCCCCCCCCCC"
+    volumes:
+      - endpoint-x-state:/config
+    networks:
+      v18smoke:
+        ipv4_address: 172.31.10.20
+    depends_on:
+      - master-a
+      - master-b
+
+  # Client — ECMP to both masters — overlay IP 172.20.71.130
+  client-lin:
+    image: awg-mesh-client:local-v18
+    container_name: v18smoke-client-lin
+    hostname: client-lin
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    environment:
+      MESH_NAME: v18smoke
+      MESH_MODE: client
+      MESH_OVERLAY_IP: 172.20.71.130
+      MESH_TOKEN_HASH: "$$2a$$12$$v18smokeTESTtokenDDDDDDDDDDDDDDDDDDDDDDDDD"
+    volumes:
+      - client-lin-state:/config
+    networks:
+      v18smoke:
+        ipv4_address: 172.31.10.50
+    depends_on:
+      - endpoint-x
+
+volumes:
+  master-a-state:
+  master-b-state:
+  endpoint-x-state:
+  client-lin-state:

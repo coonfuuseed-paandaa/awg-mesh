@@ -1,0 +1,4 @@
+# Runtime state — never commit
+compose-state/
+*.log
+/tmp/
