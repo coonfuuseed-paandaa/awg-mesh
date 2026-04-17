@@ -1,0 +1,3 @@
+# Runtime state volumes created by docker compose up.
+# These directories contain AWG keys, configs, and runtime state — never commit.
+compose-state/
