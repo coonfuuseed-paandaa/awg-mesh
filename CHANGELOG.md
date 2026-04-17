@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Endpoint `transport.yml` peer_public_key decode** — endpoint reconcile loop previously
+  called `wg.ParseKey` (base64 decoder) on a value the write path stores as hex, producing
+  `"invalid key length 48: expected 32"` on every container restart — all peers silently
+  dropped → data plane dead until operator re-ran `mesh-ctl endpoint init`. Decoder
+  corrected to `hex.DecodeString` + `wg.NewKey` matching the write path at
+  `pkg/grpc/handlers.go:436` and the client reconcile at `pkg/node/client_linux.go:508`.
+  Regression guards added in `pkg/transport/state_encoding_test.go` and
+  `pkg/node/endpoint_reconcile_test.go`. Local tracker issue #94.
+- **Endpoint overlay routes not installed** — `ConfigureTransport` iterated
+  `topology.Overlay.Ranges` (mesh-wide CIDRs) instead of per-peer `allowed_ips`, and the
+  reconcile loop didn't call it at all. Three compounding bugs left endpoint→master and
+  endpoint→endpoint overlay traffic with no route via `wg0`. Fix: `ConfigureTransport`
+  now iterates the peer's `allowed_ips`, skips transport /30s, skips only the narrow
+  self-/32 (not the containing overlay range), and installs link-scope routes via the
+  new `routing.NetlinkRouter.RouteReplaceLink` helper. Reconcile calls
+  `ConfigureTransport` with persisted `tt.AllowedIPs`. Route-install errors now log at
+  Warn (previously Debug — silent failure hid the bug). Regression tests in
+  `pkg/node/endpoint_routes_linux_test.go`. Local tracker issue #95.
+
+## [1.9.0] — 2026-04-17
+
 ### Added
 
 - **`--image <ref>` flag on `mesh-ctl master prepare`** — operator can pass a specific
@@ -49,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   current flow already produces the canonical versioned tags. See `.agent/CONTINUITY.md` on
   `main` for detail.
 
-## [1.8.1] - 2026-04-17
+## [1.8.1] — 2026-04-17
 
 CI/supply-chain hardening release. No changes to `awg-mesh-node` or `mesh-ctl`
 binaries — this patch upgrades the release pipeline only. First release
