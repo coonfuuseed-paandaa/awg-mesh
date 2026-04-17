@@ -37,6 +37,11 @@ type clientPlatformState struct {
 	byKey   map[string]*transportLink
 	pending map[string]bool // pubkey creation in progress
 	nextIdx int
+
+	// Injectable for testing. nil = use production implementations.
+	router   routing.Router
+	firewall routing.Firewall
+	sysctl   routing.Sysctl
 }
 
 func initClientPlatformState() clientPlatformState {
@@ -44,6 +49,35 @@ func initClientPlatformState() clientPlatformState {
 		byKey:   make(map[string]*transportLink),
 		pending: make(map[string]bool),
 	}
+}
+
+// routerDep returns the configured router or the production netlink router.
+func (c *ClientRunner) routerDep() routing.Router {
+	if c.platformState.router != nil {
+		return c.platformState.router
+	}
+	return routing.NewNetlinkRouter()
+}
+
+// firewallDep returns the configured firewall or a new nftables firewall.
+// Returns nil if nftables is unavailable (non-fatal — caller must nil-check).
+func (c *ClientRunner) firewallDep() routing.Firewall {
+	if c.platformState.firewall != nil {
+		return c.platformState.firewall
+	}
+	fw, err := routing.NewNftablesFirewall()
+	if err != nil {
+		return nil
+	}
+	return fw
+}
+
+// sysctlDep returns the configured sysctl or the production proc sysctl.
+func (c *ClientRunner) sysctlDep() routing.Sysctl {
+	if c.platformState.sysctl != nil {
+		return c.platformState.sysctl
+	}
+	return routing.NewProcSysctl()
 }
 
 func (c *ClientRunner) createInterfaces(ctx context.Context) error {
@@ -270,11 +304,10 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 
 	c.platformState.links = nextLinks
 	c.platformState.byKey = nextByKey
-	linksSnapshot := append([]*transportLink(nil), nextLinks...)
 	c.platformState.mu.Unlock()
 
-	if err := c.updateDefaultRoute(linksSnapshot); err != nil {
-		c.node.logger.Warn().Err(err).Msg("update default route after peer removal failed")
+	if err := c.rebuildClientECMP(); err != nil {
+		c.node.logger.Warn().Err(err).Msg("rebuildClientECMP after peer removal failed")
 	}
 
 	return link.iface.Close()
@@ -340,15 +373,8 @@ func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) err
 		return fmt.Errorf("assign transport IP %s/30 on %s: %w", trimmedLocalIP, updatedLink.iface.Name(), err)
 	}
 
-	if updatedLink.balancerIP != "" {
-		if err := c.rebuildECMP(updatedLink.balancerIP); err != nil {
-			return err
-		}
-	} else {
-		linksSnapshot := append([]*transportLink(nil), nextLinks...)
-		if err := c.updateDefaultRoute(linksSnapshot); err != nil {
-			return err
-		}
+	if err := c.rebuildClientECMP(); err != nil {
+		return err
 	}
 
 	peerLabel := trimmedPubkeyHex
@@ -486,30 +512,177 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 	return router.AddrAdd(interfaceName, addr)
 }
 
-func (c *ClientRunner) updateDefaultRoute(links []*transportLink) error {
-	nexthops := buildClientNexthops(links)
-	router := routing.NewNetlinkRouter()
-	defaultDst := &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}
+// rebuildClientECMP is the single unified ECMP rebuild path for client mode.
+// It reads current link state under the lock, determines the routing mode
+// (VIP path when all links share a non-empty balancerIP, legacy path when all
+// links have empty balancerIP), and installs or withdraws routes using only
+// healthy links as nexthops, with sticky sessions and L4 hash enabled.
+//
+// Mixed balancerIP presence across links is a FR-1 invariant violation;
+// in that case an error is returned and no partial state is installed.
+// Routing mode is determined from ALL links (not just healthy) so that a
+// zero-healthy VIP topology still knows to withdraw balancerIP/32 (not 0.0.0.0/0).
+func (c *ClientRunner) rebuildClientECMP() error {
+	c.platformState.mu.Lock()
+	linksSnapshot := append([]*transportLink(nil), c.platformState.links...)
+	c.platformState.mu.Unlock()
 
-	if len(nexthops) == 0 {
-		if err := router.RemoveECMPRoute(defaultDst); err != nil {
+	// Determine routing mode from ALL configured links (includes unhealthy).
+	// We need this to know which destination to withdraw even when no links are healthy.
+	var commonBalancerIP string
+	isVIP := false
+	modeSet := false
+	for _, link := range linksSnapshot {
+		if link == nil || link.iface == nil {
+			continue
+		}
+		if !modeSet {
+			commonBalancerIP = link.balancerIP
+			isVIP = link.balancerIP != ""
+			modeSet = true
+			continue
+		}
+		// Detect mixed state: error out immediately, install nothing.
+		if (link.balancerIP != "") != isVIP || (isVIP && link.balancerIP != commonBalancerIP) {
+			c.node.logger.Error().
+				Str("event", "ecmp_mixed_balancer").
+				Int("link_count", len(linksSnapshot)).
+				Msg("links have mixed balancerIP presence — FR-1 invariant violated, aborting ECMP rebuild")
+			return fmt.Errorf("client ECMP: links have mixed balancerIP presence (FR-1 violation)")
+		}
+	}
+
+	// Collect healthy links with resolved peer transport IP for nexthops.
+	healthyLinks := make([]*transportLink, 0, len(linksSnapshot))
+	for _, link := range linksSnapshot {
+		if link == nil || link.iface == nil {
+			continue
+		}
+		if !link.healthy || strings.TrimSpace(link.peerTransportIP) == "" {
+			continue
+		}
+		healthyLinks = append(healthyLinks, link)
+	}
+
+	router := c.routerDep()
+
+	if isVIP {
+		// VIP path: primary dest = balancerIP/32, secondary dest = overlay.space.
+		primaryCIDR := commonBalancerIP + "/32"
+		_, primaryDest, _ := net.ParseCIDR(primaryCIDR)
+
+		if len(healthyLinks) == 0 {
+			c.node.logger.Info().
+				Str("event", "ecmp_withdraw").
+				Str("dest", primaryCIDR).
+				Str("reason", "no_healthy_links").
+				Msg("withdrawing client ECMP route")
+			if primaryDest != nil {
+				if err := router.RemoveECMPRoute(primaryDest); err != nil {
+					return fmt.Errorf("remove client ECMP route %s: %w", primaryCIDR, err)
+				}
+			}
+			return nil
+		}
+
+		nexthops := buildNexthopsFromLinks(healthyLinks)
+
+		if primaryDest != nil {
+			if err := router.SetECMPRoute(primaryDest, nexthops); err != nil {
+				return fmt.Errorf("set client ECMP route %s: %w", primaryCIDR, err)
+			}
+		}
+
+		// Also route the overlay space through the same nexthops when available.
+		overlaySpace := ""
+		if c.node != nil && c.node.topology != nil && c.node.topology.Overlay.Space != "" {
+			overlaySpace = c.node.topology.Overlay.Space
+		}
+		if overlaySpace != "" {
+			if _, overlayDest, parseErr := net.ParseCIDR(overlaySpace); parseErr == nil {
+				if err := router.SetECMPRoute(overlayDest, nexthops); err != nil {
+					c.node.logger.Warn().
+						Str("overlay", overlaySpace).
+						Err(err).
+						Msg("failed to set overlay space ECMP route")
+				}
+			}
+		} else {
+			c.node.logger.Debug().
+				Str("event", "ecmp_install_no_overlay").
+				Str("dest", primaryCIDR).
+				Msg("topology overlay.space empty or nil, installing balancerIP/32 only")
+		}
+
+		stickyCIDR := primaryCIDR
+		if fw := c.firewallDep(); fw != nil {
+			if err := fw.EnableStickyECMP(stickyCIDR); err != nil {
+				return fmt.Errorf("enable sticky ECMP for %s: %w", stickyCIDR, err)
+			}
+		}
+		if err := c.sysctlDep().EnableL4Hash(); err != nil {
+			return fmt.Errorf("enable L4 hash: %w", err)
+		}
+
+		c.node.logger.Info().
+			Str("event", "ecmp_install").
+			Str("dest", primaryCIDR).
+			Int("nexthops", len(nexthops)).
+			Str("cidr", stickyCIDR).
+			Msg("client ECMP route installed (VIP path)")
+		return nil
+	}
+
+	// Legacy path: dest = 0.0.0.0/0.
+	defaultDest := &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}
+	defaultCIDR := "0.0.0.0/0"
+
+	if len(healthyLinks) == 0 {
+		c.node.logger.Info().
+			Str("event", "ecmp_withdraw").
+			Str("dest", defaultCIDR).
+			Str("reason", "no_healthy_links").
+			Msg("withdrawing client ECMP route")
+		if err := router.RemoveECMPRoute(defaultDest); err != nil {
 			return fmt.Errorf("remove default ECMP route: %w", err)
 		}
 		return nil
 	}
 
-	if err := router.SetECMPRoute(defaultDst, nexthops); err != nil {
+	nexthops := buildNexthopsFromLinks(healthyLinks)
+
+	if err := router.SetECMPRoute(defaultDest, nexthops); err != nil {
 		return fmt.Errorf("set default ECMP route: %w", err)
 	}
+
+	// Overlay space is the sticky CIDR for legacy path when available.
+	stickyCIDR := defaultCIDR
+	if c.node != nil && c.node.topology != nil && c.node.topology.Overlay.Space != "" {
+		stickyCIDR = c.node.topology.Overlay.Space
+	}
+	if fw := c.firewallDep(); fw != nil {
+		if err := fw.EnableStickyECMP(stickyCIDR); err != nil {
+			return fmt.Errorf("enable sticky ECMP: %w", err)
+		}
+	}
+	if err := c.sysctlDep().EnableL4Hash(); err != nil {
+		return fmt.Errorf("enable L4 hash: %w", err)
+	}
+
+	c.node.logger.Info().
+		Str("event", "ecmp_install").
+		Str("dest", defaultCIDR).
+		Int("nexthops", len(nexthops)).
+		Str("cidr", stickyCIDR).
+		Msg("client ECMP route installed (legacy path)")
 	return nil
 }
 
-func buildClientNexthops(links []*transportLink) []routing.NextHop {
+// buildNexthopsFromLinks constructs ECMP nexthops from a pre-filtered link slice.
+// All links are assumed healthy and to have non-empty peerTransportIP.
+func buildNexthopsFromLinks(links []*transportLink) []routing.NextHop {
 	nexthops := make([]routing.NextHop, 0, len(links))
 	for _, link := range links {
-		if link == nil || link.iface == nil || strings.TrimSpace(link.peerTransportIP) == "" {
-			continue
-		}
 		nexthops = append(nexthops, routing.NextHop{
 			Via:    link.peerTransportIP,
 			Dev:    link.iface.Name(),
@@ -531,106 +704,28 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 
 	go hc.Run(ctx, c.healthTargets,
 		func(name string) {
-			var balancerIP string
 			c.platformState.mu.Lock()
 			link := c.platformState.byKey[name]
 			if link != nil {
 				link.healthy = false
-				balancerIP = link.balancerIP
 			}
 			c.platformState.mu.Unlock()
-			if balancerIP != "" {
-				c.rebuildECMP(balancerIP) //nolint:errcheck // health callback: logged inside rebuildECMP
+			if err := c.rebuildClientECMP(); err != nil {
+				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link down")
 			}
 		},
 		func(name string) {
-			var balancerIP string
 			c.platformState.mu.Lock()
 			link := c.platformState.byKey[name]
 			if link != nil {
 				link.healthy = true
-				balancerIP = link.balancerIP
 			}
 			c.platformState.mu.Unlock()
-			if balancerIP != "" {
-				c.rebuildECMP(balancerIP) //nolint:errcheck // health callback: logged inside rebuildECMP
+			if err := c.rebuildClientECMP(); err != nil {
+				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link up")
 			}
 		},
 	)
-}
-
-// rebuildECMP builds a multipath route to balancerIP/32 using all healthy
-// transport links that share the same balancer IP. Mirrors master's rebuildECMP.
-// Returns an error if any routing or iptables operation fails.
-func (c *ClientRunner) rebuildECMP(balancerIP string) error {
-	if balancerIP == "" {
-		return nil
-	}
-
-	cidr := balancerIP + "/32"
-	c.platformState.mu.Lock()
-	nexthops := make([]routing.NextHop, 0, len(c.platformState.links))
-	for _, link := range c.platformState.links {
-		if link.balancerIP == balancerIP && link.healthy && strings.TrimSpace(link.peerTransportIP) != "" {
-			nexthops = append(nexthops, routing.NextHop{
-				Via:    link.peerTransportIP,
-				Dev:    link.iface.Name(),
-				Weight: 1,
-			})
-		}
-	}
-	c.platformState.mu.Unlock()
-
-	router := routing.NewNetlinkRouter()
-	_, destNet, _ := net.ParseCIDR(cidr)
-
-	if len(nexthops) == 0 {
-		fw, fwErr := routing.NewNftablesFirewall()
-		if fwErr == nil {
-			_ = fw.DisableStickyECMP(cidr)
-		}
-		if destNet != nil {
-			if err := router.RemoveECMPRoute(destNet); err != nil {
-				c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to remove client ECMP route")
-				return fmt.Errorf("remove client ECMP route for %s: %w", balancerIP, err)
-			}
-		}
-		c.node.logger.Info().Str("balancer_ip", balancerIP).Msg("client ECMP route removed")
-		return nil
-	}
-
-	if destNet != nil {
-		if err := router.SetECMPRoute(destNet, nexthops); err != nil {
-			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to set client ECMP route")
-			return fmt.Errorf("set client ECMP route for %s: %w", balancerIP, err)
-		}
-	}
-
-	// Also route the entire overlay space through the same ECMP nexthops.
-	if c.node.topology != nil && c.node.topology.Overlay.Space != "" {
-		if _, overlayNet, parseErr := net.ParseCIDR(c.node.topology.Overlay.Space); parseErr == nil {
-			if err := router.SetECMPRoute(overlayNet, nexthops); err != nil {
-				c.node.logger.Warn().Str("overlay", c.node.topology.Overlay.Space).Err(err).Msg("failed to set overlay space ECMP route")
-			}
-		}
-	}
-
-	fw, fwErr := routing.NewNftablesFirewall()
-	if fwErr == nil {
-		if err := fw.EnableStickyECMP(cidr); err != nil {
-			c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to enable sticky ECMP rules")
-			return fmt.Errorf("enable sticky ECMP for %s: %w", balancerIP, err)
-		}
-	}
-
-	sysctl := routing.NewProcSysctl()
-	if err := sysctl.EnableL4Hash(); err != nil {
-		c.node.logger.Warn().Str("balancer_ip", balancerIP).Err(err).Msg("failed to enable L4 hash")
-		return fmt.Errorf("enable L4 hash: %w", err)
-	}
-
-	c.node.logger.Info().Str("balancer_ip", balancerIP).Int("nexthops", len(nexthops)).Msg("client ECMP route updated")
-	return nil
 }
 
 // SetBalancerIP sets the balancer IP for a specific peer link using copy-on-write.

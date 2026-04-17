@@ -3,8 +3,14 @@
 package node
 
 import (
+	"net"
 	"sync"
 	"testing"
+
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/rs/zerolog"
 )
 
 func TestAddPeerConcurrentSamePubkey(t *testing.T) {
@@ -95,4 +101,390 @@ func TestListPeersConcurrentClose(t *testing.T) {
 	wg.Wait()
 
 	// If we get here without panic, the test passes
+}
+
+// =============================================================================
+// Phase 2: rebuildClientECMP tests (T008)
+// =============================================================================
+
+// --- Mock implementations for routing interfaces ---
+
+type mockRouter struct {
+	mu              sync.Mutex
+	setECMPCalls    []mockRouteCall
+	removeECMPCalls []string
+}
+
+type mockRouteCall struct {
+	dest     string
+	nexthops []routing.NextHop
+}
+
+func (m *mockRouter) RouteAdd(_ *net.IPNet, _ net.IP, _ string) error     { return nil }
+func (m *mockRouter) RouteReplace(_ *net.IPNet, _ net.IP, _ string) error { return nil }
+func (m *mockRouter) RouteDelete(_ *net.IPNet) error                      { return nil }
+func (m *mockRouter) ListRoutes() ([]routing.RouteEntry, error)           { return nil, nil }
+func (m *mockRouter) AddrAdd(_ string, _ *net.IPNet) error                { return nil }
+func (m *mockRouter) AddrExists(_ string, _ *net.IPNet) (bool, error)     { return false, nil }
+func (m *mockRouter) LinkSetUp(_ string) error                            { return nil }
+func (m *mockRouter) LinkGetIndex(_ string) (int, error)                  { return 0, nil }
+
+func (m *mockRouter) SetECMPRoute(dest *net.IPNet, nexthops []routing.NextHop) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	nhCopy := append([]routing.NextHop(nil), nexthops...)
+	m.setECMPCalls = append(m.setECMPCalls, mockRouteCall{dest: dest.String(), nexthops: nhCopy})
+	return nil
+}
+
+func (m *mockRouter) RemoveECMPRoute(dest *net.IPNet) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeECMPCalls = append(m.removeECMPCalls, dest.String())
+	return nil
+}
+
+func (m *mockRouter) hasSetECMPFor(cidr string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.setECMPCalls {
+		if c.dest == cidr {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mockRouter) hasRemoveECMPFor(cidr string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, d := range m.removeECMPCalls {
+		if d == cidr {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mockRouter) setECMPCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.setECMPCalls)
+}
+
+type mockFirewall struct {
+	mu                 sync.Mutex
+	enableStickyCalls  []string
+	disableStickyCalls []string
+}
+
+func (f *mockFirewall) SetupNAT(_ string) error { return nil }
+func (f *mockFirewall) TeardownNAT() error      { return nil }
+func (f *mockFirewall) ClampMSSToPMTU() error   { return nil }
+func (f *mockFirewall) DisableStickyECMP(cidr string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disableStickyCalls = append(f.disableStickyCalls, cidr)
+	return nil
+}
+func (f *mockFirewall) EnableStickyECMP(cidr string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enableStickyCalls = append(f.enableStickyCalls, cidr)
+	return nil
+}
+
+func (f *mockFirewall) hasEnableStickyFor(cidr string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.enableStickyCalls {
+		if c == cidr {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *mockFirewall) enableStickyCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.enableStickyCalls)
+}
+
+type mockSysctl struct {
+	mu              sync.Mutex
+	l4HashCallCount int
+}
+
+func (s *mockSysctl) EnableForwarding() error { return nil }
+func (s *mockSysctl) EnableL4Hash() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.l4HashCallCount++
+	return nil
+}
+
+func (s *mockSysctl) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.l4HashCallCount
+}
+
+// --- Test helpers ---
+
+// newTestNode returns a minimal Node with an optional topology.
+func newTestNode(topo *topology.Topology) *Node {
+	return &Node{
+		config:   NodeConfig{Name: "test-client"},
+		topology: topo,
+		logger:   zerolog.Nop(),
+	}
+}
+
+// newTestRunner creates a ClientRunner with injected mocks.
+// Mutates platformState in place to avoid copying clientPlatformState (which
+// holds sync.Mutex — copylocks violation under govet).
+func newTestRunner(node *Node, router *mockRouter, fw *mockFirewall, sc *mockSysctl) *ClientRunner {
+	runner := &ClientRunner{node: node}
+	runner.platformState.byKey = make(map[string]*transportLink)
+	runner.platformState.pending = make(map[string]bool)
+	runner.platformState.router = router
+	runner.platformState.firewall = fw
+	runner.platformState.sysctl = sc
+	return runner
+}
+
+// stubIface returns a zero-value *wg.Interface suitable for test link stubs.
+// Its Name() returns "" which is acceptable for mock routing assertions.
+func stubIface() *wg.Interface {
+	return &wg.Interface{}
+}
+
+func makeTestLink(peerTransportIP, balancerIP string, healthy bool) *transportLink {
+	return &transportLink{
+		iface:           stubIface(),
+		pubkeyHex:       "aabbccdd",
+		peerTransportIP: peerTransportIP,
+		balancerIP:      balancerIP,
+		healthy:         healthy,
+	}
+}
+
+// TestRebuildClientECMP_HealthyVIP verifies the VIP path with 2 healthy links:
+// SetECMPRoute is called for balancerIP/32 and overlay.space, EnableStickyECMP is
+// called with balancerIP/32, and EnableL4Hash is called.
+func TestRebuildClientECMP_HealthyVIP(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "10.100.0.1"
+	overlaySpace := "10.0.0.0/8"
+
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: overlaySpace},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", balancerIP, true),
+		makeTestLink("192.168.1.2", balancerIP, true),
+	}
+
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	primaryCIDR := balancerIP + "/32"
+	if !router.hasSetECMPFor(primaryCIDR) {
+		t.Errorf("expected SetECMPRoute for %s, got calls: %+v", primaryCIDR, router.setECMPCalls)
+	}
+	if !router.hasSetECMPFor(overlaySpace) {
+		t.Errorf("expected SetECMPRoute for overlay %s, got calls: %+v", overlaySpace, router.setECMPCalls)
+	}
+	if !fw.hasEnableStickyFor(primaryCIDR) {
+		t.Errorf("expected EnableStickyECMP(%s), got: %+v", primaryCIDR, fw.enableStickyCalls)
+	}
+	if sysctl.callCount() == 0 {
+		t.Error("expected EnableL4Hash to be called")
+	}
+
+	// Verify nexthop count on primary route.
+	router.mu.Lock()
+	for _, call := range router.setECMPCalls {
+		if call.dest == primaryCIDR && len(call.nexthops) != 2 {
+			t.Errorf("expected 2 nexthops for %s, got %d", primaryCIDR, len(call.nexthops))
+		}
+	}
+	router.mu.Unlock()
+}
+
+// TestRebuildClientECMP_HealthyLegacy verifies the legacy path with 2 healthy links
+// (no balancerIP): SetECMPRoute called for 0.0.0.0/0, EnableStickyECMP(overlay.space),
+// EnableL4Hash called.
+func TestRebuildClientECMP_HealthyLegacy(t *testing.T) {
+	t.Parallel()
+
+	overlaySpace := "10.0.0.0/8"
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: overlaySpace},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.2.1", "", true),
+		makeTestLink("192.168.2.2", "", true),
+	}
+
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	defaultCIDR := "0.0.0.0/0"
+	if !router.hasSetECMPFor(defaultCIDR) {
+		t.Errorf("expected SetECMPRoute for %s, got calls: %+v", defaultCIDR, router.setECMPCalls)
+	}
+	if !fw.hasEnableStickyFor(overlaySpace) {
+		t.Errorf("expected EnableStickyECMP(%s), got: %+v", overlaySpace, fw.enableStickyCalls)
+	}
+	if sysctl.callCount() == 0 {
+		t.Error("expected EnableL4Hash to be called")
+	}
+}
+
+// TestRebuildClientECMP_ZeroHealthy_VIP verifies that when all VIP links are unhealthy,
+// RemoveECMPRoute(balancerIP/32) is called and EnableStickyECMP is not called.
+func TestRebuildClientECMP_ZeroHealthy_VIP(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "10.100.0.1"
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", balancerIP, false),
+		makeTestLink("192.168.1.2", balancerIP, false),
+	}
+
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	primaryCIDR := balancerIP + "/32"
+	if !router.hasRemoveECMPFor(primaryCIDR) {
+		t.Errorf("expected RemoveECMPRoute(%s), got: %+v", primaryCIDR, router.removeECMPCalls)
+	}
+	if router.setECMPCallCount() > 0 {
+		t.Errorf("expected no SetECMPRoute calls, got: %+v", router.setECMPCalls)
+	}
+	if fw.enableStickyCallCount() > 0 {
+		t.Errorf("expected no EnableStickyECMP calls, got: %+v", fw.enableStickyCalls)
+	}
+}
+
+// TestRebuildClientECMP_ZeroHealthy_Legacy verifies that when all legacy links are
+// unhealthy, RemoveECMPRoute(0.0.0.0/0) is called.
+func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
+	t.Parallel()
+
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(nil), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.2.1", "", false),
+		makeTestLink("192.168.2.2", "", false),
+	}
+
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	defaultCIDR := "0.0.0.0/0"
+	if !router.hasRemoveECMPFor(defaultCIDR) {
+		t.Errorf("expected RemoveECMPRoute(%s), got: %+v", defaultCIDR, router.removeECMPCalls)
+	}
+}
+
+// TestRebuildClientECMP_MixedBalancerIP verifies that when links have mixed balancerIP
+// presence, an error is returned and no route is installed.
+func TestRebuildClientECMP_MixedBalancerIP(t *testing.T) {
+	t.Parallel()
+
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(nil), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", "10.100.0.1", true), // has balancerIP
+		makeTestLink("192.168.1.2", "", true),             // no balancerIP
+	}
+
+	err := runner.rebuildClientECMP()
+	if err == nil {
+		t.Fatal("expected error for mixed balancerIP, got nil")
+	}
+
+	if router.setECMPCallCount() > 0 {
+		t.Errorf("expected no SetECMPRoute calls on mixed error, got: %+v", router.setECMPCalls)
+	}
+}
+
+// TestRebuildClientECMP_FailoverSingleMaster verifies single-master legacy topology:
+// onDown withdraws the route (RemoveECMPRoute), onUp reinstalls it (SetECMPRoute).
+func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
+	t.Parallel()
+
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(nil), router, fw, sysctl)
+	link := makeTestLink("192.168.3.1", "", true)
+	runner.platformState.links = []*transportLink{link}
+	runner.platformState.byKey = map[string]*transportLink{"aabbccdd": link}
+
+	// Initial state: healthy — should install 0.0.0.0/0.
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("initial rebuild error: %v", err)
+	}
+	if !router.hasSetECMPFor("0.0.0.0/0") {
+		t.Errorf("expected SetECMPRoute(0.0.0.0/0) on initial install, got: %+v", router.setECMPCalls)
+	}
+
+	// Simulate onDown: mark unhealthy and rebuild.
+	runner.platformState.mu.Lock()
+	link.healthy = false
+	runner.platformState.mu.Unlock()
+
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("onDown rebuild error: %v", err)
+	}
+	if !router.hasRemoveECMPFor("0.0.0.0/0") {
+		t.Errorf("expected RemoveECMPRoute(0.0.0.0/0) on link down, got: %+v", router.removeECMPCalls)
+	}
+
+	// Simulate onUp: mark healthy and rebuild.
+	runner.platformState.mu.Lock()
+	link.healthy = true
+	runner.platformState.mu.Unlock()
+
+	beforeCount := router.setECMPCallCount()
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("onUp rebuild error: %v", err)
+	}
+	if router.setECMPCallCount() <= beforeCount {
+		t.Error("expected SetECMPRoute to be called again on link up")
+	}
 }
