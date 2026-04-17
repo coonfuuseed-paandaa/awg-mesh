@@ -32,8 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pin a semver tag (e.g. `:v1.8.1`) in `defaults.image` or via `--image` for production
   deployments; reserve `:latest` for edge/dev environments where the newest build is always
   desired.
-- Semver Docker tagging on `v*` releases is already enabled as of `v1.8.1`. For
-  rollout details and CI continuity context, see `.agent/CONTINUITY.md` on `main`.
+- Future workflow tweak tracked separately: add `type=ref,event=tag` to `meta-primary`/
+  `meta-alias` so tag pushes also auto-publish `:v<semver>`-prefixed aliases alongside
+  the existing `:<semver>` / `:<major>.<minor>` / `:<major>` / `:latest` tags. Low priority —
+  current flow already produces the canonical versioned tags. See `.agent/CONTINUITY.md` on
+  `main` for detail.
 
 ## [1.8.1] - 2026-04-17
 
