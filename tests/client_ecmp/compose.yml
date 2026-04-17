@@ -1,0 +1,122 @@
+# Manual end-to-end fixture for client ECMP Phase 6 (US1 + US2).
+# This compose file is NOT run in CI. It requires a Linux host (or WSL2) with
+# Docker 24+, privileged NET_ADMIN capability, and kernel TUN/nftables support.
+# Run manually: docker compose -f tests/client_ecmp/compose.yml up -d --build
+
+version: "3.9"
+
+networks:
+  awg-mesh-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+services:
+
+  # Primary ingress master: accepts client tunnels, routes overlay traffic.
+  master-01:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.node
+    container_name: master-01
+    hostname: master-01
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    ports:
+      - "51820:51820/udp"
+    environment:
+      MESH_NAME: awg-mesh-test
+      MESH_MODE: master
+      MESH_OVERLAY_IP: 172.20.70.2
+      MESH_TOKEN_HASH: "$2a$12$abcdefghijklmnopqrstuv"
+    volumes:
+      - ./compose-state/master-01:/config
+    networks:
+      awg-mesh-test:
+        ipv4_address: 172.31.0.10
+
+  # Secondary master: provides ECMP failover path for the client.
+  master-02:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.node
+    container_name: master-02
+    hostname: master-02
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    ports:
+      - "51821:51820/udp"
+    environment:
+      MESH_NAME: awg-mesh-test
+      MESH_MODE: master
+      MESH_OVERLAY_IP: 172.20.70.3
+      MESH_TOKEN_HASH: "$2a$12$abcdefghijklmnopqrstuv"
+    volumes:
+      - ./compose-state/master-02:/config
+    networks:
+      awg-mesh-test:
+        ipv4_address: 172.31.0.11
+
+  # European endpoint: AWG server + NAT, receives client sessions via masters.
+  node-eu-01:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.node
+    container_name: node-eu-01
+    hostname: node-eu-01
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    ports:
+      - "51822:51820/udp"
+    environment:
+      MESH_NAME: awg-mesh-test
+      MESH_MODE: endpoint
+      MESH_OVERLAY_IP: 172.20.70.37
+      MESH_TOKEN_HASH: "$2a$12$abcdefghijklmnopqrstuv"
+    volumes:
+      - ./compose-state/node-eu-01:/config
+    networks:
+      awg-mesh-test:
+        ipv4_address: 172.31.0.20
+    depends_on:
+      - master-01
+      - master-02
+
+  # Linux client: connects to both masters via ECMP tunnels for US1/US2 verification.
+  client-lin:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.client
+    container_name: client-lin
+    hostname: client-lin
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    environment:
+      MESH_NAME: awg-mesh-test
+      MESH_MODE: client
+      MESH_OVERLAY_IP: 172.20.70.130
+      MESH_TOKEN_HASH: "$2a$12$abcdefghijklmnopqrstuv"
+    volumes:
+      - ./compose-state/client-lin:/config
+    networks:
+      awg-mesh-test:
+        ipv4_address: 172.31.0.50
+    depends_on:
+      - node-eu-01
