@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -379,6 +380,17 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 
 	if transport.IsLegacySchema(state) {
 		transport.ApplyLegacyDefaults(&state, c.node.logger)
+		// Persist migrated state so the WARN fires only once per node lifetime.
+		// If the write fails (read-only FS, disk full), continue in-memory — the
+		// reconcile still succeeds and the next AddPeer will re-attempt persistence.
+		if err := transport.SaveNodeTransportState(
+			filepath.Join(c.node.config.ConfigDir, "transport.yml"),
+			state,
+		); err != nil {
+			c.node.logger.Warn().
+				Err(err).
+				Msg("persist migrated transport.yml failed; continuing with in-memory state")
+		}
 	}
 
 	reconciled := 0

@@ -420,6 +420,14 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 		return nil
 	}
 
+	// Fail fast at the RPC boundary when AllowedIPs is empty. Persisting a v1.6.0
+	// schema tunnel with no AllowedIPs would cause reconcile to hard-error on the
+	// next restart (FR-4). Rejecting here surfaces the mesh-ctl bug immediately
+	// rather than on the next node boot.
+	if len(req.GetAllowedIps()) == 0 {
+		return fmt.Errorf("AddPeer: allowed_ips must be non-empty for transport persistence (v1.6.0 schema)")
+	}
+
 	state, err := loadNodeTransportState(h.configDir)
 	if err != nil {
 		return err
