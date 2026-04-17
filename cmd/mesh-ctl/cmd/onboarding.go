@@ -200,7 +200,7 @@ func printNextSteps(role, name, token, tokenPath, outputPath string, useTraefik,
 	}
 
 	if showToken {
-		fmt.Fprintln(os.Stdout, token) // OK: gated behind --show-token flag
+		_, _ = fmt.Fprintln(os.Stdout, token) // OK: gated behind --show-token flag
 		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
 		logger.Warn().
 			Str("event", "show_token_flag").

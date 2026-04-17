@@ -93,7 +93,7 @@ func newTokenRotateCommand() *cobra.Command {
 			tokenPath := filepath.Join(nd, "token")
 
 			if showToken {
-				fmt.Fprintln(os.Stdout, newToken) // OK: gated behind --show-token flag
+				_, _ = fmt.Fprintln(os.Stdout, newToken) // OK: gated behind --show-token flag
 				logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
 				logger.Warn().
 					Str("event", "show_token_flag").
