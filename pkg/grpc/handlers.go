@@ -431,12 +431,14 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 		return fmt.Errorf("derived tunnel name %q contains unsafe path characters", tunnelName)
 	}
 	entry := tunnelTransport{
-		Name:            tunnelName,
-		TransportIP:     req.GetLocalTransportIp(),
-		PeerTransportIP: req.GetPeerTransportIp(),
-		PeerPublicKey:   peerPublicKey,
-		PeerEndpoint:    peerEndpoint,
-		BalancerIP:      strings.TrimSpace(req.GetBalancerIp()),
+		Name:                tunnelName,
+		TransportIP:         req.GetLocalTransportIp(),
+		PeerTransportIP:     req.GetPeerTransportIp(),
+		PeerPublicKey:       peerPublicKey,
+		PeerEndpoint:        peerEndpoint,
+		BalancerIP:          strings.TrimSpace(req.GetBalancerIp()),
+		AllowedIPs:          req.GetAllowedIps(),
+		PersistentKeepalive: req.GetPersistentKeepalive(),
 	}
 
 	nextTunnels := append([]tunnelTransport(nil), state.Tunnels...)
@@ -456,8 +458,9 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 	}
 
 	return saveNodeTransportState(filepath.Join(h.configDir, "transport.yml"), nodeTransportState{
-		OverlayIP: strings.TrimSpace(state.OverlayIP),
-		Tunnels:   nextTunnels,
+		SchemaVersion: transport.CurrentSchemaVersion,
+		OverlayIP:     strings.TrimSpace(state.OverlayIP),
+		Tunnels:       nextTunnels,
 	})
 }
 

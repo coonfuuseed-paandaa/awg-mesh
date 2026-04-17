@@ -8,15 +8,24 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 )
+
+// CurrentSchemaVersion is the transport.yml schema version written by v1.6.0+.
+// Files written by older releases will have SchemaVersion == 0 (legacy).
+const CurrentSchemaVersion = 1
 
 // NodeTransportState is persisted to /config/transport.yml on the node after
 // AddTunnel/AddPeer. Shared between pkg/node and pkg/grpc to ensure a single
 // source of truth for the transport.yml schema.
 type NodeTransportState struct {
-	OverlayIP string           `yaml:"overlay_ip"`
-	Tunnels   []TunnelTransport `yaml:"tunnels"`
+	// SchemaVersion identifies the transport.yml schema generation.
+	// 0 means a file written by a pre-v1.6.0 release (legacy defaults apply).
+	// 1 means a file written by v1.6.0+ (AllowedIPs and PersistentKeepalive are authoritative).
+	SchemaVersion int              `yaml:"schema_version,omitempty"`
+	OverlayIP     string           `yaml:"overlay_ip"`
+	Tunnels       []TunnelTransport `yaml:"tunnels"`
 }
 
 // TunnelTransport records transport addressing for one tunnel.
@@ -28,6 +37,40 @@ type TunnelTransport struct {
 	PeerPublicKey   string `yaml:"peer_public_key"`
 	PeerEndpoint    string `yaml:"peer_endpoint"`
 	BalancerIP      string `yaml:"balancer_ip,omitempty"`
+	// AllowedIPs is the list of CIDR prefixes routed through this tunnel peer.
+	// Written by v1.6.0+; empty in legacy state files (see IsLegacySchema).
+	AllowedIPs []string `yaml:"allowed_ips,omitempty"`
+	// PersistentKeepalive is the WireGuard keepalive interval in seconds for this peer.
+	// Written by v1.6.0+; zero in legacy state files (see IsLegacySchema).
+	PersistentKeepalive int32 `yaml:"persistent_keepalive,omitempty"`
+}
+
+// IsLegacySchema reports whether state was written by a pre-v1.6.0 release.
+// Legacy files have SchemaVersion == 0 and omit AllowedIPs / PersistentKeepalive.
+func IsLegacySchema(state NodeTransportState) bool {
+	return state.SchemaVersion == 0
+}
+
+// ApplyLegacyDefaults fills in AllowedIPs and PersistentKeepalive for tunnels
+// that lack them (i.e. state loaded from a pre-v1.6.0 transport.yml).
+// It logs a single WARN and stamps SchemaVersion = CurrentSchemaVersion so the
+// function is idempotent if called twice.
+func ApplyLegacyDefaults(state *NodeTransportState, logger zerolog.Logger) {
+	logger.Warn().
+		Int("tunnel_count", len(state.Tunnels)).
+		Str("event", "transport_state_legacy_schema").
+		Msg("transport.yml pre-v1.6.0 schema detected; applying fallback defaults. Run 'mesh-ctl client init' to migrate.")
+
+	for i := range state.Tunnels {
+		if len(state.Tunnels[i].AllowedIPs) == 0 {
+			state.Tunnels[i].AllowedIPs = []string{"0.0.0.0/0"}
+		}
+		if state.Tunnels[i].PersistentKeepalive == 0 {
+			state.Tunnels[i].PersistentKeepalive = 25
+		}
+	}
+
+	state.SchemaVersion = CurrentSchemaVersion
 }
 
 // SaveNodeTransportState writes transport.yml atomically.
