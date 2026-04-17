@@ -3,7 +3,9 @@
 package routing
 
 import (
+	"bytes"
 	"fmt"
+	"net"
 	"sync"
 
 	"github.com/google/nftables"
@@ -151,14 +153,58 @@ func (f *NftablesFirewall) ClampMSSToPMTU() error {
 	return nil
 }
 
-// EnableStickyECMP sets up connmark-based session stickiness for ECMP routes.
+// cidrFilterExprs returns 3 nftables expressions that match packets whose
+// destination IP falls within the given CIDR. They use register 2 so as not to
+// clobber the conntrack state in register 1 used by the sticky ECMP rules.
+//
+// Expressions:
+//  1. Payload — load IPv4 dst (offset 16, len 4) from network header into reg 2.
+//  2. Bitwise — AND reg 2 with the CIDR mask, result stays in reg 2.
+//  3. Cmp     — compare reg 2 == network address bytes.
+func cidrFilterExprs(cidr *net.IPNet) []expr.Any {
+	networkIP := cidr.IP.To4()
+	mask := []byte(cidr.Mask)
+	return []expr.Any{
+		// Load IPv4 dst into register 2 (offset 16 = dst addr in IPv4 header).
+		&expr.Payload{
+			DestRegister: 2,
+			Base:         expr.PayloadBaseNetworkHeader,
+			Offset:       16,
+			Len:          4,
+		},
+		// Mask with CIDR mask.
+		&expr.Bitwise{
+			SourceRegister: 2,
+			DestRegister:   2,
+			Len:            4,
+			Mask:           mask,
+			Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+		},
+		// Compare masked result == network address.
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 2,
+			Data:     networkIP,
+		},
+	}
+}
+
+// EnableStickyECMP sets up connmark-based session stickiness for ECMP routes,
+// scoped to packets whose destination IP falls within balancerCIDR.
 func (f *NftablesFirewall) EnableStickyECMP(balancerCIDR string) error {
+	_, ipNet, err := net.ParseCIDR(balancerCIDR)
+	if err != nil {
+		return fmt.Errorf("nftables: parse balancer CIDR %q: %w", balancerCIDR, err)
+	}
+
+	cidrExprs := cidrFilterExprs(ipNet)
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.ensureTable()
 
-	// Prerouting: restore connmark on established connections
+	// Prerouting: restore connmark on established connections scoped to CIDR.
 	preChain := f.conn.AddChain(&nftables.Chain{
 		Name:     "mangle_prerouting",
 		Table:    f.table,
@@ -167,39 +213,43 @@ func (f *NftablesFirewall) EnableStickyECMP(balancerCIDR string) error {
 		Priority: nftables.ChainPriorityMangle,
 	})
 
+	preExprs := make([]expr.Any, 0, len(cidrExprs)+5)
+	preExprs = append(preExprs, cidrExprs...)
+	preExprs = append(preExprs,
+		// ct state established,related
+		&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
+		&expr.Bitwise{
+			SourceRegister: 1,
+			DestRegister:   1,
+			Len:            4,
+			Mask:           []byte{0x06, 0x00, 0x00, 0x00}, // ESTABLISHED|RELATED
+			Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpNeq,
+			Register: 1,
+			Data:     []byte{0x00, 0x00, 0x00, 0x00},
+		},
+		// ct mark → meta mark (restore)
+		&expr.Ct{
+			Key:            expr.CtKeyMARK,
+			Register:       1,
+			SourceRegister: false,
+		},
+		&expr.Meta{
+			Key:            expr.MetaKeyMARK,
+			SourceRegister: true,
+			Register:       1,
+		},
+	)
+
 	f.conn.AddRule(&nftables.Rule{
 		Table: f.table,
 		Chain: preChain,
-		Exprs: []expr.Any{
-			// ct state established,related
-			&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
-			&expr.Bitwise{
-				SourceRegister: 1,
-				DestRegister:   1,
-				Len:            4,
-				Mask:           []byte{0x06, 0x00, 0x00, 0x00}, // ESTABLISHED|RELATED
-				Xor:            []byte{0x00, 0x00, 0x00, 0x00},
-			},
-			&expr.Cmp{
-				Op:       expr.CmpOpNeq,
-				Register: 1,
-				Data:     []byte{0x00, 0x00, 0x00, 0x00},
-			},
-			// ct mark set mark (restore)
-			&expr.Ct{
-				Key:            expr.CtKeyMARK,
-				Register:       1,
-				SourceRegister: false,
-			},
-			&expr.Meta{
-				Key:            expr.MetaKeyMARK,
-				SourceRegister: true,
-				Register:       1,
-			},
-		},
+		Exprs: preExprs,
 	})
 
-	// Postrouting: save connmark on new connections
+	// Postrouting: save connmark on new connections scoped to CIDR.
 	postChain := f.conn.AddChain(&nftables.Chain{
 		Name:     "mangle_postrouting",
 		Table:    f.table,
@@ -208,35 +258,39 @@ func (f *NftablesFirewall) EnableStickyECMP(balancerCIDR string) error {
 		Priority: nftables.ChainPriorityMangle,
 	})
 
+	postExprs := make([]expr.Any, 0, len(cidrExprs)+5)
+	postExprs = append(postExprs, cidrExprs...)
+	postExprs = append(postExprs,
+		// ct state new
+		&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
+		&expr.Bitwise{
+			SourceRegister: 1,
+			DestRegister:   1,
+			Len:            4,
+			Mask:           []byte{0x08, 0x00, 0x00, 0x00}, // NEW
+			Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpNeq,
+			Register: 1,
+			Data:     []byte{0x00, 0x00, 0x00, 0x00},
+		},
+		// meta mark → ct mark (save)
+		&expr.Meta{
+			Key:      expr.MetaKeyMARK,
+			Register: 1,
+		},
+		&expr.Ct{
+			Key:            expr.CtKeyMARK,
+			Register:       1,
+			SourceRegister: true,
+		},
+	)
+
 	f.conn.AddRule(&nftables.Rule{
 		Table: f.table,
 		Chain: postChain,
-		Exprs: []expr.Any{
-			// ct state new
-			&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
-			&expr.Bitwise{
-				SourceRegister: 1,
-				DestRegister:   1,
-				Len:            4,
-				Mask:           []byte{0x08, 0x00, 0x00, 0x00}, // NEW
-				Xor:            []byte{0x00, 0x00, 0x00, 0x00},
-			},
-			&expr.Cmp{
-				Op:       expr.CmpOpNeq,
-				Register: 1,
-				Data:     []byte{0x00, 0x00, 0x00, 0x00},
-			},
-			// meta mark set ct mark (save)
-			&expr.Meta{
-				Key:      expr.MetaKeyMARK,
-				Register: 1,
-			},
-			&expr.Ct{
-				Key:            expr.CtKeyMARK,
-				Register:       1,
-				SourceRegister: true,
-			},
-		},
+		Exprs: postExprs,
 	})
 
 	if err := f.conn.Flush(); err != nil {
@@ -245,12 +299,64 @@ func (f *NftablesFirewall) EnableStickyECMP(balancerCIDR string) error {
 	return nil
 }
 
-// DisableStickyECMP is a no-op for individual CIDRs.
-// Connmark rules are table-wide (awg_mesh) and cannot be removed per-CIDR without
-// tracking which CIDRs have active ECMP routes. Stale connmark entries for removed
-// balancer IPs are harmless (no matching traffic) and are cleaned up when TeardownNAT
-// removes the entire table on node shutdown.
-func (f *NftablesFirewall) DisableStickyECMP(_ string) error {
+// ruleMatchesCIDR reports whether rule was installed by EnableStickyECMP for
+// the given CIDR. It checks the first 3 expressions (payload/bitwise/cmp)
+// against the CIDR's mask and network bytes.
+func ruleMatchesCIDR(rule *nftables.Rule, ipNet *net.IPNet) bool {
+	if len(rule.Exprs) < 3 {
+		return false
+	}
+	pl, ok := rule.Exprs[0].(*expr.Payload)
+	if !ok || pl.Base != expr.PayloadBaseNetworkHeader || pl.Offset != 16 || pl.Len != 4 {
+		return false
+	}
+	bw, ok := rule.Exprs[1].(*expr.Bitwise)
+	if !ok || !bytes.Equal(bw.Mask, []byte(ipNet.Mask)) {
+		return false
+	}
+	cmp, ok := rule.Exprs[2].(*expr.Cmp)
+	if !ok || cmp.Op != expr.CmpOpEq {
+		return false
+	}
+	return bytes.Equal(cmp.Data, ipNet.IP.To4())
+}
+
+// DisableStickyECMP removes the CIDR-scoped sticky ECMP rules installed by
+// EnableStickyECMP for cidr. Rules for other CIDRs are not touched.
+// Idempotent: no error if cidr was never enabled.
+func (f *NftablesFirewall) DisableStickyECMP(cidr string) error {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("nftables: parse CIDR %q: %w", cidr, err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.table == nil {
+		return nil
+	}
+
+	chainNames := []string{"mangle_prerouting", "mangle_postrouting"}
+	for _, chainName := range chainNames {
+		chain := &nftables.Chain{Name: chainName, Table: f.table}
+		rules, err := f.conn.GetRules(f.table, chain)
+		if err != nil {
+			// Chain may not exist yet — idempotent, skip.
+			continue
+		}
+		for _, rule := range rules {
+			if ruleMatchesCIDR(rule, ipNet) {
+				if err := f.conn.DelRule(rule); err != nil {
+					return fmt.Errorf("nftables: delete sticky ECMP rule for %s in %s: %w", cidr, chainName, err)
+				}
+			}
+		}
+	}
+
+	if err := f.conn.Flush(); err != nil {
+		return fmt.Errorf("nftables: disable sticky ECMP for %s: %w", cidr, err)
+	}
 	return nil
 }
 
