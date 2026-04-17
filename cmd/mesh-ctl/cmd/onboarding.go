@@ -12,10 +12,10 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/rs/zerolog"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	"github.com/rs/zerolog"
 )
 
 //go:embed templates/*.tmpl

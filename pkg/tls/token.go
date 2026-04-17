@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	tokenFile      = "mesh.token"
-	tokenByteLen   = 32
-	bcryptCost     = 12
+	tokenFile    = "mesh.token"
+	tokenByteLen = 32
+	bcryptCost   = 12
 )
 
 // GenerateToken creates a cryptographically random 64-character hex token

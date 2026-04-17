@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rs/zerolog"
-	"github.com/spf13/cobra"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog"
+	"github.com/spf13/cobra"
 )
 
 func newTokenCommand() *cobra.Command {
