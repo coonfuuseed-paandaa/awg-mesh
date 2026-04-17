@@ -33,6 +33,7 @@ func newEndpointCommand() *cobra.Command {
 func newEndpointPrepareCommand() *cobra.Command {
 	var useTraefik bool
 	var showToken bool
+	var imageFlag string
 
 	cmd := &cobra.Command{
 		Use:   "prepare [name]",
@@ -40,6 +41,15 @@ func newEndpointPrepareCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+
+			// Validate --image early so the user gets a clear error before any
+			// expensive operations (topology load, CA, token generation).
+			if imageFlag != "" {
+				if err := validateImageRef(imageFlag); err != nil {
+					return fmt.Errorf("invalid --image: %w", err)
+				}
+			}
+
 			topo, err := topology.LoadTopology(topologyPath)
 			if err != nil {
 				return fmt.Errorf("load topology %q: %w", topologyPath, err)
@@ -85,7 +95,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 				Name:       ep.Name,
 				Host:       ep.Host,
 				OverlayIP:  ep.OverlayIP,
-				Image:      "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest",
+				Image:      resolveImage(imageFlag, topo.Defaults.Image.Node, "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest"),
 				ListenPort: ep.ListenPort,
 				// Escape $ → $$ to survive Docker Compose variable
 				// interpolation. Bcrypt hashes contain literal `$`.
@@ -114,6 +124,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 
 	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
 	cmd.Flags().BoolVar(&showToken, "show-token", false, "print raw token to stdout (default: save to disk only)")
+	cmd.Flags().StringVar(&imageFlag, "image", "", "Docker image reference (default: topology defaults.image.node, else ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest)")
 	return cmd
 }
 

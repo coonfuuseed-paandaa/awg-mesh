@@ -12,6 +12,15 @@ overlay:
     - name: clients
       cidr: 172.20.70.128/25
 
+# Optional: pin docker image versions (recommended for production).
+# Uncomment and edit the block below to activate.
+# Resolution priority: --image CLI flag > defaults.image > built-in :latest default.
+#
+# defaults:
+#   image:
+#     node:   ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v0.3.0   # used by master/endpoint prepare
+#     client: ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v0.3.0  # used by client prepare
+
 masters:
   - name: master-01
     host: 198.51.100.10

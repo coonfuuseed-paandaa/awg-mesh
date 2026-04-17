@@ -388,6 +388,44 @@ ssh user@198.51.100.10 'docker compose -f master-01-docker-compose.yml up -d'
 
 Сгенерированный compose-файл содержит правильный образ, capabilities, проброс портов и флаги запуска для конкретного узла. При желании можно включить блок сервиса `awg-mesh-node` в существующий compose-файл вашей инфраструктуры — см. [Деплой](#деплой).
 
+### Фиксация версии образа
+
+По умолчанию `mesh-ctl prepare` записывает в compose-файл тег `:latest`. Rolling-теги ломают воспроизводимость: `docker compose pull` может молча обновить узел до новой версии. Используйте флаг `--image` или поле топологии, чтобы зафиксировать конкретный образ.
+
+**Флаг `--image`** доступен на каждой из трёх команд prepare:
+
+```bash
+# Master-узел с конкретным semver-тегом
+mesh-ctl master prepare master-01 --image ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1 -t mesh-topology.yml
+
+# Endpoint-узел
+mesh-ctl endpoint prepare node-asia-01 --image ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1 -t mesh-topology.yml
+
+# Linux-клиент (использует образ awg-mesh-client)
+mesh-ctl client prepare my-router --image ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.8.1 -t mesh-topology.yml
+```
+
+For clients with `type: mikrotik`, `client prepare` generates RouterOS `.rsc` output and does not include a Docker image field, so `--image` has no effect for that client type.
+
+**Поля топологии** `defaults.image.node` и `defaults.image.client` позволяют задать образ один раз для всей сети — без передачи флага на каждый вызов prepare:
+
+```yaml
+defaults:
+  image:
+    node: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1    # для master и endpoint
+    client: ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.8.1 # для client
+```
+
+**Приоритет разрешения** (от высшего к низшему):
+
+1. Флаг `--image` — побеждает всегда.
+2. `defaults.image.node` / `defaults.image.client` из топологии.
+3. Встроенный fallback: `ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest` для master/endpoint, `ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest` для client.
+
+Если ни флаг, ни поле топологии не заданы — поведение остаётся прежним (`:latest`), так что существующие конфигурации не нарушаются.
+
+**Рекомендация:** закрепляйте semver-тег (`:v1.8.1`) для производственных деплоев — это гарантирует воспроизводимый `docker compose pull` и возможность отката на предыдущий образ. Тег `:latest` удобен для edge-сред, где нужно всегда получать свежую сборку.
+
 ### Проверка
 
 ```bash

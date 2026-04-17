@@ -7,8 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--image <ref>` flag on `mesh-ctl master prepare`** — operator can pass a specific
+  docker image reference (e.g. `ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.8.1`) that
+  is written verbatim into the generated `docker-compose.yml` instead of the built-in
+  `:latest` fallback.
+- **`--image <ref>` flag on `mesh-ctl endpoint prepare`** — same behaviour as the master
+  variant; controls the image used in the endpoint compose file.
+- **`--image <ref>` flag on `mesh-ctl client prepare`** — applies to the linux client
+  compose output; the MikroTik RouterOS script path is not affected (no container image
+  reference in `.rsc` output).
+- **`defaults.image.node` topology field** — optional string under `defaults.image` in
+  `mesh-topology.yml`; sets the node image for all `master prepare` and `endpoint prepare`
+  invocations that do not supply `--image`.
+- **`defaults.image.client` topology field** — optional string under `defaults.image`;
+  sets the client image for all `client prepare` invocations that do not supply `--image`.
+- **Resolution priority** — `--image` CLI flag wins over `defaults.image.{node,client}`,
+  which wins over the built-in `:latest` fallback. Existing topologies without
+  `defaults.image` continue to emit `:latest` — no behaviour change for current users.
+
 ### Fixed
-- Docker-built `awg-mesh-node` and `mesh-ctl` binaries now report the actual version via `main.versionFromBuild`, injected at build time via ldflag. Previously they reported `"dev"` because the Docker ldflag targeted a variable that did not exist. `deploy/Dockerfile.client` now injects the same ldflag as well, and `.github/workflows/build.yml` now derives the version string per event type: semver tag on tag push, `{branch}@{short-sha}` on branch push, and `pr-{N}@{short-sha}` on PR events instead of passing `github.sha` (40-char hex) to every build. local tracker issue #91.
+
+- Docker-built `awg-mesh-node` and `mesh-ctl` binaries now report the actual version via
+  `main.versionFromBuild`, injected at build time via ldflag. Previously they reported
+  `"dev"` because the Docker ldflag targeted a variable that did not exist.
+  `deploy/Dockerfile.client` now injects the same ldflag as well, and
+  `.github/workflows/build.yml` now derives the version string per event type: semver tag
+  on tag push, `{branch}@{short-sha}` on branch push, and `pr-{N}@{short-sha}` on PR
+  events instead of passing `github.sha` (40-char hex) to every build. local tracker
+  issue #91.
+
+### Notes for operators
+
+- Pin a semver tag (e.g. `:v1.8.1`) in `defaults.image` or via `--image` for production
+  deployments; reserve `:latest` for edge/dev environments where the newest build is always
+  desired.
+- Future workflow tweak tracked separately: add `type=ref,event=tag` to `meta-primary`/
+  `meta-alias` so tag pushes also auto-publish `:v<semver>`-prefixed aliases alongside
+  the existing `:<semver>` / `:<major>.<minor>` / `:<major>` / `:latest` tags. Low priority —
+  current flow already produces the canonical versioned tags. See `.agent/CONTINUITY.md` on
+  `main` for detail.
 
 ## [1.8.1] - 2026-04-17
 
@@ -565,7 +604,7 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.1...HEAD
 [1.7.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.4.0...v1.5.0
