@@ -54,11 +54,11 @@ func shellQuote(s string) string {
 
 // bootstrapOpts holds all CLI options for the bootstrap command.
 type bootstrapOpts struct {
-	host            string
-	user            string
-	port            int
-	sshKey          string
-	image           string
+	host             string
+	user             string
+	port             int
+	sshKey           string
+	image            string
 	acceptNewHostKey bool
 }
 
