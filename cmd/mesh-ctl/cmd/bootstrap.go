@@ -337,7 +337,7 @@ func checkDockerPresent(client *ssh.Client, logger zerolog.Logger) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("open session: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	err = sess.Run("command -v docker >/dev/null 2>&1")
 	if err == nil {
@@ -361,7 +361,7 @@ func installDocker(client *ssh.Client, logger zerolog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open session: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	sess.Stdout = &prefixWriter{prefix: "[bootstrap] ", w: os.Stdout}
 	sess.Stderr = &prefixWriter{prefix: "[bootstrap] ", w: os.Stderr}
@@ -380,7 +380,7 @@ func pullImage(client *ssh.Client, image string, logger zerolog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open session: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	sess.Stdout = &prefixWriter{prefix: "[bootstrap] ", w: os.Stdout}
 	sess.Stderr = &prefixWriter{prefix: "[bootstrap] ", w: os.Stderr}
@@ -399,7 +399,7 @@ func runRemoteOutput(client *ssh.Client, command string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open session: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	out, err := sess.Output(command)
 	if err != nil {

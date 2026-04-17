@@ -259,7 +259,7 @@ func TestMockSSHSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	// Serve one connection in a goroutine.
 	errCh := make(chan error, 1)
@@ -274,7 +274,7 @@ func TestMockSSHSession(t *testing.T) {
 			errCh <- sshErr
 			return
 		}
-		defer sconn.Close()
+		defer func() { _ = sconn.Close() }()
 		go ssh.DiscardRequests(reqs)
 
 		for newChan := range chans {
@@ -303,7 +303,7 @@ func TestMockSSHSession(t *testing.T) {
 					_ = req.Reply(true, nil)
 					_, _ = fmt.Fprint(ch, "hello\n")
 					_, _ = ch.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
-					ch.Close()
+					_ = ch.Close()
 				}
 			}
 		}
@@ -328,7 +328,7 @@ func TestMockSSHSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial mock server: %v", err)
 	}
-	defer sshClient.Close()
+	defer func() { _ = sshClient.Close() }()
 
 	out, err := runRemoteOutput(sshClient, "echo hello")
 	if err != nil {
@@ -340,7 +340,7 @@ func TestMockSSHSession(t *testing.T) {
 	}
 
 	// Close the client so the server goroutine can finish and write to errCh.
-	sshClient.Close()
+	_ = sshClient.Close()
 
 	// Drain the server goroutine result to catch any server-side errors.
 	if serverErr := <-errCh; serverErr != nil {
