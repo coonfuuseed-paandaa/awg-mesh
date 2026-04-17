@@ -205,6 +205,17 @@ func (f *mockFirewall) hasEnableStickyFor(cidr string) bool {
 	return false
 }
 
+func (f *mockFirewall) hasDisableStickyFor(cidr string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.disableStickyCalls {
+		if c == cidr {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *mockFirewall) enableStickyCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -438,6 +449,70 @@ func TestRebuildClientECMP_MixedBalancerIP(t *testing.T) {
 
 	if router.setECMPCallCount() > 0 {
 		t.Errorf("expected no SetECMPRoute calls on mixed error, got: %+v", router.setECMPCalls)
+	}
+}
+
+// TestRebuildClientECMP_BalancerChange verifies that when balancerIP changes across
+// rebuilds, DisableStickyECMP is called for the old CIDR and EnableStickyECMP is
+// called for the new CIDR (FR-6 / US5).
+func TestRebuildClientECMP_BalancerChange(t *testing.T) {
+	t.Parallel()
+
+	const oldBalancerIP = "10.0.0.1"
+	const newBalancerIP = "10.0.0.2"
+	oldCIDR := oldBalancerIP + "/32"
+	newCIDR := newBalancerIP + "/32"
+
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+
+	// Step 1: two healthy links with balancerIP = 10.0.0.1.
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", oldBalancerIP, true),
+		makeTestLink("192.168.1.2", oldBalancerIP, true),
+	}
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("first rebuild: %v", err)
+	}
+	if !fw.hasEnableStickyFor(oldCIDR) {
+		t.Errorf("first rebuild: expected EnableStickyECMP(%s), got: %+v", oldCIDR, fw.enableStickyCalls)
+	}
+	if fw.hasDisableStickyFor(oldCIDR) {
+		t.Errorf("first rebuild: unexpected DisableStickyECMP(%s)", oldCIDR)
+	}
+
+	// Step 2: mutate both links' balancerIP to 10.0.0.2.
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", newBalancerIP, true),
+		makeTestLink("192.168.1.2", newBalancerIP, true),
+	}
+	if err := runner.rebuildClientECMP(); err != nil {
+		t.Fatalf("second rebuild: %v", err)
+	}
+	if !fw.hasDisableStickyFor(oldCIDR) {
+		t.Errorf("second rebuild: expected DisableStickyECMP(%s), got: %+v", oldCIDR, fw.disableStickyCalls)
+	}
+	if !fw.hasEnableStickyFor(newCIDR) {
+		t.Errorf("second rebuild: expected EnableStickyECMP(%s), got: %+v", newCIDR, fw.enableStickyCalls)
+	}
+
+	// Verify stale A-rules are gone: Enable should NOT have been called again for oldCIDR.
+	fw.mu.Lock()
+	enableForOld := 0
+	for _, c := range fw.enableStickyCalls {
+		if c == oldCIDR {
+			enableForOld++
+		}
+	}
+	fw.mu.Unlock()
+	if enableForOld != 1 {
+		t.Errorf("expected EnableStickyECMP(%s) exactly once (first rebuild only), got %d", oldCIDR, enableForOld)
 	}
 }
 

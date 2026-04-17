@@ -38,6 +38,11 @@ type clientPlatformState struct {
 	pending map[string]bool // pubkey creation in progress
 	nextIdx int
 
+	// currentStickyCIDRs tracks which CIDRs currently have sticky ECMP rules
+	// installed in the kernel. Used by rebuildClientECMP to diff per rebuild
+	// and call DisableStickyECMP only for retired CIDRs (FR-6).
+	currentStickyCIDRs map[string]bool
+
 	// Injectable for testing. nil = use production implementations.
 	router   routing.Router
 	firewall routing.Firewall
@@ -46,8 +51,9 @@ type clientPlatformState struct {
 
 func initClientPlatformState() clientPlatformState {
 	return clientPlatformState{
-		byKey:   make(map[string]*transportLink),
-		pending: make(map[string]bool),
+		byKey:              make(map[string]*transportLink),
+		pending:            make(map[string]bool),
+		currentStickyCIDRs: make(map[string]bool),
 	}
 }
 
@@ -615,10 +621,8 @@ func (c *ClientRunner) rebuildClientECMP() error {
 		}
 
 		stickyCIDR := primaryCIDR
-		if fw := c.firewallDep(); fw != nil {
-			if err := fw.EnableStickyECMP(stickyCIDR); err != nil {
-				return fmt.Errorf("enable sticky ECMP for %s: %w", stickyCIDR, err)
-			}
+		if err := c.applyStickyECMPDiff(stickyCIDR); err != nil {
+			return err
 		}
 		if err := c.sysctlDep().EnableL4Hash(); err != nil {
 			return fmt.Errorf("enable L4 hash: %w", err)
@@ -660,10 +664,8 @@ func (c *ClientRunner) rebuildClientECMP() error {
 	if c.node != nil && c.node.topology != nil && c.node.topology.Overlay.Space != "" {
 		stickyCIDR = c.node.topology.Overlay.Space
 	}
-	if fw := c.firewallDep(); fw != nil {
-		if err := fw.EnableStickyECMP(stickyCIDR); err != nil {
-			return fmt.Errorf("enable sticky ECMP: %w", err)
-		}
+	if err := c.applyStickyECMPDiff(stickyCIDR); err != nil {
+		return err
 	}
 	if err := c.sysctlDep().EnableL4Hash(); err != nil {
 		return fmt.Errorf("enable L4 hash: %w", err)
@@ -675,6 +677,53 @@ func (c *ClientRunner) rebuildClientECMP() error {
 		Int("nexthops", len(nexthops)).
 		Str("cidr", stickyCIDR).
 		Msg("client ECMP route installed (legacy path)")
+	return nil
+}
+
+// applyStickyECMPDiff computes the diff between the currently installed sticky
+// CIDRs and the desired newCIDR, then calls DisableStickyECMP for each retired
+// CIDR and EnableStickyECMP for newCIDR if it is not already active.
+// It updates currentStickyCIDRs to {newCIDR} on success.
+// If fw is nil (nftables unavailable), it is a no-op.
+func (c *ClientRunner) applyStickyECMPDiff(newCIDR string) error {
+	fw := c.firewallDep()
+	if fw == nil {
+		return nil
+	}
+
+	c.platformState.mu.Lock()
+	// Lazily initialize if struct was constructed without initClientPlatformState.
+	if c.platformState.currentStickyCIDRs == nil {
+		c.platformState.currentStickyCIDRs = make(map[string]bool)
+	}
+	oldCIDRs := make(map[string]bool, len(c.platformState.currentStickyCIDRs))
+	for k, v := range c.platformState.currentStickyCIDRs {
+		oldCIDRs[k] = v
+	}
+	c.platformState.mu.Unlock()
+
+	// Disable CIDRs that are no longer needed.
+	for cidr := range oldCIDRs {
+		if cidr == newCIDR {
+			continue
+		}
+		if err := fw.DisableStickyECMP(cidr); err != nil {
+			return fmt.Errorf("disable sticky ECMP for retired CIDR %s: %w", cidr, err)
+		}
+	}
+
+	// Enable the new CIDR only if not already active.
+	if !oldCIDRs[newCIDR] {
+		if err := fw.EnableStickyECMP(newCIDR); err != nil {
+			return fmt.Errorf("enable sticky ECMP for %s: %w", newCIDR, err)
+		}
+	}
+
+	// Commit new state.
+	c.platformState.mu.Lock()
+	c.platformState.currentStickyCIDRs = map[string]bool{newCIDR: true}
+	c.platformState.mu.Unlock()
+
 	return nil
 }
 
