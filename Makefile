@@ -43,3 +43,12 @@ test-client-ecmp:
 	@command -v docker >/dev/null 2>&1 || { echo "Docker not available; skipping client-ecmp e2e test"; exit 0; }
 	@docker info >/dev/null 2>&1 || { echo "Docker daemon not running; skipping"; exit 0; }
 	bash tests/client_ecmp/verify.sh
+
+.PHONY: grep-token-leak
+grep-token-leak:
+	@hits=$$(grep -rnE '(fmt\.(Printf|Println|Fprintln)\(|fmt\.Fprintf\(os\.Stdout)[^)]*\b(newToken|token|bearer)\b' cmd/mesh-ctl/cmd/ | grep -v '_test\.go' | grep -v '// OK:' || true); \
+	if [ -n "$$hits" ]; then \
+		echo "ERROR: unguarded token emit to stdout found:"; echo "$$hits"; exit 1; \
+	else \
+		echo "grep-token-leak: no unguarded token emits found"; \
+	fi

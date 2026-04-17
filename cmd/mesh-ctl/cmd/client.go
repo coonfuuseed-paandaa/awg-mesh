@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog"
+	"github.com/spf13/cobra"
 )
 
 func newClientCommand() *cobra.Command {
@@ -33,6 +34,7 @@ func newClientCommand() *cobra.Command {
 
 func newClientPrepareCommand() *cobra.Command {
 	var useTraefik bool
+	var showToken bool
 
 	cmd := &cobra.Command{
 		Use:   "prepare [name]",
@@ -96,7 +98,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:      client.Name,
 					Host:      "",
 					OverlayIP: client.OverlayIP,
-					Image: "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+					Image:     "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
 					// Escape $ → $$ to survive Docker Compose variable
 					// interpolation. Bcrypt hashes contain literal `$`.
 					TokenHash: composeEscapeDollar(hash),
@@ -116,7 +118,8 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("render docker-compose: %w", err)
 				}
 
-				printNextSteps("client", name, token, outputPath, useTraefik)
+				tokenPath := filepath.Join(nd, "token")
+				printNextSteps("client", name, token, tokenPath, outputPath, useTraefik, showToken)
 
 			case "mikrotik":
 				nd := nodeDir(configDir, name)
@@ -175,9 +178,19 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("write RouterOS script: %w", err)
 				}
 
-				fmt.Printf("MikroTik client %q prepared.\n\nToken: %s\n\nRouterOS script written to: %s\n\nNext steps:\n  1. Copy %s to the MikroTik router\n  2. /import file-name=%s\n  3. mesh-ctl client init %s\n",
+				tokenPath := filepath.Join(nd, "token")
+				if showToken {
+					_, _ = fmt.Fprintln(os.Stdout, token) // OK: gated behind --show-token flag
+					logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+					logger.Warn().
+						Str("event", "show_token_flag").
+						Str("command", "client prepare").
+						Msg("token emitted to stdout; prefer 'cat <token-path>' for scripted retrieval")
+				}
+				tokenLine := fmt.Sprintf("Token saved to %s. Run 'cat %s' to retrieve.", tokenPath, tokenPath)
+				fmt.Fprintf(os.Stderr, "MikroTik client %q prepared.\n\n%s\n\nRouterOS script written to: %s\n\nNext steps:\n  1. Copy %s to the MikroTik router\n  2. /import file-name=%s\n  3. mesh-ctl client init %s\n",
 					name,
-					token,
+					tokenLine,
 					rscPath,
 					rscPath,
 					rscPath,
@@ -193,6 +206,7 @@ func newClientPrepareCommand() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
+	cmd.Flags().BoolVar(&showToken, "show-token", false, "print raw token to stdout (default: save to disk only)")
 	return cmd
 }
 
@@ -257,7 +271,7 @@ func newClientInitCommand() *cobra.Command {
 			}
 
 			clientGRPC, err := grpcclient.NewClient(grpcclient.ClientConfig{
-				Target:     resolveClientGRPCAddr(topo, client),
+				Target:   resolveClientGRPCAddr(topo, client),
 				Token:    token,
 				Insecure: true,
 			})
@@ -351,9 +365,9 @@ func newClientInitCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.GRPCAddr(),
-					Token:      masterToken,
-					Insecure:   true,
+					Target:   master.GRPCAddr(),
+					Token:    masterToken,
+					Insecure: true,
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: connect to master %q: %v\n", master.Name, err)
@@ -387,9 +401,9 @@ func newClientInitCommand() *cobra.Command {
 				}
 
 				clientPeerClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     resolveClientGRPCAddr(topo, client),
+					Target:   resolveClientGRPCAddr(topo, client),
 					Insecure: true,
-					Token:      token,
+					Token:    token,
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: connect to client %q for add peer: %v\n", name, err)
@@ -479,9 +493,9 @@ func newClientRemoveCommand() *cobra.Command {
 				}
 
 				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:     master.GRPCAddr(),
-					Token:      masterToken,
-					Insecure:   true,
+					Target:   master.GRPCAddr(),
+					Token:    masterToken,
+					Insecure: true,
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)

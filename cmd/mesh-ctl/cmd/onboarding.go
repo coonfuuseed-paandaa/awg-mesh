@@ -12,9 +12,10 @@ import (
 	"strings"
 	"text/template"
 
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	"github.com/rs/zerolog"
 )
 
 //go:embed templates/*.tmpl
@@ -179,25 +180,39 @@ func resolveMasterAddresses(topo *topology.Topology, masterNames []string) ([]st
 	return addrs, nil
 }
 
-// printNextSteps writes a precise, actionable deploy sequence to stdout.
+// printNextSteps writes a precise, actionable deploy sequence to stdout/stderr.
 // The compose file already carries MESH_TOKEN_HASH, so the operator never has
 // to ship the token file by hand — the binary bootstraps it on first boot.
-// The plaintext token is still printed because `mesh-ctl <role> init` uses
-// it as the pre-Init bearer credential.
+//
+// When showToken is false (default), the token value is NOT printed; instead a
+// reference to the on-disk token path is shown on stderr. When showToken is
+// true, the raw token value is printed to stdout and a WARN log line is emitted
+// so an audit trail exists (NFR-4.3).
 //
 // useTraefik selects the state directory to match the generated compose: the
 // default (host-network) templates bind /var/lib/awg-mesh/<name>, the Traefik
 // variants bind /srv/awg-mesh/<name>. Getting this wrong leaves the operator
 // with an empty mount and a confused node, so it's routed through explicitly.
-func printNextSteps(role, name, token, outputPath string, useTraefik bool) {
+func printNextSteps(role, name, token, tokenPath, outputPath string, useTraefik, showToken bool) {
 	stateDir := "/var/lib/awg-mesh/" + name
 	if useTraefik {
 		stateDir = "/srv/awg-mesh/" + name
 	}
-	fmt.Printf(`%s %q prepared.
 
-Bearer token (keep locally — needed for '%s init'):
-  %s
+	if showToken {
+		_, _ = fmt.Fprintln(os.Stdout, token) // OK: gated behind --show-token flag
+		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+		logger.Warn().
+			Str("event", "show_token_flag").
+			Str("command", role+" prepare").
+			Msg("token emitted to stdout; prefer 'cat <token-path>' for scripted retrieval")
+	}
+
+	tokenLine := fmt.Sprintf("Token saved to %s. Run 'cat %s' to retrieve.", tokenPath, tokenPath)
+
+	fmt.Fprintf(os.Stderr, `%s %q prepared.
+
+%s
 
 Docker Compose written to: %s
 
@@ -219,7 +234,7 @@ Notes:
     lives there.
 `,
 		titleCase(role), name,
-		role, token,
+		tokenLine,
 		outputPath,
 		outputPath, name,
 		name,

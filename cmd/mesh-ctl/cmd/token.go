@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/spf13/cobra"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog"
+	"github.com/spf13/cobra"
 )
 
 func newTokenCommand() *cobra.Command {
@@ -25,7 +26,9 @@ func newTokenCommand() *cobra.Command {
 }
 
 func newTokenRotateCommand() *cobra.Command {
-	return &cobra.Command{
+	var showToken bool
+
+	cmd := &cobra.Command{
 		Use:   "rotate [node]",
 		Short: "Rotate MESH_TOKEN for a node",
 		Args:  cobra.ExactArgs(1),
@@ -87,11 +90,24 @@ func newTokenRotateCommand() *cobra.Command {
 			if err := saveToken(nd, newToken); err != nil {
 				return fmt.Errorf("save new token locally: %w", err)
 			}
+			tokenPath := filepath.Join(nd, "token")
 
-			fmt.Printf("Token rotated for %q.\nNew token: %s\n", name, newToken)
+			if showToken {
+				_, _ = fmt.Fprintln(os.Stdout, newToken) // OK: gated behind --show-token flag
+				logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+				logger.Warn().
+					Str("event", "show_token_flag").
+					Str("command", "token rotate").
+					Msg("token emitted to stdout; prefer 'cat <token-path>' for scripted retrieval")
+			} else {
+				fmt.Fprintf(os.Stderr, "Token rotated for %q. Saved to %s.\n", name, tokenPath)
+			}
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&showToken, "show-token", false, "print raw token to stdout (default: save to disk only)")
+	return cmd
 }
 
 func loadNodeHost(nodeDir string) (string, error) {
