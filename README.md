@@ -637,6 +637,19 @@ clients:
 
 For `type: mikrotik`, `mesh-ctl client prepare` generates a `.rsc` script ready to paste into a RouterOS terminal. No `host` or `grpc_port` required for MikroTik clients — they are provisioned offline.
 
+### Client interface naming (v1.7.0+)
+
+Client-side WireGuard interfaces use deterministic, pubkey-derived names:
+`wg-c` + first 4 hex chars of `SHA-256(peer_pubkey)`. This makes names stable
+across restarts and survives peer remove+re-add cycles.
+
+### Transport state schema
+
+`/config/transport.yml` uses `schema_version: 1` starting from v1.7.0. Pre-v1.6.0
+state files (no schema field, no AllowedIPs per-tunnel) are auto-migrated on
+first boot with a WARN log; operators should re-run `mesh-ctl client init`
+after upgrade to refresh state with topology-driven values.
+
 ### capture
 
 Controls TLS/QUIC fingerprint sampling used for AWG protocol mimicry (master nodes only):

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Client-side ECMP hardening** (`.agent/specs/client-ecmp/`):
+  - `TunnelTransport` now persists `AllowedIPs`, `PersistentKeepalive`, and `SchemaVersion` — the peer's AllowedIPs from `AddPeer` are restored verbatim on reconcile instead of being hardcoded to `0.0.0.0/0` (#27)
+  - Unified client ECMP code path: `rebuildClientECMP` applies health filter + sticky sessions + L4 hash unconditionally; no more divergent legacy vs VIP semantics (#30)
+  - `EnableStickyECMP` is now CIDR-scoped; `DisableStickyECMP` actually removes per-CIDR rules; runtime `balancer_ip` changes produce clean state (#32)
+  - Deterministic client interface names `wg-c<hash>` from peer pubkey SHA-256; stable across restarts. Legacy `wg-cN` interfaces cleaned up on reconcile (#31)
+  - Partial-mesh boot tolerance: reconcile errors no longer fatal to `Run()`; structured logs at every ECMP/sticky decision (#33)
+  - Docker-compose fixture + verify.sh for manual US1/US2 regression tests under `tests/client_ecmp/` (#28)
+
+### Migration from v1.6.0
+
+- First boot with a pre-v1.6.0 `transport.yml` logs one WARN and applies fallback defaults (`allowed_ips=0.0.0.0/0`, `keepalive=25s`); migration is durable — the WARN does NOT fire on subsequent boots.
+- Operators with running clients do NOT need to re-run `mesh-ctl client init`; the client updates its own state file on next reconcile.
+- Client interface names change from `wg-c0`/`wg-c1` to pubkey-derived `wg-c<4hex>`. External monitoring that scrapes interface names must be updated.
+- H4 finding (hardcoded `allowedIPs=["0.0.0.0/0"]`) is now closed (filed as #22).
+
 ## [1.6.0] - 2026-04-17
 
 ### Fixed
