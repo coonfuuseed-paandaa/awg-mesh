@@ -420,6 +420,14 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 		return nil
 	}
 
+	// Fail fast at the RPC boundary when AllowedIPs is empty. Persisting a v1.6.0
+	// schema tunnel with no AllowedIPs would cause reconcile to hard-error on the
+	// next restart (FR-4). Rejecting here surfaces the mesh-ctl bug immediately
+	// rather than on the next node boot.
+	if len(req.GetAllowedIps()) == 0 {
+		return fmt.Errorf("AddPeer: allowed_ips must be non-empty for transport persistence (v1.6.0 schema)")
+	}
+
 	state, err := loadNodeTransportState(h.configDir)
 	if err != nil {
 		return err
@@ -431,12 +439,14 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 		return fmt.Errorf("derived tunnel name %q contains unsafe path characters", tunnelName)
 	}
 	entry := tunnelTransport{
-		Name:            tunnelName,
-		TransportIP:     req.GetLocalTransportIp(),
-		PeerTransportIP: req.GetPeerTransportIp(),
-		PeerPublicKey:   peerPublicKey,
-		PeerEndpoint:    peerEndpoint,
-		BalancerIP:      strings.TrimSpace(req.GetBalancerIp()),
+		Name:                tunnelName,
+		TransportIP:         req.GetLocalTransportIp(),
+		PeerTransportIP:     req.GetPeerTransportIp(),
+		PeerPublicKey:       peerPublicKey,
+		PeerEndpoint:        peerEndpoint,
+		BalancerIP:          strings.TrimSpace(req.GetBalancerIp()),
+		AllowedIPs:          req.GetAllowedIps(),
+		PersistentKeepalive: req.GetPersistentKeepalive(),
 	}
 
 	nextTunnels := append([]tunnelTransport(nil), state.Tunnels...)
@@ -456,8 +466,9 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 	}
 
 	return saveNodeTransportState(filepath.Join(h.configDir, "transport.yml"), nodeTransportState{
-		OverlayIP: strings.TrimSpace(state.OverlayIP),
-		Tunnels:   nextTunnels,
+		SchemaVersion: transport.CurrentSchemaVersion,
+		OverlayIP:     strings.TrimSpace(state.OverlayIP),
+		Tunnels:       nextTunnels,
 	})
 }
 

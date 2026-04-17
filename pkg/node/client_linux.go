@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/dns"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
@@ -376,10 +378,29 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 		return nil
 	}
 
+	if transport.IsLegacySchema(state) {
+		transport.ApplyLegacyDefaults(&state, c.node.logger)
+		// Persist migrated state so the WARN fires only once per node lifetime.
+		// If the write fails (read-only FS, disk full), continue in-memory — the
+		// reconcile still succeeds and the next AddPeer will re-attempt persistence.
+		if err := transport.SaveNodeTransportState(
+			filepath.Join(c.node.config.ConfigDir, "transport.yml"),
+			state,
+		); err != nil {
+			c.node.logger.Warn().
+				Err(err).
+				Msg("persist migrated transport.yml failed; continuing with in-memory state")
+		}
+	}
+
 	reconciled := 0
 	for _, tunnel := range state.Tunnels {
 		if strings.TrimSpace(tunnel.PeerPublicKey) == "" || strings.TrimSpace(tunnel.TransportIP) == "" || strings.TrimSpace(tunnel.PeerTransportIP) == "" {
 			continue
+		}
+
+		if !transport.IsLegacySchema(state) && len(tunnel.AllowedIPs) == 0 {
+			return fmt.Errorf("reconcile: tunnel %q has no allowed_ips in v1.6.0 schema state", tunnel.Name)
 		}
 
 		peerPublicKey, err := hex.DecodeString(strings.TrimSpace(tunnel.PeerPublicKey))
@@ -391,7 +412,7 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 			continue
 		}
 
-		if err := c.AddPeer(peerPublicKey, nil, []string{"0.0.0.0/0"}, strings.TrimSpace(tunnel.PeerEndpoint), 25); err != nil {
+		if err := c.AddPeer(peerPublicKey, nil, tunnel.AllowedIPs, strings.TrimSpace(tunnel.PeerEndpoint), tunnel.PersistentKeepalive); err != nil {
 			c.node.logger.Warn().
 				Str("tunnel", tunnel.Name).
 				Err(err).
