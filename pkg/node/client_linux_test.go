@@ -304,7 +304,7 @@ func TestRebuildClientECMP_HealthyVIP(t *testing.T) {
 		makeTestLink("192.168.1.2", balancerIP, true),
 	}
 
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -352,7 +352,7 @@ func TestRebuildClientECMP_HealthyLegacy(t *testing.T) {
 		makeTestLink("192.168.2.2", "", true),
 	}
 
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -387,7 +387,7 @@ func TestRebuildClientECMP_ZeroHealthy_VIP(t *testing.T) {
 		makeTestLink("192.168.1.2", balancerIP, false),
 	}
 
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -418,7 +418,7 @@ func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
 		makeTestLink("192.168.2.2", "", false),
 	}
 
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -443,7 +443,7 @@ func TestRebuildClientECMP_MixedBalancerIP(t *testing.T) {
 		makeTestLink("192.168.1.2", "", true),             // no balancerIP
 	}
 
-	err := runner.rebuildClientECMP()
+	err := runner.rebuildClientECMP("init")
 	if err == nil {
 		t.Fatal("expected error for mixed balancerIP, got nil")
 	}
@@ -478,7 +478,7 @@ func TestRebuildClientECMP_BalancerChange(t *testing.T) {
 		makeTestLink("192.168.1.1", oldBalancerIP, true),
 		makeTestLink("192.168.1.2", oldBalancerIP, true),
 	}
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("first rebuild: %v", err)
 	}
 	if !fw.hasEnableStickyFor(oldCIDR) {
@@ -493,7 +493,7 @@ func TestRebuildClientECMP_BalancerChange(t *testing.T) {
 		makeTestLink("192.168.1.1", newBalancerIP, true),
 		makeTestLink("192.168.1.2", newBalancerIP, true),
 	}
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("second rebuild: %v", err)
 	}
 	if !fw.hasDisableStickyFor(oldCIDR) {
@@ -532,7 +532,7 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 	runner.platformState.byKey = map[string]*transportLink{"aabbccdd": link}
 
 	// Initial state: healthy — should install 0.0.0.0/0.
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("initial rebuild error: %v", err)
 	}
 	if !router.hasSetECMPFor("0.0.0.0/0") {
@@ -544,7 +544,7 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 	link.healthy = false
 	runner.platformState.mu.Unlock()
 
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("onDown rebuild error: %v", err)
 	}
 	if !router.hasRemoveECMPFor("0.0.0.0/0") {
@@ -557,7 +557,7 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 	runner.platformState.mu.Unlock()
 
 	beforeCount := router.setECMPCallCount()
-	if err := runner.rebuildClientECMP(); err != nil {
+	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("onUp rebuild error: %v", err)
 	}
 	if router.setECMPCallCount() <= beforeCount {
@@ -620,5 +620,52 @@ func TestClientIfaceName_DifferentKeysMapToDifferentNames(t *testing.T) {
 			t.Errorf("collision: key %d produced already-seen name %q", i, name)
 		}
 		seen[name] = true
+	}
+}
+
+// =============================================================================
+// Phase 5: partial-mesh boot tolerance + structured logging (T015-T016)
+// =============================================================================
+
+// TestClientRun_PartialMesh verifies that a mesh with one healthy and one
+// unreachable link boots cleanly (FR-7): rebuildClientECMP("init") returns no
+// error and SetECMPRoute is called with exactly 1 nexthop (the healthy link).
+func TestClientRun_PartialMesh(t *testing.T) {
+	t.Parallel()
+
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(nil), router, fw, sysctl)
+
+	// Two links: one healthy with resolved peerTransportIP, one unhealthy.
+	healthyLink := makeTestLink("10.0.0.1", "", true)
+	unhealthyLink := makeTestLink("10.0.0.2", "", false)
+	runner.platformState.links = []*transportLink{healthyLink, unhealthyLink}
+
+	err := runner.rebuildClientECMP("init")
+	if err != nil {
+		t.Fatalf("rebuildClientECMP(\"init\") returned error: %v", err)
+	}
+
+	defaultCIDR := "0.0.0.0/0"
+	if !router.hasSetECMPFor(defaultCIDR) {
+		t.Errorf("expected SetECMPRoute for %s, got calls: %+v", defaultCIDR, router.setECMPCalls)
+	}
+
+	// Verify exactly 1 nexthop (the healthy link only).
+	router.mu.Lock()
+	var nexthopCount int
+	for _, call := range router.setECMPCalls {
+		if call.dest == defaultCIDR {
+			nexthopCount = len(call.nexthops)
+			break
+		}
+	}
+	router.mu.Unlock()
+
+	if nexthopCount != 1 {
+		t.Errorf("expected 1 nexthop (healthy link only), got %d", nexthopCount)
 	}
 }

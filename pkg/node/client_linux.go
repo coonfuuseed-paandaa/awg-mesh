@@ -374,7 +374,7 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 	c.platformState.byKey = nextByKey
 	c.platformState.mu.Unlock()
 
-	if err := c.rebuildClientECMP(); err != nil {
+	if err := c.rebuildClientECMP("balancer_change"); err != nil {
 		c.node.logger.Warn().Err(err).Msg("rebuildClientECMP after peer removal failed")
 	}
 
@@ -441,7 +441,7 @@ func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) err
 		return fmt.Errorf("assign transport IP %s/30 on %s: %w", trimmedLocalIP, updatedLink.iface.Name(), err)
 	}
 
-	if err := c.rebuildClientECMP(); err != nil {
+	if err := c.rebuildClientECMP("balancer_change"); err != nil {
 		return err
 	}
 
@@ -619,7 +619,10 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 // in that case an error is returned and no partial state is installed.
 // Routing mode is determined from ALL links (not just healthy) so that a
 // zero-healthy VIP topology still knows to withdraw balancerIP/32 (not 0.0.0.0/0).
-func (c *ClientRunner) rebuildClientECMP() error {
+//
+// reason is a caller-supplied label (e.g. "init", "onUp", "onDown", "reconcile",
+// "balancer_change") threaded into structured log events for observability (NFR-5).
+func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	c.platformState.mu.Lock()
 	linksSnapshot := append([]*transportLink(nil), c.platformState.links...)
 	c.platformState.mu.Unlock()
@@ -644,6 +647,7 @@ func (c *ClientRunner) rebuildClientECMP() error {
 			c.node.logger.Error().
 				Str("event", "ecmp_mixed_balancer").
 				Int("link_count", len(linksSnapshot)).
+				Str("reason", reason).
 				Msg("links have mixed balancerIP presence — FR-1 invariant violated, aborting ECMP rebuild")
 			return fmt.Errorf("client ECMP: links have mixed balancerIP presence (FR-1 violation)")
 		}
@@ -712,18 +716,23 @@ func (c *ClientRunner) rebuildClientECMP() error {
 		}
 
 		stickyCIDR := primaryCIDR
-		if err := c.applyStickyECMPDiff(stickyCIDR); err != nil {
+		if err := c.applyStickyECMPDiff(stickyCIDR, reason); err != nil {
 			return err
 		}
 		if err := c.sysctlDep().EnableL4Hash(); err != nil {
 			return fmt.Errorf("enable L4 hash: %w", err)
 		}
 
+		nexthopIPs := make([]string, 0, len(nexthops))
+		for _, nh := range nexthops {
+			nexthopIPs = append(nexthopIPs, nh.Via)
+		}
 		c.node.logger.Info().
 			Str("event", "ecmp_install").
 			Str("dest", primaryCIDR).
-			Int("nexthops", len(nexthops)).
+			Str("nexthops", strings.Join(nexthopIPs, ",")).
 			Str("cidr", stickyCIDR).
+			Str("reason", reason).
 			Msg("client ECMP route installed (VIP path)")
 		return nil
 	}
@@ -755,18 +764,23 @@ func (c *ClientRunner) rebuildClientECMP() error {
 	if c.node != nil && c.node.topology != nil && c.node.topology.Overlay.Space != "" {
 		stickyCIDR = c.node.topology.Overlay.Space
 	}
-	if err := c.applyStickyECMPDiff(stickyCIDR); err != nil {
+	if err := c.applyStickyECMPDiff(stickyCIDR, reason); err != nil {
 		return err
 	}
 	if err := c.sysctlDep().EnableL4Hash(); err != nil {
 		return fmt.Errorf("enable L4 hash: %w", err)
 	}
 
+	nexthopIPs := make([]string, 0, len(nexthops))
+	for _, nh := range nexthops {
+		nexthopIPs = append(nexthopIPs, nh.Via)
+	}
 	c.node.logger.Info().
 		Str("event", "ecmp_install").
 		Str("dest", defaultCIDR).
-		Int("nexthops", len(nexthops)).
+		Str("nexthops", strings.Join(nexthopIPs, ",")).
 		Str("cidr", stickyCIDR).
+		Str("reason", reason).
 		Msg("client ECMP route installed (legacy path)")
 	return nil
 }
@@ -776,7 +790,8 @@ func (c *ClientRunner) rebuildClientECMP() error {
 // CIDR and EnableStickyECMP for newCIDR if it is not already active.
 // It updates currentStickyCIDRs to {newCIDR} on success.
 // If fw is nil (nftables unavailable), it is a no-op.
-func (c *ClientRunner) applyStickyECMPDiff(newCIDR string) error {
+// reason is threaded from the rebuildClientECMP caller for structured log events (NFR-5).
+func (c *ClientRunner) applyStickyECMPDiff(newCIDR, reason string) error {
 	fw := c.firewallDep()
 	if fw == nil {
 		return nil
@@ -801,6 +816,11 @@ func (c *ClientRunner) applyStickyECMPDiff(newCIDR string) error {
 		if err := fw.DisableStickyECMP(cidr); err != nil {
 			return fmt.Errorf("disable sticky ECMP for retired CIDR %s: %w", cidr, err)
 		}
+		c.node.logger.Info().
+			Str("event", "sticky_disable").
+			Str("cidr", cidr).
+			Str("reason", reason).
+			Msg("sticky ECMP disabled for retired CIDR")
 	}
 
 	// Enable the new CIDR only if not already active.
@@ -808,6 +828,11 @@ func (c *ClientRunner) applyStickyECMPDiff(newCIDR string) error {
 		if err := fw.EnableStickyECMP(newCIDR); err != nil {
 			return fmt.Errorf("enable sticky ECMP for %s: %w", newCIDR, err)
 		}
+		c.node.logger.Info().
+			Str("event", "sticky_enable").
+			Str("cidr", newCIDR).
+			Str("reason", reason).
+			Msg("sticky ECMP enabled")
 	}
 
 	// Commit new state.
@@ -850,7 +875,7 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 				link.healthy = false
 			}
 			c.platformState.mu.Unlock()
-			if err := c.rebuildClientECMP(); err != nil {
+			if err := c.rebuildClientECMP("onDown"); err != nil {
 				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link down")
 			}
 		},
@@ -861,7 +886,7 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 				link.healthy = true
 			}
 			c.platformState.mu.Unlock()
-			if err := c.rebuildClientECMP(); err != nil {
+			if err := c.rebuildClientECMP("onUp"); err != nil {
 				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link up")
 			}
 		},

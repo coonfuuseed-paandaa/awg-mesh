@@ -65,7 +65,15 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 	}()
 
 	if err := c.reconcileFromTransportState(); err != nil {
-		return fmt.Errorf("reconcile client transport state: %w", err)
+		// Partial-mesh boot tolerance (FR-7): reconcile errors are non-fatal.
+		// Some tunnels may have been set up successfully even if others failed.
+		// Log the error and continue — healthcheck will converge state over time.
+		c.node.logger.Warn().Err(err).Msg("reconcile client transport state failed (non-fatal, partial-mesh boot)")
+	}
+	// Ensure ECMP is built from whatever links reconcile managed to bring up,
+	// even when reconcile returned errors (FR-7 partial-mesh boot).
+	if err := c.rebuildClientECMP("init"); err != nil {
+		c.node.logger.Warn().Err(err).Msg("initial ECMP build failed (non-fatal)")
 	}
 
 	// On restart without topology file, load persisted client state to restore
