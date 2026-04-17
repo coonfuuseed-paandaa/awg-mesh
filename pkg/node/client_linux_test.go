@@ -569,6 +569,65 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 // Phase 4: deterministic client interface naming tests (T012)
 // =============================================================================
 
+// =============================================================================
+// Phase 7: idempotency test (T025 / NFR-4)
+// =============================================================================
+
+// TestRebuildClientECMP_Idempotent verifies that calling rebuildClientECMP twice
+// with identical healthy VIP links produces exactly one EnableStickyECMP call
+// (not two). The currentStickyCIDRs diff logic in applyStickyECMPDiff must skip
+// the second Enable call because the CIDR is already tracked.
+func TestRebuildClientECMP_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "10.0.0.1"
+	primaryCIDR := balancerIP + "/32"
+
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", balancerIP, true),
+		makeTestLink("192.168.1.2", balancerIP, true),
+	}
+
+	// First call — installs routes and sticky rules.
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("first rebuildClientECMP: %v", err)
+	}
+
+	countAfterFirst := fw.enableStickyCallCount()
+	if countAfterFirst != 1 {
+		t.Fatalf("expected 1 EnableStickyECMP call after first rebuild, got %d", countAfterFirst)
+	}
+
+	// Second call — same links, same balancerIP.
+	// EnableStickyECMP must NOT fire again (NFR-4: idempotent).
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("second rebuildClientECMP: %v", err)
+	}
+
+	countAfterSecond := fw.enableStickyCallCount()
+	if countAfterSecond != 1 {
+		t.Errorf("expected EnableStickyECMP called exactly once across 2 rebuilds, got %d (CIDR: %s)", countAfterSecond, primaryCIDR)
+	}
+
+	// DisableStickyECMP must not have been called (no CIDR retired).
+	if fw.hasDisableStickyFor(primaryCIDR) {
+		t.Errorf("unexpected DisableStickyECMP(%s) — no CIDR should be retired on identical rebuild", primaryCIDR)
+	}
+
+	// SetECMPRoute is called on every rebuild (route re-assertion is idempotent at kernel level).
+	if !router.hasSetECMPFor(primaryCIDR) {
+		t.Errorf("expected SetECMPRoute(%s) to be called, got: %+v", primaryCIDR, router.setECMPCalls)
+	}
+}
+
 // TestClientIfaceName_Deterministic verifies same pubkey always produces same name.
 func TestClientIfaceName_Deterministic(t *testing.T) {
 	t.Parallel()

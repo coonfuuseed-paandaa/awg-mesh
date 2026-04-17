@@ -28,7 +28,11 @@ type NodeTransportState struct {
 	Tunnels       []TunnelTransport `yaml:"tunnels"`
 }
 
-// TunnelTransport records transport addressing for one tunnel.
+// TunnelTransport persists per-tunnel transport-layer state on the node side.
+//
+// Schema version 1 (v1.7.0+): adds AllowedIPs and PersistentKeepalive to preserve
+// topology-driven values across restarts. See .agent/specs/client-ecmp/spec.md
+// FR-4, FR-5 for the design rationale.
 type TunnelTransport struct {
 	Name            string `yaml:"name"`
 	OverlayIP       string `yaml:"overlay_ip,omitempty"`
