@@ -101,3 +101,37 @@ func TestClientPrepareImage(t *testing.T) {
 		})
 	}
 }
+
+// TestClientPrepareImageFlagValidation verifies that newClientPrepareCommand
+// rejects an invalid --image value before performing any topology or CA work.
+func TestClientPrepareImageFlagValidation(t *testing.T) {
+	t.Parallel()
+
+	invalidRefs := []string{
+		"img; rm -rf /",
+		"img`touch /pwned`",
+		"img$(id)",
+		"img|sh",
+	}
+
+	for _, ref := range invalidRefs {
+		ref := ref
+		t.Run(ref, func(t *testing.T) {
+			t.Parallel()
+
+			root := NewRootCommand("test")
+			root.SilenceUsage = true
+			root.SilenceErrors = true
+			root.SetArgs([]string{"client", "prepare", "--image", ref, "client-01"})
+
+			err := root.Execute()
+			if err == nil {
+				t.Errorf("client prepare --image %q: expected error for invalid image ref, got nil", ref)
+				return
+			}
+			if !strings.Contains(err.Error(), "invalid --image") {
+				t.Errorf("client prepare --image %q: expected 'invalid --image' in error, got: %v", ref, err)
+			}
+		})
+	}
+}

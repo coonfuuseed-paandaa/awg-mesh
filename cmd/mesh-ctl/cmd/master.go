@@ -40,6 +40,15 @@ func newMasterPrepareCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+
+			// Validate --image early so the user gets a clear error before any
+			// expensive operations (topology load, CA, token generation).
+			if imageFlag != "" {
+				if err := validateImageRef(imageFlag); err != nil {
+					return fmt.Errorf("invalid --image: %w", err)
+				}
+			}
+
 			topo, err := topology.LoadTopology(topologyPath)
 			if err != nil {
 				return fmt.Errorf("load topology %q: %w", topologyPath, err)
