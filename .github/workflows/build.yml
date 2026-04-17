@@ -363,8 +363,11 @@ jobs:
           SOURCE: ${{ inputs.source_sha }}
         run: |
           set -e
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-            echo "::error::retag_version '$VERSION' must match v<major>.<minor>.<patch>[-prerelease]"
+          # SemVer 2.0 pre-release grammar: <ident>(.<ident>)*, where each
+          # ident is [0-9A-Za-z-]+. Accepts e.g. v1.0.0-rc.1, v1.0.0-rc-1,
+          # v1.0.0-alpha-build.2. Rejects v1.0.0-!junk.
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "::error::retag_version '$VERSION' must match v<major>.<minor>.<patch>[-prerelease] (SemVer 2.0)"
             exit 1
           fi
           if [[ ! "$SOURCE" =~ ^[0-9a-f]{40}$ ]]; then
@@ -383,17 +386,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify source_sha exists in repo history
+      - name: Verify source_sha is reachable from main
         env:
           SOURCE: ${{ inputs.source_sha }}
         run: |
           set -e
+          # Existence check — SHA must exist in this repo's object graph
+          # (rules out random SHAs from other repos or fabricated strings).
           if ! git cat-file -e "${SOURCE}^{commit}" 2>/dev/null; then
             echo "::error::source_sha '$SOURCE' is not a commit in this repository"
             exit 1
           fi
+          # Reachability check — SHA must be an ancestor of main
+          # (rules out short-lived feature branches or orphan commits that
+          # exist in the object graph but aren't part of release history).
+          # Only commits merged into main via PR are release-worthy.
+          if ! git merge-base --is-ancestor "$SOURCE" origin/main; then
+            echo "::error::source_sha '$SOURCE' is not an ancestor of origin/main — only merged commits can be retagged"
+            exit 1
+          fi
           COMMIT_INFO=$(git log -1 --format='%H %s' "$SOURCE")
-          echo "source_sha verified as repo commit: $COMMIT_INFO"
+          echo "source_sha verified as main-reachable commit: $COMMIT_INFO"
 
       - name: Setup Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
