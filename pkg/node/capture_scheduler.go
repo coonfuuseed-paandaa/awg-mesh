@@ -2,9 +2,11 @@ package node
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -27,16 +29,31 @@ func newCaptureScheduler(logger zerolog.Logger, captureFn func(string, []string,
 	}
 }
 
+// captureScheduleMinInterval is the floor for both duration and cron-derived
+// intervals. A cron expression like "* * * * *" (every minute) is permitted
+// but "@every 1ns" or a sub-minute Duration is not.
+const captureScheduleMinInterval = time.Minute
+
+// cronParser recognises the standard 5-field cron form ("0 3 * * *") as well
+// as robfig/cron's "@every <duration>" and "@hourly/@daily/..." descriptors.
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
 // SetSchedule configures and starts (or restarts) the capture ticker.
-// schedule is parsed as a Go duration (e.g. "24h", "6h", "30m").
+// schedule accepts either a Go duration ("24h", "6h", "30m") or a standard
+// 5-field cron expression ("0 3 * * *"). The example topology and README both
+// document the cron form, so we accept both to match docs and stay
+// backwards-compatible with any operator pinned on Duration strings.
+//
 // All parameters come from the gRPC request — nothing is hardcoded.
 func (cs *captureScheduler) SetSchedule(domains []string, countPerDomain int, schedule string, retentionDays int) error {
-	interval, err := time.ParseDuration(schedule)
+	schedule = strings.TrimSpace(schedule)
+	if schedule == "" {
+		return fmt.Errorf("capture schedule is empty")
+	}
+
+	ticker, scheduleKind, err := buildCaptureTicker(schedule)
 	if err != nil {
 		return err
-	}
-	if interval < time.Minute {
-		return fmt.Errorf("capture schedule interval must be at least 1 minute, got %v", interval)
 	}
 	if len(domains) > 100 {
 		return fmt.Errorf("capture domain count must be at most 100, got %d", len(domains))
@@ -63,15 +80,89 @@ func (cs *captureScheduler) SetSchedule(domains []string, countPerDomain int, sc
 	doneCh := cs.doneCh
 
 	cs.logger.Info().
-		Str("interval", interval.String()).
+		Str("schedule", schedule).
+		Str("schedule_kind", scheduleKind).
 		Int("domains", len(domains)).
 		Int("count_per_domain", countPerDomain).
 		Int("retention_days", retentionDays).
 		Msg("capture schedule started")
 
-	go cs.run(stopCh, doneCh, interval, domains, countPerDomain)
+	go cs.run(stopCh, doneCh, ticker, domains, countPerDomain)
 
 	return nil
+}
+
+// captureTicker abstracts over time.Ticker (for Duration schedules) and a
+// cron-driven delayed channel (for cron schedules) so run() does not care
+// which style the operator chose.
+type captureTicker interface {
+	// next returns a channel that fires once at the next scheduled tick.
+	// Callers must call next() again after each tick to arm the next one.
+	next() <-chan time.Time
+	stop()
+}
+
+type durationTicker struct {
+	t *time.Ticker
+}
+
+func (d *durationTicker) next() <-chan time.Time { return d.t.C }
+func (d *durationTicker) stop()                  { d.t.Stop() }
+
+type cronTicker struct {
+	schedule cron.Schedule
+	timer    *time.Timer
+}
+
+func (c *cronTicker) next() <-chan time.Time {
+	now := time.Now()
+	next := c.schedule.Next(now)
+	if c.timer == nil {
+		c.timer = time.NewTimer(next.Sub(now))
+	} else {
+		if !c.timer.Stop() {
+			select {
+			case <-c.timer.C:
+			default:
+			}
+		}
+		c.timer.Reset(next.Sub(now))
+	}
+	return c.timer.C
+}
+
+func (c *cronTicker) stop() {
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+}
+
+// buildCaptureTicker picks the right ticker implementation for the schedule
+// string and enforces the 1-minute floor regardless of syntax.
+func buildCaptureTicker(schedule string) (captureTicker, string, error) {
+	if interval, err := time.ParseDuration(schedule); err == nil {
+		if interval < captureScheduleMinInterval {
+			return nil, "", fmt.Errorf("capture schedule interval must be at least %v, got %v", captureScheduleMinInterval, interval)
+		}
+		return &durationTicker{t: time.NewTicker(interval)}, "duration", nil
+	}
+
+	sched, err := cronParser.Parse(schedule)
+	if err != nil {
+		return nil, "", fmt.Errorf("capture schedule %q is neither a Go duration nor a cron expression: %w", schedule, err)
+	}
+
+	// Reject cron expressions that would fire more than once per minute
+	// (e.g. "* * * * *" is the tightest legal value and fires every 60s,
+	// but some parser flags allow seconds; guard against future changes).
+	now := time.Now()
+	first := sched.Next(now)
+	second := sched.Next(first)
+	if second.Sub(first) < captureScheduleMinInterval {
+		return nil, "", fmt.Errorf("capture schedule %q fires faster than %v between ticks", schedule, captureScheduleMinInterval)
+	}
+
+	return &cronTicker{schedule: sched}, "cron", nil
 }
 
 // StopSchedule stops the running capture schedule and blocks until the
@@ -92,16 +183,15 @@ func (cs *captureScheduler) StopSchedule() {
 	}
 }
 
-func (cs *captureScheduler) run(stopCh <-chan struct{}, doneCh chan<- struct{}, interval time.Duration, domains []string, countPerDomain int) {
+func (cs *captureScheduler) run(stopCh <-chan struct{}, doneCh chan<- struct{}, ticker captureTicker, domains []string, countPerDomain int) {
 	defer close(doneCh)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	defer ticker.stop()
 
 	for {
 		select {
 		case <-stopCh:
 			return
-		case <-ticker.C:
+		case <-ticker.next():
 			if cs.captureFunc == nil {
 				cs.logger.Warn().Msg("scheduled capture skipped: no capture function")
 				continue
