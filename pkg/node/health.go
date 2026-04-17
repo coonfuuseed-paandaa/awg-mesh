@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -63,8 +64,9 @@ type HealthChecker struct {
 	demuxMu sync.Mutex
 	// readerDone is closed by demuxLoop when it exits.
 	readerDone chan struct{}
-	// started protects against double Start/Close.
+	// startOnce and closeOnce protect against concurrent Start/Close calls.
 	startOnce sync.Once
+	closeOnce sync.Once
 	started   bool
 }
 
@@ -105,23 +107,26 @@ func (h *HealthChecker) Start() error {
 }
 
 // Close closes the shared ICMP socket and waits for the demux goroutine to exit.
-// Safe to call multiple times; subsequent calls after the first return nil.
+// Safe to call multiple times and concurrently; only the first call performs work.
 func (h *HealthChecker) Close() error {
 	if !h.started {
 		return nil
 	}
-	if h.socket == nil {
-		return nil
-	}
-	// Closing the socket causes demuxLoop's ReadFrom to return an error, which
-	// drives the goroutine to exit and close readerDone.
-	err := h.socket.Close()
-	<-h.readerDone
-	// Prevent double-close by clearing the reference after the goroutine exits.
-	h.socket = nil
-	h.started = false
-	if err != nil {
-		return fmt.Errorf("icmp close: %w", err)
+	var closeErr error
+	h.closeOnce.Do(func() {
+		if h.socket == nil {
+			return
+		}
+		// Closing the socket causes demuxLoop's ReadFrom to return an error, which
+		// drives the goroutine to exit and close readerDone.
+		closeErr = h.socket.Close()
+		<-h.readerDone
+		// Prevent any subsequent PingICMP from dereferencing a closed socket.
+		h.socket = nil
+		h.started = false
+	})
+	if closeErr != nil {
+		return fmt.Errorf("icmp close: %w", closeErr)
 	}
 	return nil
 }
@@ -346,8 +351,13 @@ func purgeStaleFailures(targets []HealthTarget, failures map[string]int) {
 // Returns (false, nil) for unreachable hosts or timeouts, and (false, err) for
 // structural failures (invalid IP, socket write failure).
 //
-// Start() must be called before PingICMP.
+// Start() must be called before PingICMP. Calling PingICMP after Close() returns
+// (false, error) immediately rather than panicking on the nil socket.
 func (h *HealthChecker) PingICMP(ctx context.Context, ip string, timeout time.Duration) (bool, error) {
+	if h.socket == nil {
+		return false, fmt.Errorf("PingICMP called on stopped HealthChecker")
+	}
+
 	parsedIP := net.ParseIP(ip)
 	if parsedIP == nil {
 		return false, fmt.Errorf("invalid IP address: %s", ip)
@@ -415,17 +425,14 @@ func (h *HealthChecker) PingICMP(ctx context.Context, ip string, timeout time.Du
 // It is safe for concurrent use across multiple HealthChecker instances.
 // Process-wide (rather than per-checker) ensures uniqueness even if multiple
 // checkers share the same ICMP id (os.Getpid() & 0xffff).
+// Uses atomic.AddUint32 to avoid mutex contention on the ICMP hot path.
 var seqCounter = &icmpSeqCounter{}
 
 type icmpSeqCounter struct {
-	mu  sync.Mutex
-	val int
+	val uint32
 }
 
 func (c *icmpSeqCounter) next() uint16 {
-	c.mu.Lock()
-	c.val++
-	seq := uint16(c.val & 0xffff) //nolint:gosec // intentional wrap-around for ICMP seq field
-	c.mu.Unlock()
-	return seq
+	v := atomic.AddUint32(&c.val, 1)
+	return uint16(v & 0xffff) //nolint:gosec // intentional wrap-around for ICMP seq field
 }
