@@ -2,7 +2,7 @@ services:
   awg-mesh-node:
     image: {{.Image}}
     network_mode: host
-    restart: always
+    restart: unless-stopped
     cap_add:
       - NET_ADMIN
       - NET_RAW

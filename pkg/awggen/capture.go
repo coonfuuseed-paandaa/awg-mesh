@@ -206,6 +206,10 @@ func dialCaptureTargets(domains []string, timeout time.Duration) {
 func dialAndPrimeTLSSessions(domain string, timeout time.Duration) {
 	serverAddr := net.JoinHostPort(domain, "443")
 	dialer := &net.Dialer{Timeout: timeout}
+	// MinVersion is documentation — with InsecureSkipVerify=true the server
+	// certificate is never validated and the cipher/version selection is
+	// purely the server's decision. The field is kept as a guard against a
+	// future patch that drops InsecureSkipVerify without re-thinking security.
 	tlsCfg := &tls.Config{
 		ServerName:         domain,
 		InsecureSkipVerify: true, //nolint:gosec // we only want the ClientHello emitted on the wire

@@ -152,9 +152,10 @@ func buildCaptureTicker(schedule string) (captureTicker, string, error) {
 		return nil, "", fmt.Errorf("capture schedule %q is neither a Go duration nor a cron expression: %w", schedule, err)
 	}
 
-	// Reject cron expressions that would fire more than once per minute
-	// (e.g. "* * * * *" is the tightest legal value and fires every 60s,
-	// but some parser flags allow seconds; guard against future changes).
+	// Reject cron expressions whose inter-tick interval is strictly less
+	// than one minute. "* * * * *" (every minute) fires exactly 60s apart
+	// and is accepted; sub-minute descriptors like "@every 30s" (if ever
+	// enabled by a future parser flag) would be rejected here.
 	now := time.Now()
 	first := sched.Next(now)
 	second := sched.Next(first)
