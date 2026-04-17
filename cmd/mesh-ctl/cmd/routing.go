@@ -94,6 +94,9 @@ func generateLinux(client topology.ClientNode, gateway string) error {
 	sb.WriteString("set -euo pipefail\n\n")
 
 	for _, policy := range client.RoutingPolicies {
+		if err := topology.ValidateDSCP(policy.DSCP); err != nil {
+			return fmt.Errorf("client %q policy %q: %w", client.Name, policy.Name, err)
+		}
 		tableID := 100 + policy.DSCP
 		fmt.Fprintf(&sb, "# Policy: %s (DSCP %d)\n", policy.Name, policy.DSCP)
 		fmt.Fprintf(&sb, "iptables -t mangle -A PREROUTING -m connmark --mark %d -j DSCP --set-dscp %d\n", policy.DSCP, policy.DSCP)

@@ -79,8 +79,8 @@ func GenerateRoutingRSC(client topology.ClientNode, gateway string) (string, err
 
 	rules := make([]MangleRule, 0, len(client.RoutingPolicies))
 	for _, policy := range client.RoutingPolicies {
-		if policy.DSCP < 1 || policy.DSCP > 63 {
-			return "", fmt.Errorf("routing policy %q: DSCP value %d out of range (1-63)", policy.Name, policy.DSCP)
+		if err := topology.ValidateDSCP(policy.DSCP); err != nil {
+			return "", fmt.Errorf("routing policy %q: %w", policy.Name, err)
 		}
 		rules = append(rules, MangleRule{
 			Name:           policy.Name,

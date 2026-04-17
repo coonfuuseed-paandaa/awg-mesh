@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -114,6 +115,93 @@ func containsValidationError(errors []ValidationError, fieldPart, messagePart, s
 		}
 	}
 	return false
+}
+
+func TestValidateDSCP(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		dscp    int
+		wantErr bool
+	}{
+		{dscp: -1, wantErr: true},
+		{dscp: 0, wantErr: true},
+		{dscp: 1, wantErr: false},
+		{dscp: 32, wantErr: false},
+		{dscp: 63, wantErr: false},
+		{dscp: 64, wantErr: true},
+		{dscp: 100, wantErr: true},
+		{dscp: 153, wantErr: true},
+		{dscp: 200, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			err := ValidateDSCP(tt.dscp)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateDSCP(%d): expected error, got nil", tt.dscp)
+				}
+				if !errors.Is(err, ErrInvalidDSCP) {
+					t.Fatalf("ValidateDSCP(%d): error not sentinel-matchable via ErrInvalidDSCP: %v", tt.dscp, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("ValidateDSCP(%d): expected nil, got %v", tt.dscp, err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateTopologyDSCPRange(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		dscp    int
+		wantErr bool
+	}{
+		{dscp: -1, wantErr: true},
+		{dscp: 0, wantErr: true},
+		{dscp: 1, wantErr: false},
+		{dscp: 32, wantErr: false},
+		{dscp: 63, wantErr: false},
+		{dscp: 64, wantErr: true},
+		{dscp: 100, wantErr: true},
+		{dscp: 153, wantErr: true},
+		{dscp: 200, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+
+			top := validTopologyForValidation()
+			top.Clients[0].RoutingPolicies = []RoutingPolicy{
+				{Name: "test-policy", DSCP: tt.dscp, Targets: []string{"endpoint-a"}},
+			}
+
+			errs := ValidateTopology(top)
+
+			hasError := false
+			for _, e := range errs {
+				if strings.Contains(e.Field, "dscp") || strings.Contains(e.Message, "dscp") {
+					hasError = true
+					break
+				}
+			}
+
+			if tt.wantErr && !hasError {
+				t.Fatalf("ValidateTopology with dscp=%d: expected DSCP error, got %#v", tt.dscp, errs)
+			}
+			if !tt.wantErr && hasError {
+				t.Fatalf("ValidateTopology with dscp=%d: expected no DSCP error, got %#v", tt.dscp, errs)
+			}
+		})
+	}
 }
 
 func validTopologyForValidation() *Topology {
