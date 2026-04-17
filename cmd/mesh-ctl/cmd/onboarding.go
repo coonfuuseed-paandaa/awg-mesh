@@ -139,6 +139,35 @@ func nodeDir(configDir, name string) string {
 	return filepath.Join(configDir, "nodes", name)
 }
 
+// resolveMasterAddresses maps master names to "host:listen_port" strings so a
+// client can dial each master on the port actually configured in topology —
+// anti-DPI deployments commonly run masters on 443/udp, not the default 51820,
+// and the old hard-coded port emitted a compose that dialled the wrong port.
+// A missing master is a hard error: silently dropping it would produce a
+// client that connects to the wrong subset of the mesh with no diagnostic.
+func resolveMasterAddresses(topo *topology.Topology, masterNames []string) ([]string, error) {
+	if topo == nil {
+		return nil, fmt.Errorf("topology is required")
+	}
+	addrs := make([]string, 0, len(masterNames))
+	for _, masterName := range masterNames {
+		m := topo.FindMaster(masterName)
+		if m == nil {
+			return nil, fmt.Errorf("master %q not found in topology", masterName)
+		}
+		host := strings.TrimSpace(m.Host)
+		if host == "" {
+			return nil, fmt.Errorf("master %q has empty host", masterName)
+		}
+		port := m.ListenPort
+		if port <= 0 || port > 65535 {
+			return nil, fmt.Errorf("master %q has invalid listen_port %d", masterName, port)
+		}
+		addrs = append(addrs, fmt.Sprintf("%s:%d", host, port))
+	}
+	return addrs, nil
+}
+
 // printNextSteps writes a precise, actionable deploy sequence to stdout.
 // The compose file already carries MESH_TOKEN_HASH, so the operator never has
 // to ship the token file by hand — the binary bootstraps it on first boot.

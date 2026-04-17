@@ -40,6 +40,12 @@ const rotateScriptTemplate = `# awg-mesh AWG parameter rotation script
 `
 
 // DeployScript holds data for generating a full RouterOS .rsc deployment script.
+//
+// TokenHash is the bcrypt hash of the bearer token — never the plaintext. The
+// node binary bootstraps /config/mesh.token from this value on first boot
+// (see cmd/awg-mesh-node/main.go:bootstrapTokenHash), matching the
+// docker-compose path. Masters must be "host:port" strings so the client
+// can dial each master on its actual listen_port.
 type DeployScript struct {
 	ContainerName string
 	Image         string
@@ -50,7 +56,7 @@ type DeployScript struct {
 	ListenPort    int
 	Masters       []string
 	AWGConfig     string
-	Token         string
+	TokenHash     string
 }
 
 // GenerateDeployRSC generates a full .rsc script importable via /import.
@@ -163,8 +169,8 @@ func validateDeployScript(ds DeployScript) error {
 	if strings.TrimSpace(ds.VethGateway) == "" {
 		return fmt.Errorf("veth gateway is required")
 	}
-	if strings.TrimSpace(ds.Token) == "" {
-		return fmt.Errorf("token is required")
+	if strings.TrimSpace(ds.TokenHash) == "" {
+		return fmt.Errorf("token hash is required")
 	}
 	if strings.TrimSpace(ds.OverlayIP) == "" {
 		return fmt.Errorf("overlay IP is required")
@@ -202,12 +208,21 @@ func validateDeployScript(ds DeployScript) error {
 
 func buildDeployEnvVars(ds DeployScript) map[string]string {
 	envVars := map[string]string{
-		"MESH_TOKEN":      strings.TrimSpace(ds.Token),
+		"MESH_TOKEN_HASH": strings.TrimSpace(ds.TokenHash),
 		"MESH_MODE":       "client",
+		"MESH_NAME":       strings.TrimSpace(ds.ContainerName),
 		"MESH_OVERLAY_IP": strings.TrimSpace(ds.OverlayIP),
+		// Entries are "host:port"; clients dial each master on its actual
+		// listen_port rather than assuming 51820. See onboarding.go:
+		// resolveMasterAddresses for the builder.
 		"MESH_MASTERS":    strings.Join(ds.Masters, ","),
+		"MESH_CONFIG_DIR": "/config",
 	}
 
+	// Clients do not listen for incoming AWG traffic — they dial masters —
+	// so MESH_LISTEN_PORT on a client is ignored by the binary. It's still
+	// emitted if explicitly requested, to keep existing operator tooling
+	// happy, but no longer set by the default deploy path.
 	if ds.ListenPort > 0 {
 		envVars["MESH_LISTEN_PORT"] = fmt.Sprintf("%d", ds.ListenPort)
 	}
