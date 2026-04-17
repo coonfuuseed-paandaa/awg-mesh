@@ -105,6 +105,17 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 					Err(err).
 					Msg("reconcile peer failed")
 			} else {
+				if err := e.ConfigureTransport(
+					hex.EncodeToString(peerBytes),
+					tt.TransportIP,
+					tt.PeerTransportIP,
+					tt.AllowedIPs,
+				); err != nil {
+					e.node.logger.Warn().
+						Err(err).
+						Str("tunnel", tt.Name).
+						Msg("reconcile: configure transport failed")
+				}
 				reconciled++
 			}
 		}

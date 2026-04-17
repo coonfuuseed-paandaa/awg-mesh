@@ -16,6 +16,11 @@ import (
 
 const endpointInterfaceName = "wg0"
 
+var endpointAddInterfaceAddress = addInterfaceAddress
+var endpointRouteReplaceLink = func(dest *net.IPNet, dev string) error {
+	return routing.NewNetlinkRouter().RouteReplaceLink(dest, dev)
+}
+
 type endpointPlatformState struct {
 	iface *wg.Interface
 }
@@ -80,7 +85,7 @@ func (e *EndpointRunner) createInterface() error {
 
 // ConfigureTransport assigns the local transport IP to wg0 after a peer is added.
 // Each master peer gets its own /30 subnet; the endpoint's IP is added to wg0.
-func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) error {
+func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error {
 	if e == nil || e.node == nil {
 		return fmt.Errorf("endpoint runner node is required")
 	}
@@ -90,32 +95,31 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) e
 		return fmt.Errorf("local transport IP %q is invalid", localIP)
 	}
 
-	if err := addInterfaceAddress(endpointInterfaceName, trimmedLocalIP); err != nil {
+	if err := endpointAddInterfaceAddress(endpointInterfaceName, trimmedLocalIP); err != nil {
 		e.node.logger.Warn().Err(err).
 			Str("local_ip", trimmedLocalIP).
 			Msg("transport IP may already be assigned")
 	}
 
-	// Add overlay routes through this master — endpoint needs to route
-	// client traffic back through the master's WG tunnel.
-	trimmedPeerIP := strings.TrimSpace(peerIP)
-	if trimmedPeerIP != "" && e.node.topology != nil {
-		router := routing.NewNetlinkRouter()
-		for _, nr := range e.node.topology.Overlay.Ranges {
-			if nr.CIDR == "" {
-				continue
-			}
-			_, cidrNet, parseErr := net.ParseCIDR(nr.CIDR)
-			if parseErr != nil {
-				continue
-			}
-			// Skip the endpoint's own range (already reachable locally).
-			if cidrNet.Contains(net.ParseIP(e.node.config.OverlayIP)) {
-				continue
-			}
-			if err := router.RouteReplace(cidrNet, net.ParseIP(trimmedPeerIP), endpointInterfaceName); err != nil {
-				e.node.logger.Debug().Err(err).Str("cidr", nr.CIDR).Msg("overlay route may already exist")
-			}
+	overlayIP := parseOverlayIP(e.node.config.OverlayIP)
+	for _, allowedCIDR := range allowedIPs {
+		trimmedCIDR := strings.TrimSpace(allowedCIDR)
+		if trimmedCIDR == "" {
+			continue
+		}
+
+		_, cidrNet, parseErr := net.ParseCIDR(trimmedCIDR)
+		if parseErr != nil {
+			e.node.logger.Warn().Err(parseErr).Str("cidr", trimmedCIDR).Msg("skip invalid allowed_ip route")
+			continue
+		}
+
+		if shouldSkipEndpointLinkRoute(cidrNet, overlayIP) {
+			continue
+		}
+
+		if err := endpointRouteReplaceLink(cidrNet, endpointInterfaceName); err != nil {
+			e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Msg("failed to install overlay route")
 		}
 	}
 
@@ -126,6 +130,38 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) e
 		Msg("endpoint transport configured")
 
 	return nil
+}
+
+func parseOverlayIP(overlayIP string) net.IP {
+	trimmed := strings.TrimSpace(overlayIP)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.Contains(trimmed, "/") {
+		ip, _, err := net.ParseCIDR(trimmed)
+		if err != nil {
+			return nil
+		}
+		return ip
+	}
+	return net.ParseIP(trimmed)
+}
+
+func shouldSkipEndpointLinkRoute(cidrNet *net.IPNet, overlayIP net.IP) bool {
+	if cidrNet == nil {
+		return true
+	}
+
+	ones, bits := cidrNet.Mask.Size()
+	if bits > 0 && ones >= 30 {
+		return true
+	}
+
+	if overlayIP == nil {
+		return false
+	}
+
+	return ones == 32 && cidrNet.IP.Equal(overlayIP)
 }
 
 func (e *EndpointRunner) closeInterface() error {
