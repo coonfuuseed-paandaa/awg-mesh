@@ -16,7 +16,11 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          # Uses the `toolchain` directive in go.mod so vuln-patched Go ships
+          # with the code. Bump go.mod (not this file) when the stdlib needs
+          # to move.
+          go-version-file: go.mod
+          check-latest: true
 
       - name: Install libpcap
         run: sudo apt-get update && sudo apt-get install -y libpcap-dev
@@ -36,7 +40,11 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          # Uses the `toolchain` directive in go.mod so vuln-patched Go ships
+          # with the code. Bump go.mod (not this file) when the stdlib needs
+          # to move.
+          go-version-file: go.mod
+          check-latest: true
 
       - name: Install libpcap
         run: sudo apt-get update && sudo apt-get install -y libpcap-dev
@@ -85,7 +93,11 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          # Uses the `toolchain` directive in go.mod so vuln-patched Go ships
+          # with the code. Bump go.mod (not this file) when the stdlib needs
+          # to move.
+          go-version-file: go.mod
+          check-latest: true
 
       - name: Install libpcap
         run: sudo apt-get update && sudo apt-get install -y libpcap-dev

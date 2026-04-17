@@ -2,6 +2,8 @@ module github.com/coonfuuseed-paandaa/awg-mesh
 
 go 1.25.0
 
+toolchain go1.25.9
+
 require (
 	github.com/amnezia-vpn/amneziawg-go v1.0.4
 	github.com/cilium/ebpf v0.21.0
