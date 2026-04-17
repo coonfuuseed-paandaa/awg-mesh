@@ -59,7 +59,7 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 
 func (c *ClientRunner) startHealthCheck(_ context.Context) {}
 
-func (c *ClientRunner) rebuildClientECMP() error { return nil }
+func (c *ClientRunner) rebuildClientECMP(_ string) error { return nil }
 
 func (c *ClientRunner) setupDSCPRouting() error { return nil }
 
