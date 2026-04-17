@@ -114,23 +114,46 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [build]
+    # Multi-arch images: MikroTik (arm64), Raspberry Pi (arm/v7), servers (amd64)
+    # all pull from the same manifest list. Without this the client image is
+    # unusable on non-amd64 hardware — see field report bug 13.
     strategy:
       matrix:
         include:
           - image: node
             dockerfile: deploy/Dockerfile.node
-            cgo: "1"
-            tags: ""
+            platforms: linux/amd64,linux/arm64,linux/arm/v7
           - image: client
             dockerfile: deploy/Dockerfile.client
-            cgo: "0"
-            tags: "nocapture"
+            platforms: linux/amd64,linux/arm64,linux/arm/v7
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Build Docker Image
-        run: docker build -f ${{ matrix.dockerfile }} --build-arg VERSION=${{ github.sha }} -t awg-mesh-${{ matrix.image }}:ci .
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build amd64-only first so the smoke test has a local image to exercise.
+      # --load can only import a single platform; the multi-arch push below
+      # reuses the buildx cache, so the total added cost is small.
+      - name: Build amd64 image for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: awg-mesh-${{ matrix.image }}:ci
+          build-args: |
+            VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
       - name: Smoke Test (node only)
         if: matrix.image == 'node'
@@ -153,31 +176,66 @@ jobs:
           grep -q "gRPC server listening" /tmp/smoke-client.log || (echo "::error::Client smoke test failed — no gRPC server" && exit 1)
           echo "Client smoke test passed"
 
-      - name: Push to GHCR
+      - name: Login to GHCR
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker tag awg-mesh-${{ matrix.image }}:ci ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:latest
-          docker tag awg-mesh-${{ matrix.image }}:ci ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:${{ github.sha }}
-          docker push ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:latest
-          docker push ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:${{ github.sha }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push awg-mesh alias (node only)
+      - name: Login to Docker Hub
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push (multi-arch)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: true
+          tags: |
+            ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:latest
+            ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}:${{ github.sha }}
+          build-args: |
+            VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+      # Historical alias: some operators hard-coded ghcr.io/.../awg-mesh (no
+      # -node suffix) before the multi-image split. Keep it working.
+      - name: Build and Push awg-mesh alias (node only)
         if: matrix.image == 'node' && github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          docker tag awg-mesh-node:ci ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
-          docker tag awg-mesh-node:ci ghcr.io/coonfuuseed-paandaa/awg-mesh:${{ github.sha }}
-          docker push ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
-          docker push ghcr.io/coonfuuseed-paandaa/awg-mesh:${{ github.sha }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: true
+          tags: |
+            ghcr.io/coonfuuseed-paandaa/awg-mesh:latest
+            ghcr.io/coonfuuseed-paandaa/awg-mesh:${{ github.sha }}
+          build-args: |
+            VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
-      - name: Push to Docker Hub
+      # Verify published manifest lists advertise the arm64 and arm/v7
+      # platforms. Catches future regressions where a config change silently
+      # falls back to amd64-only.
+      - name: Verify multi-arch manifest
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
-          docker tag awg-mesh-${{ matrix.image }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}:latest
-          docker tag awg-mesh-${{ matrix.image }}:ci ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}:${{ github.sha }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}:latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}:${{ github.sha }}
-    permissions:
-      contents: read
-      packages: write
+          set -e
+          MANIFEST=$(docker buildx imagetools inspect ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:${{ github.sha }})
+          echo "$MANIFEST"
+          echo "$MANIFEST" | grep -q "linux/amd64"  || (echo "::error::manifest missing linux/amd64"  && exit 1)
+          echo "$MANIFEST" | grep -q "linux/arm64"  || (echo "::error::manifest missing linux/arm64"  && exit 1)
+          echo "$MANIFEST" | grep -q "linux/arm/v7" || (echo "::error::manifest missing linux/arm/v7" && exit 1)
