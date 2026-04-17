@@ -32,6 +32,7 @@ func newEndpointCommand() *cobra.Command {
 
 func newEndpointPrepareCommand() *cobra.Command {
 	var useTraefik bool
+	var showToken bool
 
 	cmd := &cobra.Command{
 		Use:   "prepare [name]",
@@ -105,12 +106,14 @@ func newEndpointPrepareCommand() *cobra.Command {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
 
-			printNextSteps("endpoint", name, token, outputPath, useTraefik)
+			tokenPath := filepath.Join(nd, "token")
+			printNextSteps("endpoint", name, token, tokenPath, outputPath, useTraefik, showToken)
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&useTraefik, "traefik", false, "Generate Traefik-compatible compose with labels (no host networking)")
+	cmd.Flags().BoolVar(&showToken, "show-token", false, "print raw token to stdout (default: save to disk only)")
 	return cmd
 }
 
