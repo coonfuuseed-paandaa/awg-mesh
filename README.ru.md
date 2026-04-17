@@ -67,6 +67,25 @@ graph TB
 
 ## Что нового
 
+### v1.7.0
+
+- **Унификация клиентского ECMP** — единый путь `rebuildClientECMP`: health-фильтрация, CONNMARK-sticky sessions и L4 multipath hash применяются одинаково и к VIP-, и к legacy-топологиям. Двух разных семантик больше нет.
+- **Детерминированные имена клиентских интерфейсов** — `wg-c<4-hex>` из SHA-256 публичного ключа пира. Стабильны между перезапусками; старые `wg-cN` чистятся при reconcile. Мониторинг, ищущий имена интерфейсов по маске, нужно обновить.
+- **Транспортное состояние со схемой** — `transport.yml` теперь хранит `schema_version: 1` и per-tunnel `allowed_ips` + `persistent_keepalive`. Файлы до v1.6.0 автоматически мигрируют при первом запуске (один WARN-лог); миграция durable. Закрывает баг с хардкодом `0.0.0.0/0` в reconcile.
+- **Sticky ECMP по CIDR** — `EnableStickyECMP` теперь ставит правила с матчем `ip daddr <cidr>`; `DisableStickyECMP` реально удаляет их (раньше был no-op). Смена `balancer_ip` на ходу оставляет чистое conntrack-состояние.
+- **Толерантность к частичной сети при старте** — ошибки reconcile больше не фатальные; клиент запускается с тем, что подняло healthcheck, и сходится по мере восстановления.
+- **Структурные логи ECMP** — каждое событие `ecmp_install` / `ecmp_withdraw` / `sticky_enable` / `sticky_disable` несёт `reason` (`init` / `onUp` / `onDown` / `reconcile` / `balancer_change` / `no_healthy_links`).
+- **Docker-compose фикстура** — в `tests/client_ecmp/` лежит 4-сервисный воспроизводимый стенд и `verify.sh` для ручной регрессии US1 (failover) и US2 (stickiness).
+
+### v1.6.0
+
+- **12-factor bootstrap через env vars** — бинарник узла читает `MESH_MODE`, `MESH_NAME`, `MESH_OVERLAY_IP`, `MESH_LISTEN_PORT`, `MESH_CONFIG_DIR`, `MESH_TOPOLOGY`, `MESH_LOG_LEVEL`, `MESH_METRICS_ADDR` как fallback для любого CLI-флага. Флаги по-прежнему побеждают при явном указании.
+- **Bootstrap токена на первом старте** — `MESH_TOKEN_HASH` (bcrypt) записывается в `/config/mesh.token` при первом запуске; на последующих игнорируется. Оператору больше не нужно доставлять файл токена вручную.
+- **Многоплатформенные Docker-образы** — `linux/amd64`, `linux/386`, `linux/arm64`, `linux/arm/v7`, `linux/arm/v6`. Покрывает Intel/AMD-серверы, 32-битный x86, Raspberry Pi 3/4/5 (arm64), Pi 2/3 (arm/v7), Pi Zero/1 (arm/v6) и MikroTik hAP ax.
+- **Контрактные тесты шаблонов** фиксируют инварианты деплоя (нет sysctls в host-network, смонтирован `/dev/net/tun`, `MESH_TOKEN_HASH` встроен, `MESH_NAME` присутствует, `/config` том).
+- **13 деплойных багов из production field report** — sysctls на host-network, отсутствие TUN-устройства, экранирование `$` в bcrypt при docker-compose-интерполяции, неправильный layout тома, недостающие env vars, TLS capture primer, RouterOS 7.21+ синтаксис `list=`, несовпадение портов в `MESH_MASTERS host:port` и другие.
+- **CI: govulncheck + привилегированные routing-тесты + верификация multi-arch manifest.**
+
 ### v1.5.0
 
 - **Персистентность состояния клиента** — DSCP-маршрутизация и DNS-конфигурация сохраняются при перезапуске без topology-файла. После первого `mesh-ctl client init` политики маршрутизации и конфиг DNS записываются в `/config/client-state.yml` и автоматически восстанавливаются при старте контейнера.
@@ -283,7 +302,7 @@ add name=mesh.zone type=FWD forward-to=192.168.254.4
 
 ```bash
 # 1. Установите mesh-ctl на своей машине администратора
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Создайте файл топологии (все поля описаны в разделе Конфигурация)
@@ -327,7 +346,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Установка mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
 ```
 
 Бинарник окажется в `$(go env GOPATH)/bin`. Убедитесь, что эта директория есть в `PATH`:
@@ -371,7 +390,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Обновление mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.5.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
 ```
 
 Директория состояния `~/.mesh-ctl/` (CA, токены, ключи, транспортные выделения) не затрагивается.
@@ -413,7 +432,7 @@ ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest
 ```
 
 - Размер: ~42 МБ (базовый образ Alpine)
-- Архитектуры: `linux/amd64`, `linux/arm64`
+- Архитектуры (multi-arch manifest с v1.6.0): `linux/amd64`, `linux/386`, `linux/arm64`, `linux/arm/v7`, `linux/arm/v6` — покрывает x86_64-серверы, 32-битный x86, Raspberry Pi 3/4/5 (arm64), Pi 2/3 (arm/v7), Pi Zero/1 (arm/v6) и MikroTik hAP ax
 - Никаких внешних runtime-зависимостей
 
 ### Монтирование тома
@@ -671,7 +690,32 @@ transport:
   prefix_length: 30         # /30 = 4 IP на туннель (2 используемых: сторона master + сторона endpoint)
 ```
 
-Транспортные выделения хранятся в `~/.mesh-ctl/transport.yml` и видны через `mesh-ctl config show`.
+Транспортные выделения хранятся в `~/.mesh-ctl/transport.yml` (админская сторона) и зеркалируются в `/config/transport.yml` на каждом узле. Пример состояния узла (схема v1.7.0+):
+
+```yaml
+# /config/transport.yml на клиенте
+schema_version: 1         # v1.7.0+. Отсутствие → state до v1.6.0; автоматически мигрирует на первом старте (один WARN)
+overlay_ip: 172.20.70.130
+tunnels:
+  - name: wg-c<4-hex>     # детерминированное имя из sha256[:4] пубкея пира
+    transport_ip: 10.255.0.2
+    peer_transport_ip: 10.255.0.1
+    peer_public_key: <hex>
+    peer_endpoint: master-01.example:51820
+    balancer_ip: 172.20.70.1
+    allowed_ips: ["172.20.70.0/24"]     # персистит значения из AddPeer дословно; никакого захардкоженного 0.0.0.0/0 в v1.7.0+
+    persistent_keepalive: 25             # секунды; 0 = отключено
+```
+
+На админской стороне `mesh-ctl config show` показывает состояние транспортного аллокатора.
+
+### Именование клиентских интерфейсов (v1.7.0+)
+
+Клиентские WireGuard-интерфейсы используют детерминированные имена, выведенные из публичного ключа пира: `wg-c` + первые 4 hex-символа `SHA-256(peer_pubkey)`. Имена стабильны между перезапусками и переживают цикл RemovePeer → AddPeer того же пира. При апгрейде с версий до v1.7.0 старые интерфейсы `wg-cN` автоматически удаляются на первом reconcile (INFO-лог `event=legacy_iface_cleanup`). Внешний мониторинг, ищущий `wg-c0`/`wg-c1` по маске, нужно обновить на `wg-c[0-9a-f]{4}(-\d+)?` — опциональный суффикс `-N` появляется только при коллизии в 16-битном пространстве имён (редкость при <100 пирах).
+
+### Схема состояния транспорта
+
+`/config/transport.yml` использует `schema_version: 1` начиная с v1.7.0. State-файлы до v1.6.0 (без `schema_version`, без `allowed_ips` per-tunnel) мигрируют автоматически при первом запуске с единственным WARN-логом; миграция durable — повторно WARN не фиксируется. Операторам рекомендуется выполнить `mesh-ctl client init` после апгрейда, чтобы обновить state значениями из топологии.
 
 ## Использование
 
@@ -1043,8 +1087,8 @@ CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl      ./cmd/mesh-ctl
 
 | Способ сборки | Отображаемая версия |
 |---------------|---------------------|
-| `go install ...@v1.5.0` | `v1.5.0` |
-| Локальный клон на тегированном коммите | `v1.5.0 (abcd1234)` |
+| `go install ...@v1.7.0` | `v1.7.0` |
+| Локальный клон на тегированном коммите | `v1.7.0 (abcd1234)` |
 | `go run` | `dev` |
 
 ### Сборка Docker-образа

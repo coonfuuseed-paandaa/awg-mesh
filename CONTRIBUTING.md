@@ -18,7 +18,7 @@ Bug reports should include: OS, Go version, relevant config (redact credentials)
 **Clone and build:**
 
 ```bash
-git clone https://github.com/your-org/awg-mesh.git
+git clone https://github.com/coonfuuseed-paandaa/awg-mesh.git
 cd awg-mesh
 
 CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
@@ -46,6 +46,21 @@ go test -tags integration ./tests/integration/ -v
 ```
 
 Integration tests spin up containers and require Docker to be running.
+
+**Manual end-to-end regression (client ECMP failover + stickiness, US1 + US2):**
+
+```bash
+# Linux host with Docker + Compose v2 required
+bash tests/client_ecmp/verify.sh
+# or via Makefile:
+make test-client-ecmp
+```
+
+This fixture builds a 4-service stack (2 masters + 1 endpoint + 1 client) on a
+user-defined bridge and exercises the failover and session-stickiness paths
+described in `.agent/specs/client-ecmp/spec.md`. Not run in CI — requires
+privileged Docker. See `tests/client_ecmp/README.md` for the full operator
+guide.
 
 ## Code Style
 
