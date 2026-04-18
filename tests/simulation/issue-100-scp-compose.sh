@@ -30,12 +30,21 @@ fail() { echo "  FAIL: $*" >&2; FAIL=$((FAIL + 1)); }
 echo "=== issue-100-scp-compose: unit tests ==="
 cd "$ROOT_DIR"
 
-UNIT_OUT=$(/usr/local/go/bin/go test ./pkg/upgrade/... -count=1 \
-    -run 'TestRemoteComposePath|TestSSHDeploy|TestRemoteBackupComposePath|TestRollbackNode_UploadsBakCompose' \
-    -v 2>&1 || true)
+GO_BIN="${GO_BIN:-$(command -v go || true)}"
+if [[ -z "$GO_BIN" ]]; then
+    fail "go binary not found in PATH (set GO_BIN or install Go)"
+    echo ""
+    echo "=== issue-100-scp-compose results: ${PASS} passed, ${FAIL} failed ==="
+    exit 1
+fi
 
-if echo "$UNIT_OUT" | grep -q "^--- FAIL"; then
-    fail "unit tests failed"
+if ! UNIT_OUT=$("$GO_BIN" test ./pkg/upgrade/... -count=1 \
+    -run 'TestRemoteComposePath|TestSSHDeploy|TestRemoteBackupComposePath|TestRollbackNode_UploadsBakCompose' \
+    -v 2>&1); then
+    fail "unit tests failed (exit non-zero)"
+    echo "$UNIT_OUT" >&2
+elif echo "$UNIT_OUT" | grep -q "^--- FAIL"; then
+    fail "unit tests reported FAIL"
     echo "$UNIT_OUT" >&2
 else
     pass "unit tests: remoteComposePath, sshDeploy wiring, rollback upload"
@@ -93,8 +102,8 @@ cleanup() {
 trap cleanup EXIT
 
 # Launch a minimal SSH server container (Alpine with OpenSSH).
-# We use the linuxserver/openssh-server image which is widely available and
-# configures an SFTP subsystem by default.
+# Uses the linsir/alpine-sshd image which exposes sshd on port 2222 with a
+# built-in SFTP subsystem.
 echo "  Starting SSH server container..."
 "$DOCKER" run -d \
     --name "$SSH_CONTAINER" \
@@ -138,37 +147,21 @@ if ! "$DOCKER" exec "$SSH_CONTAINER" which sftp-server 2>/dev/null && \
     exit 77
 fi
 
-pass "SSH server container started"
-
-# The Docker-based test validates that the feature works end-to-end with
-# separate filesystems. The unit tests above already validate the hook wiring,
-# path construction, and fallback behavior comprehensively.
+# SSH container boots OK but we do NOT yet exercise the SFTP upload path
+# here — that requires wiring mesh-ctl against a live AWG node gRPC server
+# for the wait_ready phase of `mesh-ctl upgrade --ssh`. Adding that
+# harness is a separate piece of work (tracked for the v1.10.5 bucket
+# alongside the issue-92-rotation.sh auth-refresh at local tracker #110).
 #
-# A full mesh-ctl upgrade --ssh integration test requires a live AWG node
-# gRPC server for the wait_ready phase, which is beyond the scope of this
-# simulation script. That level is covered by the CI end-to-end test suite.
-#
-# Here we verify only that the SFTP upload mechanism itself functions against
-# a real SSH server:
+# Rather than calling pass() here and giving false confidence, emit an
+# explicit SKIP so operators see what was NOT verified. Unit tests above
+# already cover path construction, hook wiring, and rollback symmetry.
 
-# Create test compose file on admin side.
-ADMIN_COMPOSE=$(mktemp /tmp/test-compose-XXXXXX.yml)
-cat > "$ADMIN_COMPOSE" <<'COMPOSE'
-services:
-  awg-mesh-node:
-    image: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v1.10.2
-    restart: unless-stopped
-COMPOSE
-
-# Test SFTP upload via a Go test helper if available, otherwise note limitation.
-# The remote path used by mesh-ctl would be:
-#   ${REMOTE_COMPOSE_DIR}/m1-docker-compose.yml
-# — constructed in pkg/upgrade/sftp.go::remoteComposePath. This script defers
-# the end-to-end verification to the CI harness (see note above).
-echo "  SFTP upload path validated via unit tests (TestSSHDeploy_UsesSSHUploadWhenConfigured)"
-pass "Docker SSH server available for manual SFTP verification"
-
-rm -f "$ADMIN_COMPOSE"
+echo "  SKIP: SFTP upload end-to-end verification deferred to v1.10.5 harness"
+echo "  Unit tests above cover: remoteComposePath / remoteBackupComposePath /"
+echo "                          SSHDeploy_UsesSSHUploadWhenConfigured /"
+echo "                          SSHDeploy_FallsBackToSSHDeployWhenSSHUploadNil /"
+echo "                          RollbackNode_UploadsBakCompose"
 
 # ─── summary ─────────────────────────────────────────────────────────────────
 echo ""
