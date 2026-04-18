@@ -354,7 +354,21 @@ func (h *AgentHandler) UpdateTunnelPeer(_ context.Context, req *proto.UpdateTunn
 	var newKey [32]byte
 	copy(newKey[:], rawKey)
 
-	unchanged, err := h.tunnelMgr.UpdateTunnelPeer(name, newKey, req.GetBalancerIp(), req.GetAllowedIps())
+	// Validate allowed_ips at the RPC boundary so malformed input returns
+	// InvalidArgument rather than bubbling up as Internal from the manager.
+	normalizedAllowedIPs := make([]string, 0, len(req.GetAllowedIps()))
+	for _, cidr := range req.GetAllowedIps() {
+		trimmedCIDR := strings.TrimSpace(cidr)
+		if trimmedCIDR == "" {
+			return nil, status.Error(codes.InvalidArgument, "allowed_ips entries must be non-empty CIDRs")
+		}
+		if _, _, parseErr := net.ParseCIDR(trimmedCIDR); parseErr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "allowed_ips contains invalid CIDR %q", cidr)
+		}
+		normalizedAllowedIPs = append(normalizedAllowedIPs, trimmedCIDR)
+	}
+
+	unchanged, err := h.tunnelMgr.UpdateTunnelPeer(name, newKey, strings.TrimSpace(req.GetBalancerIp()), normalizedAllowedIPs)
 	if err != nil {
 		if strings.Contains(err.Error(), "tunnel not found") {
 			return nil, status.Errorf(codes.NotFound, "tunnel not found: %s", name)

@@ -463,6 +463,21 @@ func TestAgentHandler_UpdateTunnelPeer_Validation(t *testing.T) {
 		}
 	})
 
+	t.Run("invalid allowed_ips returns InvalidArgument", func(t *testing.T) {
+		_, err := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+			AllowedIps:    []string{"not-a-cidr"},
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("expected InvalidArgument, got %v", st.Code())
+		}
+	})
+
 	t.Run("nil tunnelMgr returns Unimplemented", func(t *testing.T) {
 		h2 := &AgentHandler{logger: logger}
 		_, err := h2.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{

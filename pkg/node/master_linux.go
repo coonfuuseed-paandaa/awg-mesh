@@ -457,6 +457,11 @@ func (m *MasterRunner) setupDSCPRouting() error {
 
 // applyPeerKeyUpdate performs the UAPI peer-replace for UpdateTunnelPeer.
 // Must be called with m.mu held (write lock). Linux-only.
+//
+// Safety: the remove+add sequence is non-atomic. If the old peer is removed but
+// the new peer add fails, this function attempts to restore the old peer in
+// kernel state before returning the error, preventing a dataplane/memory
+// divergence. Partial restore failures are included in the returned error.
 func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key, allowedIPs []string) error {
 	if tunnel.platformState.iface == nil {
 		return fmt.Errorf("tunnel %q interface is not initialized", tunnel.Name)
@@ -470,8 +475,10 @@ func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key
 	var existingAllowedIPs []net.IPNet
 	var existingEndpoint *net.UDPAddr
 	var existingPresharedKey *wg.Key
+	foundExistingPeer := false
 	for _, peer := range dev.Peers {
 		if peer.PublicKey == tunnel.PeerPublicKey {
+			foundExistingPeer = true
 			existingAllowedIPs = append([]net.IPNet(nil), peer.AllowedIPs...)
 			existingEndpoint = peer.Endpoint
 			if peer.PresharedKey != (wg.Key{}) {
@@ -480,6 +487,9 @@ func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key
 			}
 			break
 		}
+	}
+	if !foundExistingPeer {
+		return fmt.Errorf("existing peer for tunnel %q with old public key not found in device state", tunnel.Name)
 	}
 
 	peerAllowedIPs := existingAllowedIPs
@@ -516,7 +526,22 @@ func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key
 		}},
 	}
 	if addErr := tunnel.platformState.iface.Configure(addCfg); addErr != nil {
-		return fmt.Errorf("add new peer to tunnel %q: %w", tunnel.Name, addErr)
+		// Old peer was removed from kernel; attempt to restore it to avoid
+		// dataplane/memory divergence. Include any restore error in the returned error.
+		restoreCfg := wg.Config{
+			Peers: []wg.PeerConfig{{
+				PublicKey:         tunnel.PeerPublicKey,
+				ReplaceAllowedIPs: false,
+				UpdateOnly:        false,
+				AllowedIPs:        existingAllowedIPs,
+				Endpoint:          existingEndpoint,
+				PresharedKey:      existingPresharedKey,
+			}},
+		}
+		if restoreErr := tunnel.platformState.iface.Configure(restoreCfg); restoreErr != nil {
+			return fmt.Errorf("add new peer to tunnel %q: %w; also failed to restore old peer: %v", tunnel.Name, addErr, restoreErr)
+		}
+		return fmt.Errorf("add new peer to tunnel %q: %w (old peer restored in kernel)", tunnel.Name, addErr)
 	}
 
 	return nil
