@@ -27,9 +27,17 @@ type PeerManager interface {
 	RemovePeer(publicKey []byte) error
 }
 
-// TransportConfigurator is an optional extension of PeerManager for modes that
-// require per-peer transport IP assignment and routing (client mode).
-// It is called by the AddPeer handler after saving transport state.
+// TransportConfigurator configures the transport-layer WireGuard interface
+// with peer credentials and (mode-dependent) overlay routing.
+//
+// The allowedIPs parameter is mode-specific:
+//   - In endpoint mode (EndpointRunner): allowedIPs lists overlay CIDRs to
+//     install as kernel routes via RouteReplaceLink.
+//   - In client mode (ClientRunner): allowedIPs is ignored — overlay routing
+//     is handled separately via ECMP in rebuildClientECMP.
+//
+// Implementations MUST be safe to call concurrently with each other but
+// SHOULD serialize multiple calls to the same tunnel via internal locking.
 type TransportConfigurator interface {
 	ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error
 }

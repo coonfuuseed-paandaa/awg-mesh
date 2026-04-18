@@ -17,9 +17,8 @@ import (
 const endpointInterfaceName = "wg0"
 
 var endpointAddInterfaceAddress = addInterfaceAddress
-var endpointRouter = routing.NewNetlinkRouter()
 var endpointRouteReplaceLink = func(dest *net.IPNet, dev string) error {
-	return endpointRouter.RouteReplaceLink(dest, dev)
+	return routing.NewNetlinkRouter().RouteReplaceLink(dest, dev)
 }
 
 type endpointPlatformState struct {
@@ -154,7 +153,7 @@ func shouldSkipEndpointLinkRoute(cidrNet *net.IPNet, overlayIP net.IP) bool {
 	}
 
 	ones, bits := cidrNet.Mask.Size()
-	if bits > 0 && ones >= 30 {
+	if bits > 0 && ones >= 30 && ones < 32 {
 		return true
 	}
 
