@@ -17,8 +17,9 @@ import (
 const endpointInterfaceName = "wg0"
 
 var endpointAddInterfaceAddress = addInterfaceAddress
+var endpointRouter = routing.NewNetlinkRouter()
 var endpointRouteReplaceLink = func(dest *net.IPNet, dev string) error {
-	return routing.NewNetlinkRouter().RouteReplaceLink(dest, dev)
+	return endpointRouter.RouteReplaceLink(dest, dev)
 }
 
 type endpointPlatformState struct {

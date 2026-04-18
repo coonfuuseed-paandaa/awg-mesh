@@ -115,6 +115,7 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 						Err(err).
 						Str("tunnel", tt.Name).
 						Msg("reconcile: configure transport failed")
+					continue
 				}
 				reconciled++
 			}

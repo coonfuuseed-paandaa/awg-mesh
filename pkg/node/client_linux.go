@@ -382,7 +382,9 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 }
 
 // ConfigureTransport implements grpcserver.TransportConfigurator.
-func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error {
+// allowedIPs is accepted for interface compliance but ignored in client mode:
+// client overlay routing uses ECMP via rebuildClientECMP, not per-peer link routes.
+func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ []string) error {
 	if c == nil || c.node == nil {
 		return fmt.Errorf("client runner node is required")
 	}
