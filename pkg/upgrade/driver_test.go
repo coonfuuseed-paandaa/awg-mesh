@@ -325,15 +325,20 @@ func TestValidateImageRef_Invalid(t *testing.T) {
 // ─── NewDriver — default budget clamping ──────────────────────────────────────
 
 func TestNewDriver_DefaultBudgets(t *testing.T) {
+	const (
+		wantDowntimeBudget = 60 * time.Second
+		wantDeployWait     = 120 * time.Second
+		wantProbeTimeout   = 5 * time.Second
+	)
 	drv := NewDriver(DriverConfig{Topology: singleMasterTopo()})
-	if drv.cfg.DowntimeBudget != 60e9 {
-		t.Errorf("DowntimeBudget: got %v want 60s", drv.cfg.DowntimeBudget)
+	if drv.cfg.DowntimeBudget != wantDowntimeBudget {
+		t.Errorf("DowntimeBudget: got %v want %v", drv.cfg.DowntimeBudget, wantDowntimeBudget)
 	}
-	if drv.cfg.DeployWait != 120e9 {
-		t.Errorf("DeployWait: got %v want 120s", drv.cfg.DeployWait)
+	if drv.cfg.DeployWait != wantDeployWait {
+		t.Errorf("DeployWait: got %v want %v", drv.cfg.DeployWait, wantDeployWait)
 	}
-	if drv.cfg.ProbeTimeout != 5e9 {
-		t.Errorf("ProbeTimeout: got %v want 5s", drv.cfg.ProbeTimeout)
+	if drv.cfg.ProbeTimeout != wantProbeTimeout {
+		t.Errorf("ProbeTimeout: got %v want %v", drv.cfg.ProbeTimeout, wantProbeTimeout)
 	}
 }
 

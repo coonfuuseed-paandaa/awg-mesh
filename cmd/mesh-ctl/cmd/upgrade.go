@@ -316,6 +316,7 @@ func buildReconcileAdapter(topo *topology.Topology) upgrade.Reconciler {
 		for _, nr := range t.Overlay.Ranges {
 			r, err := topology.ParseRange(nr)
 			if err != nil {
+				log.Warn().Str("name", nr.Name).Str("cidr", nr.CIDR).Err(err).Msg("skipping invalid overlay range during reconcile")
 				continue
 			}
 			parsedRanges = append(parsedRanges, r)
