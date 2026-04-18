@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -215,6 +216,12 @@ func TestSetPubkey_SecondWriteSeesNewKey(t *testing.T) {
 // TestSetPubkey_Concurrent verifies that concurrent goroutines calling SetPubkey
 // for the same node serialise correctly: each goroutine sees exactly one
 // consistent old key and writes exactly one new key without corruption.
+//
+// Serialisation is actively verified via an atomic concurrency counter: the
+// counter is incremented at the start of each callback and decremented at the
+// end. If two callbacks ever execute simultaneously the peak count exceeds 1,
+// which is a hard failure because it proves the critical section was entered
+// concurrently — i.e. the mutex or the lock-file did not serialise correctly.
 func TestSetPubkey_Concurrent(t *testing.T) {
 	t.Parallel()
 	store, _ := newTestStore(t)
@@ -222,8 +229,12 @@ func TestSetPubkey_Concurrent(t *testing.T) {
 	const goroutines = 8
 	const baseKey = "00000000000000000000000000000000000000000000000000000000000000%02d"
 
-	var wg sync.WaitGroup
-	errs := make([]error, goroutines)
+	var (
+		wg          sync.WaitGroup
+		errs        = make([]error, goroutines)
+		inCallback  atomic.Int32 // how many callbacks are executing right now
+		maxConcurrent atomic.Int32 // peak observed concurrency
+	)
 
 	for i := 0; i < goroutines; i++ {
 		i := i
@@ -232,6 +243,15 @@ func TestSetPubkey_Concurrent(t *testing.T) {
 			defer wg.Done()
 			key := fmt.Sprintf(baseKey, i)
 			_, errs[i] = store.SetPubkey("ep-concurrent", func(_ string) (string, error) {
+				// Enter critical section: record peak concurrency.
+				cur := inCallback.Add(1)
+				for {
+					old := maxConcurrent.Load()
+					if cur <= old || maxConcurrent.CompareAndSwap(old, cur) {
+						break
+					}
+				}
+				defer inCallback.Add(-1)
 				return key, nil
 			})
 		}()
@@ -243,6 +263,11 @@ func TestSetPubkey_Concurrent(t *testing.T) {
 		if err != nil {
 			t.Errorf("goroutine %d failed: %v", i, err)
 		}
+	}
+
+	// Serialisation assertion: no two callbacks may have run at the same time.
+	if peak := maxConcurrent.Load(); peak > 1 {
+		t.Errorf("serialisation violated: %d callbacks executed concurrently (want max 1)", peak)
 	}
 
 	// The final key on disk should be one of the valid keys (not corrupted).

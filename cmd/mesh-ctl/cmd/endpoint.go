@@ -315,6 +315,10 @@ func newEndpointInitCommand() *cobra.Command {
 
 					statusLine := ""
 					needAddPeer := false
+					// updateResp is declared in outer scope so the post-branch
+					// masterPubKey fallback can reference it. Nil when we took
+					// the AddTunnel path (tunnel was created, not updated).
+					var updateResp *proto.UpdateTunnelPeerResponse
 
 					// FR-1: build the full allowed_ips list via the shared helper.
 					allowedIPs, aipErr := topology.BuildAllowedIPsForEndpoint(topo, master.OverlayIP, allocation.Subnet.String())
@@ -353,7 +357,8 @@ func newEndpointInitCommand() *cobra.Command {
 						}
 
 						masterCtx2, masterCancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-						updateResp, updateErr := masterClient2.Agent().UpdateTunnelPeer(masterCtx2, &proto.UpdateTunnelPeerRequest{
+						var updateErr error
+						updateResp, updateErr = masterClient2.Agent().UpdateTunnelPeer(masterCtx2, &proto.UpdateTunnelPeerRequest{
 							Name:          ep.Name,
 							PeerPublicKey: resp.NodePublicKey,
 							BalancerIp:    balancerIP,
@@ -383,7 +388,7 @@ func newEndpointInitCommand() *cobra.Command {
 							continue
 						}
 
-						needAddPeer = false
+						needAddPeer = !updateResp.Unchanged
 						if updateResp.Unchanged {
 							statusLine = "unchanged (key matches)"
 						} else {
@@ -405,9 +410,13 @@ func newEndpointInitCommand() *cobra.Command {
 
 					if needAddPeer {
 						// Collect master public key for the post-transaction AddPeer call.
+						// UpdateTunnelPeer path: use updateResp.MasterPublicKey when the key
+						// actually changed (Unchanged==false). AddTunnel path: use addResp.
 						var masterPubKey []byte
 						if addResp != nil {
 							masterPubKey = addResp.MasterPublicKey
+						} else if updateResp != nil {
+							masterPubKey = updateResp.MasterPublicKey
 						}
 						if len(masterPubKey) == 0 {
 							// Fallback: read from admin-state disk (raw bytes or hex).
