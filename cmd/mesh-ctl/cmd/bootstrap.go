@@ -280,11 +280,10 @@ func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMeth
 		// Emit FR-3 diagnostic when agent dial failed and no key is available.
 		if agentErr != nil && agentSock != "" {
 			return nil, nil, fmt.Errorf(
-				"SSH authentication unavailable.\n"+
-					"SSH_AUTH_SOCK is set to %q but the agent dial failed: %v.\n"+
-					"On Windows, ensure the OpenSSH agent service is running (`Get-Service ssh-agent`)\n"+
-					"and SSH_AUTH_SOCK points to `\\\\.\\pipe\\openssh-ssh-agent`.\n"+
-					"Or pass --ssh-key <path> to load a key file directly.",
+				"SSH authentication unavailable: SSH_AUTH_SOCK is set to %q but the agent dial failed: %v. "+
+					"On Windows, ensure the OpenSSH agent service is running (`Get-Service ssh-agent`) "+
+					"and SSH_AUTH_SOCK points to `\\\\.\\pipe\\openssh-ssh-agent`. "+
+					"Or pass --ssh-key <path> to load a key file directly",
 				agentSock, agentErr)
 		}
 		return nil, nil, fmt.Errorf("no SSH auth method available: no agent and no private key found")
