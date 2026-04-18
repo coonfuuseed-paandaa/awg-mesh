@@ -15,6 +15,8 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func newEndpointCommand() *cobra.Command {
@@ -282,25 +284,82 @@ func newEndpointInitCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
 				}
 
-				tunnelExists := false
-				if addErr != nil {
-					if strings.Contains(addErr.Error(), "already exists") {
-						tunnelExists = true
-					} else {
-						fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q failed: %v\n", master.Name, addErr)
-						continue
+				statusLine := ""
+				needAddPeer := false
+				allowedIPs := []string{allocation.Subnet.String()}
+				for _, nr := range topo.Overlay.Ranges {
+					if nr.CIDR != "" {
+						allowedIPs = append(allowedIPs, nr.CIDR)
 					}
 				}
 
-				if !tunnelExists && (addResp == nil || !addResp.Success) {
-					fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q failed: %s\n", master.Name, "[RPC failure]")
-					continue
+				if addErr != nil {
+					errLower := strings.ToLower(addErr.Error())
+					isAlreadyExists := status.Code(addErr) == codes.AlreadyExists || strings.Contains(errLower, "already exists")
+					if !isAlreadyExists {
+						statusLine = fmt.Sprintf("FAILED: %v", addErr)
+						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						continue
+					}
+
+					masterClient, err = grpcclient.NewClient(grpcclient.ClientConfig{
+						Target:   master.GRPCAddr(),
+						Token:    masterToken,
+						Insecure: true,
+					})
+					if err != nil {
+						statusLine = fmt.Sprintf("FAILED: cannot connect to master %q for tunnel update: %v", master.Name, err)
+						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						continue
+					}
+
+					masterCtx, masterCancel = context.WithTimeout(context.Background(), 30*time.Second)
+					updateResp, updateErr := masterClient.Agent().UpdateTunnelPeer(masterCtx, &proto.UpdateTunnelPeerRequest{
+						Name:          ep.Name,
+						PeerPublicKey: resp.NodePublicKey,
+						BalancerIp:    balancerIP,
+						AllowedIps:    allowedIPs,
+					})
+					masterCancel()
+					if closeErr := masterClient.Close(); closeErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
+					}
+					if updateErr != nil {
+						statusLine = fmt.Sprintf("FAILED: %v", updateErr)
+						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						continue
+					}
+
+					if updateResp == nil || !updateResp.Success {
+						statusLine = "FAILED: update tunnel peer RPC returned unsuccessful response"
+						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						continue
+					}
+
+					needAddPeer = false
+					if updateResp.Unchanged {
+						statusLine = "unchanged (key matches)"
+					} else {
+						newPubKeyHex := hex.EncodeToString(resp.NodePublicKey)
+						if len(newPubKeyHex) > 8 {
+							newPubKeyHex = newPubKeyHex[:8]
+						}
+						statusLine = fmt.Sprintf("updated (new key: %s)", newPubKeyHex)
+					}
+				} else {
+					if addResp == nil || !addResp.Success {
+						statusLine = "FAILED: add tunnel RPC returned unsuccessful response"
+						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						continue
+					}
+					needAddPeer = true
+					statusLine = "created"
 				}
 
-				if tunnelExists {
-					fmt.Printf("Tunnel for endpoint %q on master %q already exists.\n", ep.Name, master.Name)
-				} else {
-					fmt.Printf("Added tunnel for endpoint %q on master %q.\n", ep.Name, master.Name)
+				fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+
+				if !needAddPeer {
+					continue
 				}
 
 				// Get master's public key — from response or from disk.
@@ -315,15 +374,6 @@ func newEndpointInitCommand() *cobra.Command {
 				if len(masterPubKey) == 0 {
 					fmt.Fprintf(os.Stderr, "warning: master %q public key not available, skipping peer setup\n", master.Name)
 					continue
-				}
-
-				// AllowedIPs: transport /30 + all overlay ranges (so endpoints can
-				// receive client traffic forwarded by masters).
-				allowedIPs := []string{allocation.Subnet.String()}
-				for _, nr := range topo.Overlay.Ranges {
-					if nr.CIDR != "" {
-						allowedIPs = append(allowedIPs, nr.CIDR)
-					}
 				}
 
 				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -345,8 +395,6 @@ func newEndpointInitCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %s\n", master.Name, "[RPC failure]")
 					continue
 				}
-
-				fmt.Printf("Added peer on endpoint %q for master %q.\n", ep.Name, master.Name)
 			}
 
 			if err := saveTransportState(alloc, configDir); err != nil {
