@@ -114,6 +114,9 @@ func TestPatchImageLine(t *testing.T) {
 			t.Parallel()
 			got := patchImageLine(tc.compose, tc.newImage)
 
+			if tc.compose == "" && got != "" {
+				t.Fatalf("patchImageLine(empty) = %q, want empty string", got)
+			}
 			if tc.wantImage != "" && !strings.Contains(got, tc.wantImage) {
 				t.Errorf("patchImageLine result missing %q\nInput:\n%s\nResult:\n%s",
 					tc.wantImage, tc.compose, got)
@@ -276,6 +279,9 @@ image: {{.Image}}`,
 			if err != nil {
 				t.Fatalf("execTemplate(%q): unexpected error: %v", tc.tmplContent, err)
 			}
+			if tc.tmplContent == "" && got != "" {
+				t.Fatalf("execTemplate(empty) = %q, want empty string", got)
+			}
 			if tc.wantContain != "" && !strings.Contains(got, tc.wantContain) {
 				t.Errorf("execTemplate output missing %q\nGot: %q", tc.wantContain, got)
 			}
@@ -307,11 +313,13 @@ func TestBuildComposeData(t *testing.T) {
 		}
 
 		checks := map[string]interface{}{
-			"Image":     "img:v1",
-			"Token":     "token123",
-			"ConfigDir": "/cfg",
-			"Name":      "master-01",
-			"Mode":      "master",
+			"Image":      "img:v1",
+			"Token":      "token123",
+			"ConfigDir":  "/cfg",
+			"Name":       "master-01",
+			"Mode":       "master",
+			"OverlayIP":  "10.10.0.1",
+			"ListenPort": 51820,
 		}
 		for key, want := range checks {
 			got, ok := data[key]
@@ -333,11 +341,13 @@ func TestBuildComposeData(t *testing.T) {
 		}
 
 		checks := map[string]interface{}{
-			"Image":     "img:v2",
-			"Token":     "tok456",
-			"ConfigDir": "/cfg2",
-			"Name":      "ep-01",
-			"Mode":      "endpoint",
+			"Image":      "img:v2",
+			"Token":      "tok456",
+			"ConfigDir":  "/cfg2",
+			"Name":       "ep-01",
+			"Mode":       "endpoint",
+			"OverlayIP":  "10.10.0.2",
+			"ListenPort": 51821,
 		}
 		for key, want := range checks {
 			got, ok := data[key]
