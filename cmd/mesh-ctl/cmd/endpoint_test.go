@@ -4,7 +4,91 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// TestUpdateTunnelPeerFailureStatus verifies the pure helper that classifies
+// UpdateTunnelPeer errors for T011 (pre-v1.10.0 master detection).
+//
+// Anti-stub guarantee: replacing the body with `return "FAILED", false` causes
+// the codes.Unimplemented case to fail (isPreV110 == false instead of true)
+// and the status line to omit "pre-v1.10.0".
+func TestUpdateTunnelPeerFailureStatus(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		err          error
+		wantPreV110  bool
+		wantContains string
+	}{
+		{
+			name:         "Unimplemented maps to pre-v1.10.0",
+			err:          status.Error(codes.Unimplemented, "method UpdateTunnelPeer not implemented"),
+			wantPreV110:  true,
+			wantContains: "pre-v1.10.0",
+		},
+		{
+			name:         "Internal error is generic FAILED",
+			err:          status.Error(codes.Internal, "something broke"),
+			wantPreV110:  false,
+			wantContains: "something broke",
+		},
+		{
+			name:         "Unavailable error is generic FAILED",
+			err:          status.Error(codes.Unavailable, "connection refused"),
+			wantPreV110:  false,
+			wantContains: "connection refused",
+		},
+		{
+			name:         "DeadlineExceeded is generic FAILED",
+			err:          status.Error(codes.DeadlineExceeded, "context deadline exceeded"),
+			wantPreV110:  false,
+			wantContains: "deadline exceeded",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			line, isPreV110 := updateTunnelPeerFailureStatus(tc.err)
+
+			if isPreV110 != tc.wantPreV110 {
+				t.Errorf("isPreV110 = %v, want %v", isPreV110, tc.wantPreV110)
+			}
+			if !strings.Contains(line, tc.wantContains) {
+				t.Errorf("statusLine %q does not contain %q", line, tc.wantContains)
+			}
+			if !strings.HasPrefix(line, "FAILED:") {
+				t.Errorf("statusLine %q does not start with 'FAILED:'", line)
+			}
+		})
+	}
+}
+
+// TestUpdateTunnelPeerFailureStatus_NoStringMatch verifies that
+// codes.Unimplemented is detected via typed code comparison, not string
+// matching on the error message. An error with "Unimplemented" in the message
+// but a non-Unimplemented gRPC code must NOT be classified as pre-v1.10.0.
+func TestUpdateTunnelPeerFailureStatus_NoStringMatch(t *testing.T) {
+	t.Parallel()
+
+	// codes.Internal error whose message happens to contain "Unimplemented" —
+	// must NOT trigger the pre-v1.10.0 path.
+	err := status.Error(codes.Internal, "Unimplemented feature in handler")
+	line, isPreV110 := updateTunnelPeerFailureStatus(err)
+
+	if isPreV110 {
+		t.Errorf("isPreV110 = true for codes.Internal error; typed-code check must be used, not string match")
+	}
+	if strings.Contains(line, "pre-v1.10.0") {
+		t.Errorf("statusLine %q contains 'pre-v1.10.0' for codes.Internal error; should not", line)
+	}
+}
 
 // TestEndpointPrepareImage asserts that the endpoint prepare path resolves the
 // docker image reference through the three-level priority order defined by

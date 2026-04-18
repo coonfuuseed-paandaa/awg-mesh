@@ -240,20 +240,29 @@ func newEndpointInitCommand() *cobra.Command {
 				}
 			}
 
+			// T010: track per-master outcome counters for exit-code determination.
+			mastersTotal := 0
+			mastersOk := 0
+			var failedMasters []string
+
 			for _, master := range topo.Masters {
 				if !containsName(master.Endpoints, ep.Name) {
 					continue
 				}
 
+				mastersTotal++
+
 				allocation, err := alloc.Allocate(master.Name, ep.Name)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: allocate transport for master %q and endpoint %q failed: %v\n", master.Name, ep.Name, err)
+					failedMasters = append(failedMasters, master.Name)
 					continue
 				}
 
 				masterToken, err := loadToken(nodeDir(configDir, master.Name))
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: cannot load token for master %q: %v\n", master.Name, err)
+					failedMasters = append(failedMasters, master.Name)
 					continue
 				}
 
@@ -264,6 +273,7 @@ func newEndpointInitCommand() *cobra.Command {
 				})
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)
+					failedMasters = append(failedMasters, master.Name)
 					continue
 				}
 
@@ -299,6 +309,7 @@ func newEndpointInitCommand() *cobra.Command {
 					if !isAlreadyExists {
 						statusLine = fmt.Sprintf("FAILED: %v", addErr)
 						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						failedMasters = append(failedMasters, master.Name)
 						continue
 					}
 
@@ -310,6 +321,7 @@ func newEndpointInitCommand() *cobra.Command {
 					if err != nil {
 						statusLine = fmt.Sprintf("FAILED: cannot connect to master %q for tunnel update: %v", master.Name, err)
 						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						failedMasters = append(failedMasters, master.Name)
 						continue
 					}
 
@@ -325,14 +337,21 @@ func newEndpointInitCommand() *cobra.Command {
 						fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
 					}
 					if updateErr != nil {
-						statusLine = fmt.Sprintf("FAILED: %v", updateErr)
+						// T011: detect pre-v1.10.0 masters that lack UpdateTunnelPeer RPC.
+						var isPreV110 bool
+						statusLine, isPreV110 = updateTunnelPeerFailureStatus(updateErr)
+						if isPreV110 {
+							fmt.Fprintf(os.Stderr, "master %s running pre-v1.10.0 — upgrade master before rotating endpoint keys\n", master.Name)
+						}
 						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						failedMasters = append(failedMasters, master.Name)
 						continue
 					}
 
 					if updateResp == nil || !updateResp.Success {
 						statusLine = "FAILED: update tunnel peer RPC returned unsuccessful response"
 						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						failedMasters = append(failedMasters, master.Name)
 						continue
 					}
 
@@ -350,12 +369,14 @@ func newEndpointInitCommand() *cobra.Command {
 					if addResp == nil || !addResp.Success {
 						statusLine = "FAILED: add tunnel RPC returned unsuccessful response"
 						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+						failedMasters = append(failedMasters, master.Name)
 						continue
 					}
 					needAddPeer = true
 					statusLine = "created"
 				}
 
+				mastersOk++
 				fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
 
 				if !needAddPeer {
@@ -401,10 +422,33 @@ func newEndpointInitCommand() *cobra.Command {
 				return fmt.Errorf("save transport state: %w", err)
 			}
 
+			// T010: if any master failed, emit a failure summary to stderr and
+			// return a non-zero exit code so operator CI scripts can detect the
+			// partial failure.
+			if mastersOk < mastersTotal {
+				fmt.Fprintf(os.Stderr, "\nFailed to update %d of %d master(s):\n", mastersTotal-mastersOk, mastersTotal)
+				for _, m := range failedMasters {
+					fmt.Fprintf(os.Stderr, "  - %s\n", m)
+					fmt.Fprintf(os.Stderr, "    To recover: mesh-ctl master reload %s\n", m)
+				}
+				return fmt.Errorf("endpoint init: %d master(s) failed — see above for details", mastersTotal-mastersOk)
+			}
+
 			fmt.Printf("Endpoint %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
 			return nil
 		},
 	}
+}
+
+// updateTunnelPeerFailureStatus returns the human-readable failure status line
+// and whether the error is due to a pre-v1.10.0 master (codes.Unimplemented).
+// Detection uses the typed gRPC status code — never string-matching on the
+// error message. This is a pure function extracted for testability (T011).
+func updateTunnelPeerFailureStatus(err error) (statusLine string, isPreV110 bool) {
+	if status.Code(err) == codes.Unimplemented {
+		return "FAILED: master running pre-v1.10.0", true
+	}
+	return fmt.Sprintf("FAILED: %v", err), false
 }
 
 func newEndpointRemoveCommand() *cobra.Command {
