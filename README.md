@@ -576,6 +576,22 @@ mesh-ctl upgrade compose /etc/docker/compose/<node>-docker-compose.yml --in-plac
 
 See `docs/MIGRATION.md` — Rolling Upgrade Procedure for the full operator checklist.
 
+## Upgrade safety
+
+When upgrading to a new awg-mesh-node image, always remove the local cached image
+before pulling so Docker cannot silently reuse a stale layer when the pull fails
+mid-transfer:
+
+```bash
+docker compose -f <compose> down
+docker image rm <image-ref> 2>/dev/null || true   # force fresh pull; image may be absent
+docker pull <image-ref>       # verify new digest appears in output
+docker compose -f <compose> up -d
+```
+
+Check the container startup log after `up -d` and confirm the reported `"version"`
+field matches the expected semver before proceeding to the next node.
+
 ## Deployment
 
 ### Docker image

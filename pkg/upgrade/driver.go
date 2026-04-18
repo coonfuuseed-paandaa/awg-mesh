@@ -266,8 +266,8 @@ func (d *Driver) phaseDeploy(_ context.Context, step *NodeUpgradeStep, composePa
 // sshDeploy triggers `docker compose up -d` via SSH using the injected SSHDeployer.
 // The image ref is validated before constructing the remote command.
 func (d *Driver) sshDeploy(step *NodeUpgradeStep, composePath string) error {
-	if d.cfg.SSHDeploy == nil {
-		return fmt.Errorf("SSH deploy: SSHDeploy function is not configured")
+	if d.cfg.SSHDeploy == nil && d.cfg.SSHUpload == nil {
+		return fmt.Errorf("SSH deploy: neither SSHDeploy nor SSHUpload is configured")
 	}
 
 	// Validate the image ref to prevent shell injection.
@@ -301,7 +301,14 @@ func (d *Driver) sshDeploy(step *NodeUpgradeStep, composePath string) error {
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 	rPath := remoteComposePath(d.cfg.RemoteComposeDir, step.Name)
-	remoteCmd := "docker compose -f " + shellQuote(rPath) + " up -d"
+
+	// Force a fresh image pull: remove any cached layer first so Docker cannot
+	// silently reuse a stale image when the pull fails mid-transfer (issue #104).
+	// "docker image rm" exits 1 when the image is absent (first deploy) — that
+	// is expected and harmless, so we suppress it with "|| true".
+	remoteCmd := "docker image rm " + shellQuote(step.NewImage) + " 2>/dev/null || true" +
+		" && docker pull " + shellQuote(step.NewImage) +
+		" && docker compose -f " + shellQuote(rPath) + " up -d"
 
 	if d.cfg.SSHUpload != nil {
 		return d.cfg.SSHUpload(addr, user, opts.KeyPath, opts.AcceptNewHosts, composePath, rPath, remoteCmd)

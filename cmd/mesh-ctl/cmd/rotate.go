@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,9 +20,9 @@ import (
 )
 
 const (
-	defaultRotatePreset = "Balanced"
-	rotateAgentPort     = "9090"
-	rotateTimeout       = 30 * time.Second
+	defaultRotatePreset    = "Balanced"
+	defaultRotateAgentPort = 9090
+	rotateTimeout          = 30 * time.Second
 )
 
 type rotateOptions struct {
@@ -264,6 +265,16 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 	return nil
 }
 
+// masterGRPCTarget returns the host:port gRPC dial target for a master node,
+// applying the default port when master.GRPCPort is zero.
+func masterGRPCTarget(master topology.MasterNode) string {
+	port := master.GRPCPort
+	if port == 0 {
+		port = defaultRotateAgentPort
+	}
+	return net.JoinHostPort(master.Host, strconv.Itoa(port))
+}
+
 func connectMasterAgent(master topology.MasterNode) (*grpcclient.Client, error) {
 	token, err := loadToken(nodeDir(configDir, master.Name))
 	if err != nil {
@@ -271,7 +282,7 @@ func connectMasterAgent(master topology.MasterNode) (*grpcclient.Client, error) 
 	}
 
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-		Target:     net.JoinHostPort(master.Host, rotateAgentPort),
+		Target:     masterGRPCTarget(master),
 		CACertPath: caPath(configDir),
 		Token:      token,
 	})

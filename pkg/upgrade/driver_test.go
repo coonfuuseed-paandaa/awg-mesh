@@ -130,12 +130,13 @@ func TestUpgradeNode_PrepareFailsOnMissingRenderCompose(t *testing.T) {
 }
 
 // TestUpgradeNode_SSHDeployNotConfigured ensures sshDeploy returns an error
-// when SSHOpts.Enabled is true but SSHDeploy is nil.
+// when SSHOpts.Enabled is true but neither SSHDeploy nor SSHUpload is configured.
 func TestUpgradeNode_SSHDeployNotConfigured(t *testing.T) {
 	topo := singleMasterTopo()
 	drv, step, _ := setupDriver(t, topo, func(c *DriverConfig) {
 		c.SSHOpts = SSHOpts{Enabled: true}
 		c.SSHDeploy = nil // explicitly nil
+		c.SSHUpload = nil // explicitly nil — both must be absent to trigger error
 	})
 	err := drv.UpgradeNode(context.Background(), step)
 	if err == nil {
@@ -427,7 +428,10 @@ func TestSSHDeploy_UsesSSHUploadWhenConfigured(t *testing.T) {
 	if capturedAdminPath != adminPath {
 		t.Errorf("admin path: got %q want %q", capturedAdminPath, adminPath)
 	}
-	wantCmd := "docker compose -f '/etc/docker/compose/m1-docker-compose.yml' up -d"
+	// sshDeploy now prepends image rm + pull before compose up (issue #104).
+	wantCmd := "docker image rm 'ghcr.io/example/awg-mesh-node:v1.10.2' 2>/dev/null || true" +
+		" && docker pull 'ghcr.io/example/awg-mesh-node:v1.10.2'" +
+		" && docker compose -f '/etc/docker/compose/m1-docker-compose.yml' up -d"
 	if capturedRemoteCmd != wantCmd {
 		t.Errorf("remote cmd: got %q want %q", capturedRemoteCmd, wantCmd)
 	}
@@ -454,6 +458,43 @@ func TestSSHDeploy_FallsBackToSSHDeployWhenSSHUploadNil(t *testing.T) {
 	}
 	if !deployCalled {
 		t.Error("SSHDeploy should be called when SSHUpload is nil")
+	}
+}
+
+// TestSSHDeploy_RemoteCmdIncludesImageRmAndPull verifies that sshDeploy constructs
+// the remote command with docker image rm + docker pull before docker compose up -d
+// (issue #104: prevents Docker from reusing a stale cached image layer).
+//
+// Anti-stub: if sshDeploy only emits "docker compose up -d", the rm+pull prefix
+// check fails; if it omits "|| true", the exact-string check fails.
+func TestSSHDeploy_RemoteCmdIncludesImageRmAndPull(t *testing.T) {
+	t.Parallel()
+
+	topo := singleMasterTopo()
+	var capturedCmd string
+	drv, step, _ := setupDriver(t, topo, func(c *DriverConfig) {
+		c.SSHOpts = SSHOpts{Enabled: true, User: "root", Port: 22}
+		c.SSHUpload = func(addr, user, keyPath string, acceptNewHosts bool, adminPath, remotePath, remoteCmd string) error {
+			capturedCmd = remoteCmd
+			return nil
+		}
+		c.RemoteComposeDir = "/etc/docker/compose"
+	})
+
+	adminPath := liveComposePath(drv.cfg, step.Name)
+	if err := drv.sshDeploy(step, adminPath); err != nil {
+		t.Fatalf("sshDeploy: unexpected error: %v", err)
+	}
+
+	imageRef := shellQuote(step.NewImage)
+	if !strings.Contains(capturedCmd, "docker image rm "+imageRef+" 2>/dev/null || true") {
+		t.Errorf("remote cmd missing image rm step; got: %s", capturedCmd)
+	}
+	if !strings.Contains(capturedCmd, "docker pull "+imageRef) {
+		t.Errorf("remote cmd missing docker pull step; got: %s", capturedCmd)
+	}
+	if !strings.Contains(capturedCmd, "docker compose -f") {
+		t.Errorf("remote cmd missing docker compose up step; got: %s", capturedCmd)
 	}
 }
 

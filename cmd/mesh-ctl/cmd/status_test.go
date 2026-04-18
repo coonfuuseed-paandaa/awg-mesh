@@ -260,6 +260,72 @@ func TestRunDataPlaneProbesMasterNoToken(t *testing.T) {
 	}
 }
 
+// TestTunnelDisplayCount verifies the TUNNELS column semantics differ by mode
+// (issue #105): masters use gRPC active-peer count; endpoints use admin-side
+// transport allocation count.
+//
+// Anti-stub: if tunnelDisplayCount always returns grpcTunnelCount, the endpoint
+// case returns 0 instead of 2 and the test fails.
+func TestTunnelDisplayCount(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		mode          string
+		grpcCount     int
+		allocations   int
+		wantCount     int
+	}{
+		{
+			name:        "master uses gRPC peer count",
+			mode:        "master",
+			grpcCount:   4,
+			allocations: 2,
+			wantCount:   4,
+		},
+		{
+			name:        "endpoint uses transport allocation count not gRPC",
+			mode:        "endpoint",
+			grpcCount:   0,
+			allocations: 2,
+			wantCount:   2,
+		},
+		{
+			name:        "endpoint with zero allocations shows 0",
+			mode:        "endpoint",
+			grpcCount:   3,
+			allocations: 0,
+			wantCount:   0,
+		},
+		{
+			name:        "master with zero peers shows 0",
+			mode:        "master",
+			grpcCount:   0,
+			allocations: 5,
+			wantCount:   0,
+		},
+		{
+			name:        "unknown mode falls back to gRPC count",
+			mode:        "client",
+			grpcCount:   1,
+			allocations: 9,
+			wantCount:   1,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tunnelDisplayCount(tc.mode, tc.grpcCount, tc.allocations)
+			if got != tc.wantCount {
+				t.Errorf("tunnelDisplayCount(%q, %d, %d) = %d, want %d",
+					tc.mode, tc.grpcCount, tc.allocations, got, tc.wantCount)
+			}
+		})
+	}
+}
+
 // TestRunDataPlaneProbesConcurrency verifies that runDataPlaneProbes handles
 // maxConcurrency ≤ 0 gracefully (defaults to 4) and does not deadlock.
 //

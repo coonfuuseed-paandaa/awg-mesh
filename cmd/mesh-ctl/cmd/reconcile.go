@@ -28,7 +28,9 @@ type reconcileNodeResult struct {
 }
 
 func newReconcileCommand() *cobra.Command {
-	return &cobra.Command{
+	var forceUnlock bool
+
+	cmd := &cobra.Command{
 		Use:   "reconcile",
 		Short: "Force-sync admin state to every node in the topology (idempotent)",
 		Long: `reconcile walks every master and endpoint node in the topology and pushes
@@ -40,10 +42,26 @@ For each endpoint: calls AddPeer for every master it is bound to.
 The command is idempotent — safe to re-run after manual intervention or
 post-recovery. Unchanged peers are reported but do not count as failures.
 
-Exit code: 0 if all nodes acknowledged, 1 if any gRPC failed.`,
+Exit code: 0 if all nodes acknowledged, 1 if any gRPC failed.
+
+Use --force-unlock to remove a stale reconcile.lock left by a crashed process.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Acquire advisory file lock so concurrent reconcile runs do not race.
 			lockPath := filepath.Join(configDir, "reconcile.lock")
+
+			// --force-unlock: remove the lock file and exit (operator recovery).
+			if forceUnlock {
+				if err := os.Remove(lockPath); err != nil {
+					if os.IsNotExist(err) {
+						fmt.Println("reconcile: no lock file found — nothing to remove")
+						return nil
+					}
+					return fmt.Errorf("reconcile: force-unlock: %w", err)
+				}
+				fmt.Printf("reconcile: removed stale lock file %s\n", lockPath)
+				return nil
+			}
+
+			// Acquire advisory file lock so concurrent reconcile runs do not race.
 			release, lockErr := acquireFileLock(lockPath)
 			if lockErr != nil {
 				return fmt.Errorf("reconcile: %w", lockErr)
@@ -106,6 +124,11 @@ Exit code: 0 if all nodes acknowledged, 1 if any gRPC failed.`,
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&forceUnlock, "force-unlock", false,
+		"Remove a stale reconcile.lock left by a crashed process and exit")
+
+	return cmd
 }
 
 // reconcileMasterNode pushes admin's endpoint key state to a single master.
