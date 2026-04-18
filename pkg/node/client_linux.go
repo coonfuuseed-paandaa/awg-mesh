@@ -102,6 +102,13 @@ type clientPlatformState struct {
 	// than package-level so parallel tests can swap independently without
 	// data races on a shared global.
 	configurePeerOnIfaceFn configurePeerOnIfaceFunc
+
+	// beforeExistingLinkLockFn is a test-only seam invoked in AddPeer's
+	// existing-link path immediately before acquiring existingLink.mu.
+	// Production default is nil (no-op). Tests can set this to signal when
+	// the AddPeer call has reached the per-peer-lock point, avoiding
+	// time.Sleep-based race assertions.
+	beforeExistingLinkLockFn func()
 }
 
 func initClientPlatformState() clientPlatformState {
@@ -218,9 +225,13 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	existingLink, hasExistingLink := c.platformState.byKey[pubkeyHex]
 	if hasExistingLink {
 		configureIface := existingLink.iface
+		beforeLinkLock := c.platformState.beforeExistingLinkLockFn
 		c.platformState.mu.Unlock()
 		if configureIface == nil {
 			return fmt.Errorf("existing interface is nil for peer %q", pubkeyHex[:8])
+		}
+		if beforeLinkLock != nil {
+			beforeLinkLock()
 		}
 		existingLink.mu.Lock()
 		err := c.configurePeerHook()(c, configureIface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)

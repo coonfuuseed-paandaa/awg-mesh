@@ -390,12 +390,22 @@ func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
 	runner.platformState.links = []*transportLink{runner.platformState.byKey[peerHex]}
 
 	configureEntered := make(chan struct{})
+	platformMuReleased := make(chan struct{})
 	resumeConfigure := make(chan struct{})
 	done := make(chan error, 1)
 
 	// Swap the per-instance hook (no global state — safe with t.Parallel).
+	// Acquire platformState.mu from INSIDE the stub to prove that AddPeer has
+	// released it before entering the reconfigure path. If AddPeer were still
+	// holding platformState.mu at this point, Lock() below would deadlock
+	// against the goroutine that issued AddPeer — the test's outer timeout
+	// would expire on platformMuReleased, which is the real failure mode we
+	// want to catch.
 	runner.platformState.configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
 		close(configureEntered)
+		runner.platformState.mu.Lock()
+		runner.platformState.mu.Unlock()
+		close(platformMuReleased)
 		<-resumeConfigure
 		return nil
 	}
@@ -410,15 +420,9 @@ func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
 		t.Fatal("existing-link configure path was not entered")
 	}
 
-	lockAcquired := make(chan struct{})
-	go func() {
-		runner.platformState.mu.Lock()
-		close(lockAcquired)
-		runner.platformState.mu.Unlock()
-	}()
 	select {
-	case <-lockAcquired:
-	case <-time.After(200 * time.Millisecond):
+	case <-platformMuReleased:
+	case <-time.After(time.Second):
 		close(resumeConfigure)
 		t.Fatal("expected client platformState mutex to be released before existing-peer configuration")
 	}
@@ -449,22 +453,45 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 
 	firstEntered := make(chan struct{})
 	firstResume := make(chan struct{})
-	secondStarted := make(chan struct{})
-	var order []int
-	var orderMu sync.Mutex
+	secondReachedLock := make(chan struct{})
+	configureCount := int32(0)
+	var firstInConfigure, secondInConfigure bool
+	var stateMu sync.Mutex
 
+	// configurePeerOnIfaceFn: first call blocks on firstResume (holding
+	// link.mu); second call would run straight through if it ever got past
+	// link.mu.Lock(). We assert the second call does NOT enter configure
+	// before the first releases link.mu.
 	runner.platformState.configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
-		// Signal that configure was entered; block until resumed.
-		select {
-		case <-firstEntered:
-		default:
+		stateMu.Lock()
+		if !firstInConfigure {
+			firstInConfigure = true
+			stateMu.Unlock()
 			close(firstEntered)
 			<-firstResume
+		} else {
+			secondInConfigure = true
+			stateMu.Unlock()
 		}
-		orderMu.Lock()
-		order = append(order, len(order)+1)
-		orderMu.Unlock()
+		configureCount++
 		return nil
+	}
+
+	// beforeExistingLinkLockFn: fires in the SECOND AddPeer call immediately
+	// before existingLink.mu.Lock(). Signalling here proves the second call
+	// truly reached the per-peer-lock point and is about to block. We only
+	// fire this once — first call's beforeLinkLock is not meaningful for this
+	// test because the first call doesn't block there.
+	var beforeLockFired int32
+	runner.platformState.beforeExistingLinkLockFn = func() {
+		stateMu.Lock()
+		if firstInConfigure && beforeLockFired == 0 {
+			beforeLockFired = 1
+			stateMu.Unlock()
+			close(secondReachedLock)
+			return
+		}
+		stateMu.Unlock()
 	}
 
 	done1 := make(chan error, 1)
@@ -481,17 +508,31 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 		t.Fatal("first AddPeer did not enter configure")
 	}
 
-	// Second AddPeer should block on link.mu.
+	// Launch second. It MUST block on existingLink.mu.Lock() inside AddPeer.
 	go func() {
-		close(secondStarted)
 		done2 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.2:51820", 25)
 	}()
 
-	<-secondStarted
-	// Give the second goroutine to reach the link.mu.Lock() point.
-	time.Sleep(50 * time.Millisecond)
+	// Synchronize on the beforeExistingLinkLockFn seam — after this fires the
+	// second goroutine is guaranteed to be at link.mu.Lock() (or past it).
+	select {
+	case <-secondReachedLock:
+	case <-time.After(time.Second):
+		close(firstResume) // unblock first to avoid leaking the goroutine
+		t.Fatal("second AddPeer did not reach existingLink.mu.Lock() seam")
+	}
 
-	// Release the first — second should now proceed.
+	// Prove serialization: second must NOT be in configurePeerOnIfaceFn yet
+	// because it is still blocked on existingLink.mu held by first.
+	stateMu.Lock()
+	if secondInConfigure {
+		stateMu.Unlock()
+		close(firstResume)
+		t.Fatal("second AddPeer entered configure before first released link.mu — serialization broken")
+	}
+	stateMu.Unlock()
+
+	// Release the first — second should now acquire link.mu and complete.
 	close(firstResume)
 
 	if err := <-done1; err != nil {
@@ -501,11 +542,9 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 		t.Fatalf("second AddPeer returned error: %v", err)
 	}
 
-	// Both should have completed (order has 2 entries).
-	orderMu.Lock()
-	defer orderMu.Unlock()
-	if len(order) != 2 {
-		t.Fatalf("expected 2 configure calls, got %d", len(order))
+	// Both should have completed.
+	if configureCount != 2 {
+		t.Fatalf("expected 2 configure calls, got %d", configureCount)
 	}
 }
 
