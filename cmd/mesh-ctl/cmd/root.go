@@ -37,6 +37,8 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(newConfigCommand())
 	rootCmd.AddCommand(newRoutingCommand())
 	rootCmd.AddCommand(newBootstrapCommand())
+	rootCmd.AddCommand(newInspectCommand())
+	rootCmd.AddCommand(newReconcileCommand())
 
 	return rootCmd
 }

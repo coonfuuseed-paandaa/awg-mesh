@@ -1624,3 +1624,219 @@ func assertCode(t *testing.T, err error, expected codes.Code) {
 		t.Fatalf("expected grpc error code %v, got %v (err=%v)", expected, code, err)
 	}
 }
+
+// writeDiskTransportState is a test helper that writes transport.yml to a temp dir.
+func writeDiskTransportState(t *testing.T, configDir string, state nodeTransportState) {
+	t.Helper()
+	path := filepath.Join(configDir, "transport.yml")
+	if err := saveNodeTransportState(path, state); err != nil {
+		t.Fatalf("writeDiskTransportState: %v", err)
+	}
+}
+
+func TestGetTransportState(t *testing.T) {
+	t.Parallel()
+
+	pubKey1 := make([]byte, 32)
+	pubKey1[0] = 0xAB
+	pubKey1[31] = 0xCD
+	pubKey1Hex := "ab" + strings.Repeat("00", 30) + "cd"
+
+	pubKey2 := make([]byte, 32)
+	pubKey2[0] = 0x12
+	pubKey2[31] = 0x34
+	pubKey2Hex := "12" + strings.Repeat("00", 30) + "34"
+
+	tests := []struct {
+		name         string
+		setupHandler func(t *testing.T, configDir string) *AgentHandler
+		wantMode     string
+		wantOverlay  string
+		wantPeerLen  int
+		verifyPeers  func(t *testing.T, peers []*proto.TransportPeerState)
+	}{
+		{
+			name: "master mode: returns tunnels from TunnelManager enriched with disk AllowedIPs",
+			setupHandler: func(t *testing.T, configDir string) *AgentHandler {
+				t.Helper()
+				writeDiskTransportState(t, configDir, nodeTransportState{
+					OverlayIP: "10.0.0.1/32",
+					Tunnels: []tunnelTransport{
+						{
+							Name:          "us-01",
+							PeerPublicKey: pubKey1Hex,
+							AllowedIPs:    []string{"10.0.1.0/24", "192.168.1.0/24"},
+						},
+					},
+				})
+				mgr := &testTunnelManager{
+					listTunnels: []TunnelInfo{
+						{Name: "us-01", OverlayIP: "10.0.1.1/32", Healthy: true, PeerPublicKey: pubKey1},
+					},
+				}
+				sp := &testNodeStateProvider{state: NodeState{
+					Name: "master-1", Mode: "master", OverlayIP: "10.0.0.1/32",
+				}}
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), mgr, nil, nil, nil, sp, nil, nil)
+			},
+			wantMode:    "master",
+			wantOverlay: "10.0.0.1/32",
+			wantPeerLen: 1,
+			verifyPeers: func(t *testing.T, peers []*proto.TransportPeerState) {
+				t.Helper()
+				p := peers[0]
+				if p.Name != "us-01" {
+					t.Errorf("peer name: want us-01, got %q", p.Name)
+				}
+				if p.PublicKeyHex != pubKey1Hex {
+					t.Errorf("public_key_hex: want %q, got %q", pubKey1Hex, p.PublicKeyHex)
+				}
+				wantIPs := []string{"10.0.1.0/24", "192.168.1.0/24"}
+				if !reflect.DeepEqual(p.AllowedIps, wantIPs) {
+					t.Errorf("allowed_ips: want %v, got %v", wantIPs, p.AllowedIps)
+				}
+				if p.LastHandshakeUnix != 0 {
+					t.Errorf("last_handshake_unix: want 0 for master mode, got %d", p.LastHandshakeUnix)
+				}
+			},
+		},
+		{
+			name: "endpoint mode: returns peers from PeerManager with name from disk",
+			setupHandler: func(t *testing.T, configDir string) *AgentHandler {
+				t.Helper()
+				const ts = int64(1700000000)
+				writeDiskTransportState(t, configDir, nodeTransportState{
+					OverlayIP: "10.0.0.2/32",
+					Tunnels: []tunnelTransport{
+						{Name: "master-1", PeerPublicKey: pubKey2Hex, AllowedIPs: []string{"10.0.0.0/8"}},
+					},
+				})
+				pm := &testPeerManager{
+					listPeers: []PeerInfo{
+						{PublicKey: pubKey2, AllowedIPs: []string{"10.0.0.0/8"}, LastHandshake: ts},
+					},
+				}
+				sp := &testNodeStateProvider{state: NodeState{
+					Name: "ep-1", Mode: "endpoint", OverlayIP: "10.0.0.2/32",
+				}}
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, pm, sp, nil, nil)
+			},
+			wantMode:    "endpoint",
+			wantOverlay: "10.0.0.2/32",
+			wantPeerLen: 1,
+			verifyPeers: func(t *testing.T, peers []*proto.TransportPeerState) {
+				t.Helper()
+				p := peers[0]
+				if p.Name != "master-1" {
+					t.Errorf("peer name: want master-1 (from disk), got %q", p.Name)
+				}
+				if p.PublicKeyHex != pubKey2Hex {
+					t.Errorf("public_key_hex: want %q, got %q", pubKey2Hex, p.PublicKeyHex)
+				}
+				const wantTS = int64(1700000000)
+				if p.LastHandshakeUnix != wantTS {
+					t.Errorf("last_handshake_unix: want %d, got %d", wantTS, p.LastHandshakeUnix)
+				}
+			},
+		},
+		{
+			name: "no managers: falls back to disk state only",
+			setupHandler: func(t *testing.T, configDir string) *AgentHandler {
+				t.Helper()
+				writeDiskTransportState(t, configDir, nodeTransportState{
+					OverlayIP: "10.0.0.3/32",
+					Tunnels: []tunnelTransport{
+						{Name: "fallback-peer", PeerPublicKey: pubKey1Hex, AllowedIPs: []string{"0.0.0.0/0"}},
+					},
+				})
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, nil, nil, nil, nil)
+			},
+			wantMode:    "",
+			wantOverlay: "10.0.0.3/32",
+			wantPeerLen: 1,
+			verifyPeers: func(t *testing.T, peers []*proto.TransportPeerState) {
+				t.Helper()
+				p := peers[0]
+				if p.Name != "fallback-peer" {
+					t.Errorf("peer name: want fallback-peer, got %q", p.Name)
+				}
+				if p.PublicKeyHex != pubKey1Hex {
+					t.Errorf("public_key_hex: want %q, got %q", pubKey1Hex, p.PublicKeyHex)
+				}
+				if !reflect.DeepEqual(p.AllowedIps, []string{"0.0.0.0/0"}) {
+					t.Errorf("allowed_ips: want [0.0.0.0/0], got %v", p.AllowedIps)
+				}
+			},
+		},
+		{
+			name: "no disk state and no managers: returns empty peer list",
+			setupHandler: func(t *testing.T, configDir string) *AgentHandler {
+				t.Helper()
+				// No transport.yml written; no managers injected.
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, nil, nil, nil, nil)
+			},
+			wantMode:    "",
+			wantOverlay: "",
+			wantPeerLen: 0,
+			verifyPeers: func(t *testing.T, peers []*proto.TransportPeerState) {},
+		},
+		{
+			name: "endpoint mode: peer without disk name uses pubkey prefix fallback",
+			setupHandler: func(t *testing.T, configDir string) *AgentHandler {
+				t.Helper()
+				// No disk state — peer name must fall back to first 8 hex chars.
+				pm := &testPeerManager{
+					listPeers: []PeerInfo{
+						{PublicKey: pubKey1, AllowedIPs: []string{"10.0.0.0/8"}, LastHandshake: 0},
+					},
+				}
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, pm, nil, nil, nil)
+			},
+			wantMode:    "",
+			wantOverlay: "",
+			wantPeerLen: 1,
+			verifyPeers: func(t *testing.T, peers []*proto.TransportPeerState) {
+				t.Helper()
+				// Fallback: first 8 hex chars of pubKey1Hex = "ab000000"
+				wantPrefix := pubKey1Hex[:8]
+				if peers[0].Name != wantPrefix {
+					t.Errorf("fallback peer name: want %q, got %q", wantPrefix, peers[0].Name)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			configDir := t.TempDir()
+			handler := tt.setupHandler(t, configDir)
+
+			resp, err := handler.GetTransportState(context.Background(), &proto.Empty{})
+			if err != nil {
+				t.Fatalf("GetTransportState returned unexpected error: %v", err)
+			}
+			if resp == nil {
+				t.Fatal("GetTransportState returned nil response")
+			}
+			if resp.Mode != tt.wantMode {
+				t.Errorf("mode: want %q, got %q", tt.wantMode, resp.Mode)
+			}
+			if resp.OverlayIp != tt.wantOverlay {
+				t.Errorf("overlay_ip: want %q, got %q", tt.wantOverlay, resp.OverlayIp)
+			}
+			if len(resp.Peers) != tt.wantPeerLen {
+				t.Fatalf("peers len: want %d, got %d (peers=%v)", tt.wantPeerLen, len(resp.Peers), resp.Peers)
+			}
+			tt.verifyPeers(t, resp.Peers)
+
+			// Anti-stub check: if GetTransportState returned a nil peers slice from a
+			// non-empty source, the body is likely stubbed.
+			if tt.wantPeerLen > 0 && resp.Peers == nil {
+				t.Error("anti-stub: wantPeerLen > 0 but resp.Peers is nil — body may be a stub")
+			}
+		})
+	}
+}

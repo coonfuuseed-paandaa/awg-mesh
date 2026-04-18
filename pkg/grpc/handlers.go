@@ -727,6 +727,121 @@ func (h *AgentHandler) GetHealth(_ context.Context, _ *proto.Empty) (*proto.Heal
 	}, nil
 }
 
+// GetTransportState returns a read-only dump of this node's in-memory peer state
+// for mesh-ctl inspect (v1.10.1). No private keys or PSKs are included.
+// Pre-v1.10.1 nodes return codes.Unimplemented via the embedded UnimplementedAwgAgentServer.
+func (h *AgentHandler) GetTransportState(_ context.Context, _ *proto.Empty) (*proto.TransportStateResponse, error) {
+	var nodeName, mode, overlayIP string
+	if h.stateProvider != nil {
+		state := h.stateProvider.GetNodeState()
+		nodeName = state.Name
+		mode = state.Mode
+		overlayIP = state.OverlayIP
+	}
+
+	// Load disk state once — used for allowed_ips enrichment and name lookup.
+	diskState, diskErr := loadNodeTransportState(h.configDir)
+	if diskErr != nil {
+		h.logger.Warn().Err(diskErr).Msg("GetTransportState: could not load disk transport state")
+		// diskState will be zero-value; we continue with runtime-only info.
+	}
+	if overlayIP == "" {
+		overlayIP = diskState.OverlayIP
+	}
+
+	// Build a lookup map: peerPublicKeyHex → TunnelTransport (from disk).
+	diskByKey := make(map[string]tunnelTransport, len(diskState.Tunnels))
+	for _, tt := range diskState.Tunnels {
+		if tt.PeerPublicKey != "" {
+			diskByKey[tt.PeerPublicKey] = tt
+		}
+	}
+
+	var peers []*proto.TransportPeerState
+
+	// Build a lookup map: name → TunnelTransport (from disk) for name-based lookups.
+	diskByName := make(map[string]tunnelTransport, len(diskState.Tunnels))
+	for _, tt := range diskState.Tunnels {
+		if tt.Name != "" {
+			diskByName[tt.Name] = tt
+		}
+	}
+
+	switch {
+	case h.tunnelMgr != nil:
+		// Master mode: runtime key comes from the live tunnel peer key.
+		// Disk key and allowed IPs come from transport.yml, looked up by tunnel name.
+		tunnels := h.tunnelMgr.ListTunnels()
+		peers = make([]*proto.TransportPeerState, 0, len(tunnels))
+		for _, t := range tunnels {
+			runtimeKeyHex := hex.EncodeToString(t.PeerPublicKey)
+			peer := &proto.TransportPeerState{
+				Name:              t.Name,
+				PublicKeyHex:      runtimeKeyHex,
+				LastHandshakeUnix: 0, // not surfaced through TunnelManager interface
+			}
+			// Populate disk fields. Prefer name-based lookup; fall back to runtime-key lookup.
+			if dt, ok := diskByName[t.Name]; ok {
+				peer.DiskPublicKeyHex = dt.PeerPublicKey
+				peer.DiskAllowedIps = append([]string(nil), dt.AllowedIPs...)
+				peer.AllowedIps = append([]string(nil), dt.AllowedIPs...) // runtime IPs same source for master
+			} else if dt, ok := diskByKey[runtimeKeyHex]; ok {
+				peer.DiskPublicKeyHex = dt.PeerPublicKey
+				peer.DiskAllowedIps = append([]string(nil), dt.AllowedIPs...)
+				peer.AllowedIps = append([]string(nil), dt.AllowedIPs...)
+			}
+			peers = append(peers, peer)
+		}
+
+	case h.peerMgr != nil:
+		// Endpoint mode: runtime key and allowed IPs come from live peer manager.
+		// Disk key and name come from transport.yml, looked up by runtime key first.
+		peerInfos := h.peerMgr.ListPeers()
+		peers = make([]*proto.TransportPeerState, 0, len(peerInfos))
+		for _, p := range peerInfos {
+			runtimeKeyHex := hex.EncodeToString(p.PublicKey)
+			name := runtimeKeyHex[:8] // fallback: first 8 hex chars
+			var diskKeyHex string
+			var diskAllowedIPs []string
+			if dt, ok := diskByKey[runtimeKeyHex]; ok {
+				if dt.Name != "" {
+					name = dt.Name
+				}
+				diskKeyHex = dt.PeerPublicKey
+				diskAllowedIPs = append([]string(nil), dt.AllowedIPs...)
+			}
+			peers = append(peers, &proto.TransportPeerState{
+				Name:              name,
+				PublicKeyHex:      runtimeKeyHex,
+				AllowedIps:        append([]string(nil), p.AllowedIPs...),
+				LastHandshakeUnix: p.LastHandshake,
+				DiskPublicKeyHex:  diskKeyHex,
+				DiskAllowedIps:    diskAllowedIPs,
+			})
+		}
+
+	default:
+		// Neither manager available; return disk state only (runtime = disk).
+		peers = make([]*proto.TransportPeerState, 0, len(diskState.Tunnels))
+		for _, tt := range diskState.Tunnels {
+			peers = append(peers, &proto.TransportPeerState{
+				Name:             tt.Name,
+				PublicKeyHex:     tt.PeerPublicKey,
+				AllowedIps:       append([]string(nil), tt.AllowedIPs...),
+				DiskPublicKeyHex: tt.PeerPublicKey,
+				DiskAllowedIps:   append([]string(nil), tt.AllowedIPs...),
+			})
+		}
+	}
+
+	return &proto.TransportStateResponse{
+		NodeName:  nodeName,
+		Mode:      mode,
+		OverlayIp: overlayIP,
+		Peers:     peers,
+	}, nil
+}
+
 // RotateToken updates the node's MESH_TOKEN hash atomically (write-to-temp + rename).
 func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequest) (*proto.RotateTokenResponse, error) {
 	newHash := req.NewTokenHash

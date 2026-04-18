@@ -231,3 +231,24 @@ message TunnelHealth {
   int64 last_check_ms = 3;
   int32 consecutive_failures = 4;
 }
+
+// GetTransportState — read-only node state dump for mesh-ctl inspect (v1.10.1).
+// Returns the node's in-memory peer state: configured overlay IP, per-peer
+// public keys, and allowed IPs. No private keys or PSKs are included.
+// Pre-v1.10.1 nodes return codes.Unimplemented.
+
+message TransportPeerState {
+  string name = 1;             // peer name (endpoint or master name)
+  string public_key_hex = 2;   // runtime public key (from live wg/tunnel state)
+  repeated string allowed_ips = 3;  // runtime allowed IP CIDRs (from live peer manager)
+  int64 last_handshake_unix = 4;    // Unix timestamp of last WireGuard handshake (0 = never)
+  string disk_public_key_hex = 5;   // disk public key (from transport.yml); empty = same as runtime or unknown
+  repeated string disk_allowed_ips = 6; // disk allowed IPs (from transport.yml); empty = same as runtime
+}
+
+message TransportStateResponse {
+  string node_name = 1;
+  string mode = 2;
+  string overlay_ip = 3;
+  repeated TransportPeerState peers = 4;
+}
