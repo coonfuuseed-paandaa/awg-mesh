@@ -343,7 +343,7 @@ func (d *Driver) phaseInit(ctx context.Context, step *NodeUpgradeStep) error {
 		},
 	})
 	if initErr != nil {
-		return fmt.Errorf("Init RPC for %s: %w", step.Name, initErr)
+		return fmt.Errorf("init RPC for %s: %w", step.Name, initErr)
 	}
 	return nil
 }

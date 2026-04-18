@@ -57,7 +57,7 @@ Use --from-schema to override auto-detection when the heuristic is ambiguous.`,
 			}
 
 			if schema == upgrade.SchemaCurrent {
-				fmt.Fprintln(cmd.ErrOrStderr(), "already current schema, nothing to do")
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "already current schema, nothing to do")
 				return nil
 			}
 
@@ -81,7 +81,7 @@ Use --from-schema to override auto-detection when the heuristic is ambiguous.`,
 				_ = os.Rename(bakPath, path)
 				return fmt.Errorf("write migrated compose to %s: %w", path, err)
 			}
-			fmt.Fprintf(cmd.ErrOrStderr(), "migrated %s (schema %s → current); original backed up to %s\n",
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "migrated %s (schema %s → current); original backed up to %s\n",
 				path, schema, bakPath)
 			return nil
 		},

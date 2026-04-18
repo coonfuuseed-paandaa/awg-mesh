@@ -22,17 +22,6 @@ func singleMasterTopo() *topology.Topology {
 	}
 }
 
-func masterAndEndpointTopo() *topology.Topology {
-	return &topology.Topology{
-		Masters: []topology.MasterNode{
-			{Name: "m1", Host: "m1.example.com", GRPCPort: 9090},
-		},
-		Endpoints: []topology.EndpointNode{
-			{Name: "ep-1", Host: "ep1.example.com", GRPCPort: 9090, Region: "us"},
-		},
-	}
-}
-
 // ─── minimal Driver setup ─────────────────────────────────────────────────────
 
 // setupDriver creates a Driver wired with fakes. renderOK writes a dummy compose
