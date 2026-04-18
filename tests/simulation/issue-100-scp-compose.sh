@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # tests/simulation/issue-100-scp-compose.sh
-# Integration test for local tracker issue #100: SFTP compose upload in
+# Smoke gate for local tracker issue #100: SFTP compose upload in
 # mesh-ctl upgrade --ssh.
 #
-# This test exercises the full upload -> deploy -> verify -> rollback cycle
-# using two Docker containers to simulate different filesystems (admin and
-# remote), which is the exact failure scenario from issue #100.
+# Current scope:
+#   1. Run the pkg/upgrade unit tests that validate path construction,
+#      SSHUpload hook wiring, rollback symmetry, and fallback behaviour.
+#   2. If Docker is available, boot an Alpine-SSHD container as a liveness
+#      check only — the full upload→deploy→verify→rollback harness needs a
+#      live AWG node gRPC server for the wait_ready phase and is deferred
+#      to the v1.10.5 harness (tracked via local tracker #110).
 #
 # Exit codes:
 #   0  — all checks passed
-#   1  — one or more checks failed
-#   77 — required tools not available (Docker, SSH server); test skipped
+#   1  — unit tests failed (Docker phase is NOT reached)
+#   77 — unit tests passed but required tools for Docker phase missing
 
 set -euo pipefail
 
@@ -50,44 +54,35 @@ else
     pass "unit tests: remoteComposePath, sshDeploy wiring, rollback upload"
 fi
 
-# ─── Docker-based integration test ───────────────────────────────────────────
-# Requires: docker, docker compose, bash 4+, ssh client
-# The test spins up a lightweight Alpine container with an OpenSSH server
-# acting as the "remote node", then uses the mesh-ctl binary to upload a
-# compose file via SFTP and run docker compose commands on it.
+# Hard gate — do NOT proceed to Docker phase if unit tests failed. The Docker
+# phase is a no-op liveness check today; running it after a broken unit suite
+# just adds noise without any coverage gain.
+if [[ $FAIL -gt 0 ]]; then
+    echo ""
+    echo "=== issue-100-scp-compose results: ${PASS} passed, ${FAIL} failed ==="
+    exit 1
+fi
 
-MESH_CTL="${MESH_CTL:-}"
+# ─── Docker SSH-server liveness check (no SFTP upload performed yet) ─────────
+# The full upload->deploy->verify->rollback harness is tracked for v1.10.5
+# (needs a live AWG node gRPC server for the wait_ready phase; see engram
+# #110). For now we only verify the sshd+sftp subsystem boots so operators
+# have a fast signal that prerequisites are in place.
+
 DOCKER="${DOCKER:-docker}"
 
-# Check for Docker availability.
 if ! command -v "$DOCKER" >/dev/null 2>&1; then
-    echo "Docker not available — skipping multi-host integration test (exit 77)"
-    if [[ $FAIL -gt 0 ]]; then exit 1; fi
+    echo "Docker not available — skipping sshd liveness (exit 77)"
     exit 77
 fi
 
 if ! "$DOCKER" info >/dev/null 2>&1; then
-    echo "Docker daemon not reachable — skipping multi-host integration test (exit 77)"
-    if [[ $FAIL -gt 0 ]]; then exit 1; fi
+    echo "Docker daemon not reachable — skipping sshd liveness (exit 77)"
     exit 77
 fi
 
-# Check for mesh-ctl binary.
-if [[ -z "$MESH_CTL" ]]; then
-    if command -v mesh-ctl >/dev/null 2>&1; then
-        MESH_CTL="mesh-ctl"
-    elif [[ -f "$ROOT_DIR/mesh-ctl" ]]; then
-        MESH_CTL="$ROOT_DIR/mesh-ctl"
-    else
-        echo "mesh-ctl binary not found (set MESH_CTL env var or build first)"
-        echo "Skipping Docker-based integration test (exit 77)"
-        if [[ $FAIL -gt 0 ]]; then exit 1; fi
-        exit 77
-    fi
-fi
-
 echo ""
-echo "=== issue-100-scp-compose: Docker integration test ==="
+echo "=== issue-100-scp-compose: Docker sshd liveness ==="
 echo "mesh-ctl: $MESH_CTL"
 
 # Unique test run ID for container and network names to avoid conflicts.
