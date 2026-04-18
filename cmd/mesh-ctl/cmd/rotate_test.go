@@ -9,13 +9,6 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 )
 
-// recordingDialer captures the target address passed to grpcclient.NewClient
-// without opening a real network connection. We wrap it as a thin test helper.
-type dialCapture struct {
-	captured string
-	err      error
-}
-
 // TestConnectMasterAgent_UsesTopologyGRPCPort verifies that connectMasterAgent
 // constructs the gRPC target from master.GRPCPort (topology field) rather than
 // the hard-coded fallback 9090.
