@@ -240,25 +240,26 @@ EOF
 # semantics documented in `mesh-ctl master prepare` output.
 # ---------------------------------------------------------------------------
 info "Pre-preparing nodes to generate auth tokens..."
+# stdout suppressed (noisy help text) but stderr preserved so failures surface.
 ${MESHCTL_BIN} \
     --topology "${TOPO_FILE}" \
     --config-dir "${CTL_CONFIG_DIR}" \
-    master prepare "${MASTER_RU_01}" > /dev/null 2>&1 || {
-    echo "ERROR: mesh-ctl master prepare ${MASTER_RU_01} failed" >&2
+    master prepare "${MASTER_RU_01}" > /dev/null || {
+    echo "ERROR: mesh-ctl master prepare ${MASTER_RU_01} failed (see stderr above)" >&2
     exit 3
 }
 ${MESHCTL_BIN} \
     --topology "${TOPO_FILE}" \
     --config-dir "${CTL_CONFIG_DIR}" \
-    master prepare "${MASTER_RU_02}" > /dev/null 2>&1 || {
-    echo "ERROR: mesh-ctl master prepare ${MASTER_RU_02} failed" >&2
+    master prepare "${MASTER_RU_02}" > /dev/null || {
+    echo "ERROR: mesh-ctl master prepare ${MASTER_RU_02} failed (see stderr above)" >&2
     exit 3
 }
 ${MESHCTL_BIN} \
     --topology "${TOPO_FILE}" \
     --config-dir "${CTL_CONFIG_DIR}" \
-    endpoint prepare "${ENDPOINT_US_01}" > /dev/null 2>&1 || {
-    echo "ERROR: mesh-ctl endpoint prepare ${ENDPOINT_US_01} failed" >&2
+    endpoint prepare "${ENDPOINT_US_01}" > /dev/null || {
+    echo "ERROR: mesh-ctl endpoint prepare ${ENDPOINT_US_01} failed (see stderr above)" >&2
     exit 3
 }
 
@@ -272,7 +273,7 @@ TOKEN_ENDPOINT_US_01=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_US_01}/mesh.token
 TOKEN_MASTER_RU_01_ESC="${TOKEN_MASTER_RU_01//\$/\$\$}"
 TOKEN_MASTER_RU_02_ESC="${TOKEN_MASTER_RU_02//\$/\$\$}"
 TOKEN_ENDPOINT_US_01_ESC="${TOKEN_ENDPOINT_US_01//\$/\$\$}"
-info "Tokens resolved: master-ru-01/02 + endpoint-us-01"
+info "Tokens resolved: ${MASTER_RU_01}/${MASTER_RU_02} + ${ENDPOINT_US_01}"
 
 # ---------------------------------------------------------------------------
 # Generate ephemeral compose file with pre-seeded MESH_TOKEN_HASH per node.
