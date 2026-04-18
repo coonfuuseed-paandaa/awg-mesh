@@ -24,6 +24,9 @@ Unified node binary (`awg-mesh-node`) + CLI control plane (`mesh-ctl`).
 - Prepare → deploy → init onboarding
 - Endpoint key rotation propagates without container restart (v1.10+, via `UpdateTunnelPeer` RPC — fixes the split-brain scenario in `.agent/investigations/issue-92-endpoint-init-propagation.md`)
 - `mesh-ctl master reload <name>` recovery primitive — force-reconciles admin-state pubkey to every bound endpoint on a named master
+- `mesh-ctl inspect <node>` — 3-column drift report (Admin | Disk | Runtime) per peer; exit 1 on drift (v1.10.1+)
+- `mesh-ctl reconcile` — idempotent topology-walk that force-syncs admin state to every node via gRPC (v1.10.1+)
+- `mesh-ctl status --verify-data-plane` — L3 data-plane health probes per (master, endpoint) pair with structured failure reasons (v1.10.1+)
 
 ## ARCHITECTURE
 

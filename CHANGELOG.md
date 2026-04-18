@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] — 2026-04-18
+
+### Added
+
+- **`mesh-ctl inspect <node>`** — 3-column drift report comparing admin expected state,
+  node disk state, and node runtime WireGuard state per peer. Connects to the node via the
+  new `GetTransportState` RPC (v1.10.1+); pre-v1.10.1 nodes return a graceful
+  `codes.Unimplemented` message and exit non-zero. Drift reasons surfaced:
+  `key_mismatch`, `ip_mismatch`, `runtime_only`, `admin_only`. Exit code 1 when any
+  drift is detected, 0 when all peers match. Local tracker issue #93.
+- **`mesh-ctl reconcile`** — idempotent topology-walk that force-syncs admin expected
+  state to every node. For each master calls `UpdateTunnelPeer` per bound endpoint; for
+  each endpoint calls `AddPeer` per bound master (`AlreadyExists` → unchanged, not failure).
+  Advisory file lock (`reconcile.lock`) prevents concurrent runs. Summary table with
+  `UPDATED`, `UNCHANGED`, `FAILED`, `SKIPPED` counters per node. Exit code 1 if any node
+  reports failures. Idempotent — safe to re-run after manual intervention or post-recovery.
+  Local tracker issue #93.
+- **`mesh-ctl status --verify-data-plane`** — opt-in L3 data-plane verification added to
+  the existing `status` command. Probes each (master, endpoint) pair by calling
+  `GetHealth` and `ListTunnels` concurrently per master. Structured failure reasons:
+  `missing_peer`, `key_mismatch`, `handshake_timeout`, `unreachable`. Supporting flags:
+  `--timeout` (per-probe, default 5 s) and `--concurrency` (max parallel master probes,
+  default 4). Exit code 1 if any broken pairs are found. Local tracker issue #93.
+- **`GetTransportState` gRPC RPC** on `AgentService` (`proto/agent.proto`,
+  `proto/types.proto`). Returns node name, mode, overlay IP, and per-peer state
+  (public key hex, allowed IPs, last handshake Unix timestamp). No private keys or PSKs
+  included. Pre-v1.10.1 nodes return `codes.Unimplemented` — `mesh-ctl inspect` detects
+  this and surfaces a human-readable upgrade message. Local tracker issue #93.
+- **`handshakeStaleThreshold = 3 * time.Minute`** named constant in `cmd/mesh-ctl/cmd/status.go`
+  for classifying WireGuard handshake age in `--verify-data-plane` probes.
+
+## [1.10.0] — 2026-04-18
+
 ### Added
 
 - **`UpdateTunnelPeer` gRPC RPC** on `AgentService` (`proto/agent.proto`, `proto/types.proto`).

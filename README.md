@@ -67,6 +67,13 @@ graph TB
 
 ## What's New
 
+### v1.10.1
+
+- **`mesh-ctl inspect <node>`** — 3-column drift report (Admin | Disk | Runtime) for any master or endpoint. Detects key mismatches and IP divergence between admin expected state, node-persisted state, and live WireGuard runtime. Exit 1 on drift. Requires node running v1.10.1+ (`GetTransportState` RPC).
+- **`mesh-ctl reconcile`** — idempotent topology-walk that force-syncs admin state to every node. Calls `UpdateTunnelPeer` per (master, endpoint) and `AddPeer` per (endpoint, master). Summary table per node. Safe to re-run after manual intervention or post-recovery.
+- **`mesh-ctl status --verify-data-plane`** — opt-in L3 verification layered onto the existing status command. Probes `GetHealth` + `ListTunnels` concurrently per master with configurable `--timeout` and `--concurrency`. Structured failure reasons: `missing_peer`, `key_mismatch`, `handshake_timeout`, `unreachable`.
+- **`GetTransportState` RPC** — new read-only gRPC endpoint on every node: returns overlay IP, mode, and per-peer public key hex + allowed IPs + last handshake. Used by `inspect` to compare against admin and runtime state.
+
 ### v1.8.0
 
 - **Internal review hardening** — closes 5 open issues (#20, #21, #23, #24, #25) with zero new runtime dependencies. All cover correctness, security, or observability.
@@ -956,6 +963,31 @@ The generated config maps each routing policy's DSCP value to the appropriate pl
 ```bash
 mesh-ctl status                   # mesh-wide status table (all nodes)
 mesh-ctl status --node <name>     # single node detail
+```
+
+### Data-plane verification and drift detection (v1.10.1)
+
+```bash
+# Verify L3 data-plane health for every (master, endpoint) pair.
+# Probes GetHealth + ListTunnels concurrently per master.
+# Structured failure reasons: missing_peer | key_mismatch | handshake_timeout | unreachable
+mesh-ctl status --verify-data-plane
+mesh-ctl status --verify-data-plane --timeout 10s --concurrency 8
+
+# Inspect expected vs disk vs runtime state for a specific node (drift report).
+# Columns: ADMIN (expected) | DISK (node persisted) | RUNTIME (live wg state).
+# Drift reasons surfaced: key_mismatch | ip_mismatch | runtime_only | admin_only
+# Exit 1 when drift is detected; exit 0 when all peers match.
+# Requires node running v1.10.1+; pre-v1.10.1 nodes return an upgrade message.
+mesh-ctl inspect master-01
+mesh-ctl inspect endpoint-us-01
+
+# Force-sync admin state to every node in the topology (idempotent).
+# For each master: calls UpdateTunnelPeer for every bound endpoint.
+# For each endpoint: calls AddPeer for every master it is bound to.
+# Safe to re-run after manual intervention or post-recovery.
+# Exit 1 if any node reports failures; summary table printed on completion.
+mesh-ctl reconcile
 ```
 
 ### AWG parameter rotation
