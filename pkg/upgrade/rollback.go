@@ -90,7 +90,13 @@ func sshRollback(cfg DriverConfig, step *NodeUpgradeStep, composePath string) er
 	}
 
 	addr := fmt.Sprintf("%s:%d", host, port)
-	remoteCmd := "docker compose -f " + shellQuote(composePath) + " up -d"
+	rPath := remoteBackupComposePath(cfg.RemoteComposeDir, step.Name)
+	remoteCmd := "docker compose -f " + shellQuote(rPath) + " up -d"
+
+	if cfg.SSHUpload != nil {
+		return cfg.SSHUpload(addr, user, opts.KeyPath, opts.AcceptNewHosts, composePath, rPath, remoteCmd)
+	}
+	// Fallback for tests that inject only SSHDeploy.
 	return cfg.SSHDeploy(addr, user, opts.KeyPath, opts.AcceptNewHosts, remoteCmd)
 }
 

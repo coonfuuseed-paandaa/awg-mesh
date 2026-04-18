@@ -80,6 +80,31 @@ mesh-ctl upgrade compose old-compose.yml > new-compose.yml
 # Migrates an older docker-compose.yml to current schema. Use --from-schema <ver> if auto-detection fails; --in-place to rewrite with .bak backup.
 ```
 
+**SSH-mode upgrade flags** (v1.11.0+):
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ssh` | false | SSH-trigger `docker compose up -d` on each node |
+| `--ssh-user` | root | SSH username |
+| `--ssh-port` | 22 | SSH port |
+| `--ssh-key` | | Path to SSH private key (empty = ssh-agent) |
+| `--accept-new-host-key` | false | Accept unknown SSH host keys (TOFU) |
+| `--remote-compose-dir` | `/etc/docker/compose` | Remote directory where compose files are uploaded before deployment |
+
+The `--remote-compose-dir` flag controls where the rendered compose file is uploaded on each remote node via SFTP before `docker compose up -d` is run. The SSH user must have write access to this directory.
+
+```bash
+# Standard upgrade via SSH (compose files uploaded to /etc/docker/compose)
+mesh-ctl upgrade v1.11.0 --ssh --ssh-key ~/.ssh/deploy -t mesh-topology.yml
+
+# Non-root SSH user: use a writable directory
+mesh-ctl upgrade v1.11.0 --ssh --ssh-key ~/.ssh/deploy \
+    --ssh-user deploy --remote-compose-dir /home/deploy/compose \
+    -t mesh-topology.yml
+```
+
+> **Note:** The SSH user needs write access to `--remote-compose-dir`. For `/etc/docker/compose` (default), the user typically needs `sudo` or membership in the `docker` group. Use `--remote-compose-dir /home/<user>/compose` for non-root deployments.
+
 ### v1.10.1
 
 - **`mesh-ctl inspect <node>`** — 3-column drift report (Admin | Disk | Runtime) for any master or endpoint. Detects key mismatches and IP divergence between admin expected state, node-persisted state, and live WireGuard runtime. Exit 1 on drift. Requires node running v1.10.1+ (`GetTransportState` RPC).

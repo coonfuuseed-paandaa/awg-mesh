@@ -365,3 +365,147 @@ func TestShellQuote_EscapesSingleQuote(t *testing.T) {
 func containsStr(s, sub string) bool {
 	return strings.Contains(s, sub)
 }
+
+// ─── remoteComposePath / remoteBackupComposePath ──────────────────────────────
+
+func TestRemoteComposePath_Default(t *testing.T) {
+	got := remoteComposePath("", "my-node")
+	want := "/etc/docker/compose/my-node-docker-compose.yml"
+	if got != want {
+		t.Errorf("remoteComposePath: got %q want %q", got, want)
+	}
+}
+
+func TestRemoteComposePath_Custom(t *testing.T) {
+	got := remoteComposePath("/opt/mesh/compose", "ep-01")
+	want := "/opt/mesh/compose/ep-01-docker-compose.yml"
+	if got != want {
+		t.Errorf("remoteComposePath: got %q want %q", got, want)
+	}
+}
+
+func TestRemoteBackupComposePath_Default(t *testing.T) {
+	got := remoteBackupComposePath("", "my-node")
+	want := "/etc/docker/compose/my-node-docker-compose.yml.bak"
+	if got != want {
+		t.Errorf("remoteBackupComposePath: got %q want %q", got, want)
+	}
+}
+
+// ─── sshDeploy SSHUpload wiring ───────────────────────────────────────────────
+
+// TestSSHDeploy_UsesSSHUploadWhenConfigured verifies sshDeploy calls SSHUpload
+// with the remote path (not admin path) when SSHUpload is set.
+func TestSSHDeploy_UsesSSHUploadWhenConfigured(t *testing.T) {
+	topo := singleMasterTopo()
+	var capturedAdminPath, capturedRemotePath, capturedRemoteCmd string
+	drv, step, _ := setupDriver(t, topo, func(c *DriverConfig) {
+		c.SSHOpts = SSHOpts{Enabled: true, User: "root", Port: 22}
+		c.SSHDeploy = func(addr, user, keyPath string, acceptNewHosts bool, remoteCmd string) error {
+			t.Error("SSHDeploy should not be called when SSHUpload is set")
+			return nil
+		}
+		c.SSHUpload = func(addr, user, keyPath string, acceptNewHosts bool, adminPath, remotePath, remoteCmd string) error {
+			capturedAdminPath = adminPath
+			capturedRemotePath = remotePath
+			capturedRemoteCmd = remoteCmd
+			return nil
+		}
+		c.RemoteComposeDir = "/etc/docker/compose"
+	})
+
+	adminPath := liveComposePath(drv.cfg, step.Name)
+	err := drv.sshDeploy(step, adminPath)
+	if err != nil {
+		t.Fatalf("sshDeploy: unexpected error: %v", err)
+	}
+
+	wantRemotePath := "/etc/docker/compose/m1-docker-compose.yml"
+	if capturedRemotePath != wantRemotePath {
+		t.Errorf("remote path: got %q want %q", capturedRemotePath, wantRemotePath)
+	}
+	if capturedAdminPath != adminPath {
+		t.Errorf("admin path: got %q want %q", capturedAdminPath, adminPath)
+	}
+	wantCmd := "docker compose -f '/etc/docker/compose/m1-docker-compose.yml' up -d"
+	if capturedRemoteCmd != wantCmd {
+		t.Errorf("remote cmd: got %q want %q", capturedRemoteCmd, wantCmd)
+	}
+}
+
+// TestSSHDeploy_FallsBackToSSHDeployWhenSSHUploadNil verifies the legacy deploy
+// path is used when SSHUpload is nil (test-only scenario).
+func TestSSHDeploy_FallsBackToSSHDeployWhenSSHUploadNil(t *testing.T) {
+	topo := singleMasterTopo()
+	deployCalled := false
+	drv, step, _ := setupDriver(t, topo, func(c *DriverConfig) {
+		c.SSHOpts = SSHOpts{Enabled: true, User: "root", Port: 22}
+		c.SSHDeploy = func(addr, user, keyPath string, acceptNewHosts bool, remoteCmd string) error {
+			deployCalled = true
+			return nil
+		}
+		c.SSHUpload = nil
+	})
+
+	adminPath := liveComposePath(drv.cfg, step.Name)
+	err := drv.sshDeploy(step, adminPath)
+	if err != nil {
+		t.Fatalf("sshDeploy: unexpected error: %v", err)
+	}
+	if !deployCalled {
+		t.Error("SSHDeploy should be called when SSHUpload is nil")
+	}
+}
+
+// TestRollbackNode_UploadsBakCompose verifies that sshRollback calls SSHUpload
+// with the .bak remote path (not admin path) so the backup compose is transferred
+// to the remote host before the rollback docker compose command runs (FR-5).
+func TestRollbackNode_UploadsBakCompose(t *testing.T) {
+	topo := singleMasterTopo()
+	_, step, dir := setupDriver(t, topo)
+
+	nd := filepath.Join(dir, "nodes", "m1")
+	bakContent := []byte("# rollback backup compose\nservices: {}")
+	bakPath := filepath.Join(nd, "m1-docker-compose.yml.bak")
+	if err := os.WriteFile(bakPath, bakContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var capturedAdminPath, capturedRemotePath, capturedRemoteCmd string
+	cfg := DriverConfig{
+		ConfigDir:        dir,
+		Topology:         topo,
+		DowntimeBudget:   1, // immediate timeout — we only care about the upload call
+		RemoteComposeDir: "/etc/docker/compose",
+		SSHOpts:          SSHOpts{Enabled: true, User: "root", Port: 22},
+		SSHDeploy: func(addr, user, keyPath string, acceptNewHosts bool, remoteCmd string) error {
+			t.Error("SSHDeploy should not be called when SSHUpload is set")
+			return nil
+		},
+		SSHUpload: func(addr, user, keyPath string, acceptNewHosts bool, adminPath, remotePath, remoteCmd string) error {
+			capturedAdminPath = adminPath
+			capturedRemotePath = remotePath
+			capturedRemoteCmd = remoteCmd
+			return nil
+		},
+	}
+
+	// rollbackNode will fail at waitReady (no gRPC server) but the SSHUpload
+	// call must have happened before that.
+	_ = rollbackNode(context.Background(), cfg, step)
+
+	wantAdminPath := filepath.Join(nd, "m1-docker-compose.yml")
+	if capturedAdminPath != wantAdminPath {
+		t.Errorf("admin path: got %q want %q", capturedAdminPath, wantAdminPath)
+	}
+
+	wantRemotePath := "/etc/docker/compose/m1-docker-compose.yml.bak"
+	if capturedRemotePath != wantRemotePath {
+		t.Errorf("remote path: got %q want %q", capturedRemotePath, wantRemotePath)
+	}
+
+	wantRemoteCmd := "docker compose -f '/etc/docker/compose/m1-docker-compose.yml.bak' up -d"
+	if capturedRemoteCmd != wantRemoteCmd {
+		t.Errorf("remote cmd: got %q want %q", capturedRemoteCmd, wantRemoteCmd)
+	}
+}

@@ -36,6 +36,20 @@ type SSHOpts struct {
 //	remoteCmd — shell command to execute on the remote host
 type SSHDeployer func(addr, user, keyPath string, acceptNewHosts bool, remoteCmd string) error
 
+// SSHUploader uploads a local file to a remote path via SFTP over an existing SSH connection,
+// then executes remoteCmd on the same host. This avoids a second TCP connection.
+//
+// Parameters:
+//
+//	addr          — "host:port"
+//	user          — SSH username
+//	keyPath       — path to private key; empty = ssh-agent
+//	acceptNewHosts — TOFU for unknown host keys
+//	adminPath     — local (admin-side) file path to upload
+//	remotePath    — remote absolute path to write (parent dir created if missing)
+//	remoteCmd     — shell command to execute after upload
+type SSHUploader func(addr, user, keyPath string, acceptNewHosts bool, adminPath, remotePath, remoteCmd string) error
+
 // DataPlaneProber is a function type that matches the signature of
 // runDataPlaneProbes from cmd/mesh-ctl/cmd/status.go.  Using a function type
 // here lets tests inject a fake implementation without a full gRPC server.
@@ -80,6 +94,13 @@ type DriverConfig struct {
 	// Must be set when SSHOpts.Enabled == true; ignored otherwise.
 	// Inject from the cmd package via upgrade.go to avoid a circular import.
 	SSHDeploy SSHDeployer
+	// SSHUpload uploads a compose file via SFTP and then runs remoteCmd.
+	// When SSHOpts.Enabled is true and SSHUpload is set, phaseDeploy and rollbackNode
+	// use SSHUpload instead of SSHDeploy. Must be set alongside SSHDeploy when SSH is enabled.
+	SSHUpload SSHUploader
+	// RemoteComposeDir is the remote directory where compose files are uploaded
+	// during SSH-mode deploy. Default: DefaultRemoteComposeDir ("/etc/docker/compose").
+	RemoteComposeDir string
 	// Prober is the data-plane probe function; nil = skip verify (tests).
 	Prober DataPlaneProber
 	// Reconcile is called during rollback to restore peer state.
@@ -278,7 +299,13 @@ func (d *Driver) sshDeploy(step *NodeUpgradeStep, composePath string) error {
 	}
 
 	addr := fmt.Sprintf("%s:%d", host, port)
-	remoteCmd := "docker compose -f " + shellQuote(composePath) + " up -d"
+	rPath := remoteComposePath(d.cfg.RemoteComposeDir, step.Name)
+	remoteCmd := "docker compose -f " + shellQuote(rPath) + " up -d"
+
+	if d.cfg.SSHUpload != nil {
+		return d.cfg.SSHUpload(addr, user, opts.KeyPath, opts.AcceptNewHosts, composePath, rPath, remoteCmd)
+	}
+	// Fallback: SSHUpload not wired (legacy / test-only) — passes admin path to remote.
 	return d.cfg.SSHDeploy(addr, user, opts.KeyPath, opts.AcceptNewHosts, remoteCmd)
 }
 

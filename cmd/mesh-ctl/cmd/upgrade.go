@@ -21,15 +21,16 @@ import (
 // then executes the rolling upgrade node-by-node.
 func newUpgradeCommand() *cobra.Command {
 	var (
-		orderFlag      []string
-		dryRun         bool
-		sshEnabled     bool
-		sshUser        string
-		sshPort        int
-		sshKey         string
-		acceptNewHosts bool
-		downtimeSecs   int
-		deployWaitSecs int
+		orderFlag        []string
+		dryRun           bool
+		sshEnabled       bool
+		sshUser          string
+		sshPort          int
+		sshKey           string
+		acceptNewHosts   bool
+		downtimeSecs     int
+		deployWaitSecs   int
+		remoteComposeDir string
 	)
 
 	cmd := &cobra.Command{
@@ -122,16 +123,18 @@ Exit code: 0 = all nodes succeeded; 1 = one or more nodes failed or rolled back.
 			}
 
 			cfg := upgrade.DriverConfig{
-				ConfigDir:      configDir,
-				Topology:       topo,
-				Logger:         logger,
-				SSHOpts:        sshOpts,
-				SSHDeploy:      buildSSHDeployer(sshOpts),
-				DowntimeBudget: time.Duration(downtimeSecs) * time.Second,
-				DeployWait:     time.Duration(deployWaitSecs) * time.Second,
-				Prober:         buildProberAdapter(topo),
-				Reconcile:      buildReconcileAdapter(topo),
-				RenderCompose:  buildComposeRenderer(),
+				ConfigDir:        configDir,
+				Topology:         topo,
+				Logger:           logger,
+				SSHOpts:          sshOpts,
+				SSHDeploy:        buildSSHDeployer(sshOpts),
+				SSHUpload:        buildSSHUploader(sshOpts),
+				RemoteComposeDir: remoteComposeDir,
+				DowntimeBudget:   time.Duration(downtimeSecs) * time.Second,
+				DeployWait:       time.Duration(deployWaitSecs) * time.Second,
+				Prober:           buildProberAdapter(topo),
+				Reconcile:        buildReconcileAdapter(topo),
+				RenderCompose:    buildComposeRenderer(),
 			}
 			drv := upgrade.NewDriver(cfg)
 
@@ -191,6 +194,8 @@ Exit code: 0 = all nodes succeeded; 1 = one or more nodes failed or rolled back.
 	cmd.Flags().BoolVar(&acceptNewHosts, "accept-new-host-key", false, "Accept unknown SSH host keys (TOFU; use only on first contact)")
 	cmd.Flags().IntVar(&downtimeSecs, "downtime-budget", 60, "Per-node gRPC ready poll budget in seconds")
 	cmd.Flags().IntVar(&deployWaitSecs, "deploy-wait", 120, "Manual-deploy gRPC poll window in seconds")
+	cmd.Flags().StringVar(&remoteComposeDir, "remote-compose-dir", upgrade.DefaultRemoteComposeDir,
+		"Remote directory where compose files are uploaded during SSH-mode deploy (default: /etc/docker/compose)")
 
 	cmd.AddCommand(newUpgradeStatusCommand())
 
@@ -274,6 +279,59 @@ func buildSSHDeployer(opts upgrade.SSHOpts) upgrade.SSHDeployer {
 		}
 		defer func() { _ = sess.Close() }()
 
+		sess.Stdout = os.Stdout
+		sess.Stderr = os.Stderr
+		if runErr := sess.Run(remoteCmd); runErr != nil {
+			if exitErr, ok := runErr.(*ssh.ExitError); ok {
+				return fmt.Errorf("remote command exited %d: %s", exitErr.ExitStatus(), remoteCmd)
+			}
+			return fmt.Errorf("remote command failed: %w", runErr)
+		}
+		return nil
+	}
+}
+
+// buildSSHUploader returns an upgrade.SSHUploader that dials SSH once, uploads
+// the compose file via SFTP subchannel, then executes remoteCmd on the same client.
+// This avoids a second TCP connection and reuses the authenticated session.
+func buildSSHUploader(opts upgrade.SSHOpts) upgrade.SSHUploader {
+	if !opts.Enabled {
+		return nil
+	}
+	return func(addr, user, keyPath string, acceptNewHosts bool, adminPath, remotePath, remoteCmd string) error {
+		host, _, err := parseHostPort(addr)
+		if err != nil {
+			host = addr
+		}
+		port := opts.Port
+		if port == 0 {
+			port = 22
+		}
+
+		sshClientOpts := bootstrapOpts{
+			host:             host,
+			user:             user,
+			port:             port,
+			sshKey:           keyPath,
+			acceptNewHostKey: acceptNewHosts,
+		}
+		client, dialErr := dialSSH(sshClientOpts, log.With().Str("node", host).Logger())
+		if dialErr != nil {
+			return fmt.Errorf("SSH dial %s: %w", addr, dialErr)
+		}
+		defer func() { _ = client.Close() }()
+
+		// Upload compose via SFTP subchannel on the same TCP connection (FR-1).
+		if uploadErr := upgrade.UploadComposeFile(client, adminPath, remotePath); uploadErr != nil {
+			return fmt.Errorf("SFTP upload compose to %s:%s: %w", addr, remotePath, uploadErr)
+		}
+
+		// Run docker compose command using the remote path (FR-4).
+		sess, sessErr := client.NewSession()
+		if sessErr != nil {
+			return fmt.Errorf("SSH new session: %w", sessErr)
+		}
+		defer func() { _ = sess.Close() }()
 		sess.Stdout = os.Stdout
 		sess.Stderr = os.Stderr
 		if runErr := sess.Run(remoteCmd); runErr != nil {
