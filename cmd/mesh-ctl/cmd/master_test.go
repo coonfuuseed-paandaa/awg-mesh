@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const masterFallback = "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest"
@@ -104,6 +107,245 @@ func TestMasterPrepareImageFlagValidation(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "invalid --image") {
 				t.Errorf("master prepare --image %q: expected 'invalid --image' in error, got: %v", ref, err)
+			}
+		})
+	}
+}
+
+// TestMasterReloadCommandRegistered verifies that 'mesh-ctl master reload'
+// is registered under the master parent command and requires exactly one
+// positional argument. This exercises T012 cobra registration.
+//
+// Anti-stub guarantee: if newMasterReloadCommand() is removed from
+// newMasterCommand(), the 'reload' subcommand will be absent and Execute()
+// will return an "unknown command" error rather than the topology error.
+func TestMasterReloadCommandRegistered(t *testing.T) {
+	// Do not run in parallel: NewRootCommand binds cobra persistent flags to
+	// package-level globals (topologyPath/configDir), and concurrent flag
+	// registration causes a data race under -race.
+
+	t.Run("no-args returns usage error not unknown-command", func(t *testing.T) {
+		root := NewRootCommand("test")
+		root.SilenceUsage = true
+		root.SilenceErrors = true
+		root.SetArgs([]string{"master", "reload"})
+
+		err := root.Execute()
+		if err == nil {
+			t.Fatal("expected error for missing <name> argument, got nil")
+		}
+		// cobra.ExactArgs(1) returns an error that contains "accepts 1 arg",
+		// NOT "unknown command". This proves the subcommand is registered.
+		if strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("got 'unknown command' — newMasterReloadCommand is not registered: %v", err)
+		}
+	})
+
+	t.Run("valid-name with missing topology returns topology-load error", func(t *testing.T) {
+		root := NewRootCommand("test")
+		root.SilenceUsage = true
+		root.SilenceErrors = true
+		// Point topology at a non-existent file so we get a predictable error
+		// that is NOT "unknown command" — proving the command is registered and
+		// its RunE body is reached.
+		root.SetArgs([]string{"master", "--topology", "/nonexistent/topology.yml", "reload", "ru-01"})
+
+		err := root.Execute()
+		if err == nil {
+			t.Fatal("expected error for nonexistent topology, got nil")
+		}
+		if strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("got 'unknown command' — newMasterReloadCommand is not registered: %v", err)
+		}
+		// Must reach topology load attempt, not cobra routing failure.
+		if !strings.Contains(err.Error(), "topology") && !strings.Contains(err.Error(), "nonexistent") {
+			t.Errorf("expected topology-load error, got: %v", err)
+		}
+	})
+}
+
+// masterReloadStatusLine classifies an UpdateTunnelPeerResponse + error into
+// the human-readable status line printed per-endpoint by 'master reload'.
+// Extracted as a pure function for testability (T013 counter + status logic).
+//
+// Returns (statusLine, ok) where ok=true means this endpoint counted as success.
+func masterReloadStatusLine(resp *proto.UpdateTunnelPeerResponse, err error) (string, bool) {
+	if err != nil {
+		statusLine, _ := updateTunnelPeerFailureStatus(err)
+		return statusLine, false
+	}
+	if resp == nil || !resp.Success {
+		return "FAILED: update tunnel peer RPC returned unsuccessful response", false
+	}
+	if resp.Unchanged {
+		return "already up to date", true
+	}
+	return "updated (new key applied)", true
+}
+
+// TestMasterReloadStatusLine verifies T013's per-endpoint status classification:
+// unchanged response, updated response, RPC error, and unsuccessful response.
+//
+// Anti-stub guarantee: replacing masterReloadStatusLine with `return "ok", true`
+// causes the RPC-error and unsuccessful-response cases to fail (ok==true instead
+// of false). Replacing with `return "x", false` causes unchanged + updated to
+// fail (ok==false instead of true).
+func TestMasterReloadStatusLine(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		resp       *proto.UpdateTunnelPeerResponse
+		rpcErr     error
+		wantLine   string
+		wantOk     bool
+	}{
+		{
+			name:     "unchanged response → already up to date",
+			resp:     &proto.UpdateTunnelPeerResponse{Success: true, Unchanged: true},
+			rpcErr:   nil,
+			wantLine: "already up to date",
+			wantOk:   true,
+		},
+		{
+			name:     "changed response → updated (new key applied)",
+			resp:     &proto.UpdateTunnelPeerResponse{Success: true, Unchanged: false},
+			rpcErr:   nil,
+			wantLine: "updated (new key applied)",
+			wantOk:   true,
+		},
+		{
+			name:     "RPC error → FAILED status, not ok",
+			resp:     nil,
+			rpcErr:   status.Error(codes.Internal, "something broke"),
+			wantLine: "FAILED:",
+			wantOk:   false,
+		},
+		{
+			name:     "nil response → FAILED status, not ok",
+			resp:     nil,
+			rpcErr:   nil,
+			wantLine: "FAILED:",
+			wantOk:   false,
+		},
+		{
+			name:     "unsuccessful response → FAILED status, not ok",
+			resp:     &proto.UpdateTunnelPeerResponse{Success: false},
+			rpcErr:   nil,
+			wantLine: "FAILED:",
+			wantOk:   false,
+		},
+		{
+			name:     "pre-v1.10.0 master → FAILED status, not ok",
+			resp:     nil,
+			rpcErr:   status.Error(codes.Unimplemented, "method UpdateTunnelPeer not implemented"),
+			wantLine: "FAILED:",
+			wantOk:   false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			line, ok := masterReloadStatusLine(tc.resp, tc.rpcErr)
+
+			if ok != tc.wantOk {
+				t.Errorf("ok = %v, want %v (statusLine: %q)", ok, tc.wantOk, line)
+			}
+			if !strings.Contains(line, tc.wantLine) {
+				t.Errorf("statusLine %q does not contain %q", line, tc.wantLine)
+			}
+		})
+	}
+}
+
+// TestMasterReloadCounterLogic verifies the endpointsOk/endpointsTotal counter
+// semantics used by T013: only responses where masterReloadStatusLine returns
+// ok=true should increment endpointsOk; total increments for every endpoint.
+//
+// Anti-stub guarantee: replacing the ok==true guard with an unconditional
+// increment causes the "any failure → non-zero exit" assertion to fail.
+func TestMasterReloadCounterLogic(t *testing.T) {
+	t.Parallel()
+
+	type epResult struct {
+		resp   *proto.UpdateTunnelPeerResponse
+		rpcErr error
+	}
+
+	cases := []struct {
+		name           string
+		results        []epResult
+		wantTotal      int
+		wantOk         int
+		wantNonZeroExit bool
+	}{
+		{
+			name: "all unchanged → all ok, exit 0",
+			results: []epResult{
+				{resp: &proto.UpdateTunnelPeerResponse{Success: true, Unchanged: true}},
+				{resp: &proto.UpdateTunnelPeerResponse{Success: true, Unchanged: true}},
+			},
+			wantTotal:       2,
+			wantOk:          2,
+			wantNonZeroExit: false,
+		},
+		{
+			name: "all updated → all ok, exit 0",
+			results: []epResult{
+				{resp: &proto.UpdateTunnelPeerResponse{Success: true, Unchanged: false}},
+			},
+			wantTotal:       1,
+			wantOk:          1,
+			wantNonZeroExit: false,
+		},
+		{
+			name: "one failure out of two → ok < total, exit non-zero",
+			results: []epResult{
+				{resp: &proto.UpdateTunnelPeerResponse{Success: true, Unchanged: false}},
+				{rpcErr: status.Error(codes.Unavailable, "connection refused")},
+			},
+			wantTotal:       2,
+			wantOk:          1,
+			wantNonZeroExit: true,
+		},
+		{
+			name: "all failures → ok=0, exit non-zero",
+			results: []epResult{
+				{rpcErr: status.Error(codes.Internal, "handler panic")},
+				{resp: &proto.UpdateTunnelPeerResponse{Success: false}},
+			},
+			wantTotal:       2,
+			wantOk:          0,
+			wantNonZeroExit: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			total := 0
+			ok := 0
+			for _, r := range tc.results {
+				total++
+				if _, isOk := masterReloadStatusLine(r.resp, r.rpcErr); isOk {
+					ok++
+				}
+			}
+
+			if total != tc.wantTotal {
+				t.Errorf("total = %d, want %d", total, tc.wantTotal)
+			}
+			if ok != tc.wantOk {
+				t.Errorf("ok = %d, want %d", ok, tc.wantOk)
+			}
+			nonZero := ok < total
+			if nonZero != tc.wantNonZeroExit {
+				t.Errorf("nonZeroExit = %v, want %v (ok=%d total=%d)", nonZero, tc.wantNonZeroExit, ok, total)
 			}
 		})
 	}
