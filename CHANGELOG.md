@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unreachable self-/32 IP-equality check because the preceding `ones >= 30` guard
   swallowed all /32 prefixes. Behavior was correct for current /24-class overlay
   topologies but would silently drop legitimate /32 host routes from peers in
-  future deployments. Filter narrowed to `/30..</31` for transport subnets;
+  future deployments. Filter now skips transport subnets `/30` and `/31` only;
   /32 self-IP check now actually reachable. Regression test
   `TestEndpointConfigureTransportInstallsNonSelfHostRoute` covers the gap.
   Discovered by post-release multi-model code review (CONSOLIDATED.md).
@@ -644,9 +644,7 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.2...HEAD
-[1.9.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.1...v1.9.2
-[1.9.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.0...v1.9.1
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.1...HEAD
 [1.9.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.7.0...v1.8.0
