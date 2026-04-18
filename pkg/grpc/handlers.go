@@ -521,9 +521,26 @@ func (h *AgentHandler) saveNodeTransportStateAfterPeerAdded(req *proto.AddPeerRe
 		nextTunnels = append(nextTunnels, entry)
 	}
 
+	// FR-3: populate overlay_ip from the running node state when the disk state
+	// has it empty. Endpoint nodes write transport.yml before their overlay IP is
+	// known to the disk-only LoadNodeTransportState call above; fall back to
+	// stateProvider (which reads from node.yml / --overlay-ip flag) so the field
+	// is always populated after AddPeer completes.
+	overlayIP := strings.TrimSpace(state.OverlayIP)
+	if overlayIP == "" && h.stateProvider != nil {
+		if nodeState := h.stateProvider.GetNodeState(); nodeState.OverlayIP != "" {
+			overlayIP = strings.TrimSpace(nodeState.OverlayIP)
+		}
+	}
+
+	h.logger.Info().
+		Str("overlay_ip", overlayIP).
+		Strs("allowed_ips", req.GetAllowedIps()).
+		Msg("AddPeer: persisting transport state with allowed_ips")
+
 	return saveNodeTransportState(filepath.Join(h.configDir, "transport.yml"), nodeTransportState{
 		SchemaVersion: transport.CurrentSchemaVersion,
-		OverlayIP:     strings.TrimSpace(state.OverlayIP),
+		OverlayIP:     overlayIP,
 		Tunnels:       nextTunnels,
 	})
 }

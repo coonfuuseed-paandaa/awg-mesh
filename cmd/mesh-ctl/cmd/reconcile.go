@@ -229,6 +229,11 @@ func reconcileEndpointNode(
 		return result
 	}
 
+	// Load transport allocator once — used to look up transport subnets per
+	// (master, endpoint) pair so that AddPeer includes the full allowed_ips list
+	// (FR-1: transport /30 + master overlay /32 + all overlay range CIDRs).
+	alloc, allocErr := loadOrCreateAllocator(cfgDir, topo)
+
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
 		Target:   ep.GRPCAddr(),
 		Token:    token,
@@ -253,12 +258,40 @@ func reconcileEndpointNode(
 			continue
 		}
 
+		// Build the full allowed_ips list: transport /30 + master overlay /32 +
+		// all overlay range CIDRs. Fall back to master overlay /32 only when the
+		// allocator is unavailable (e.g. transport.yml not yet written).
+		var allowedIPs []string
+		var transportSubnet string
+		var localTransportIP, peerTransportIP string
+		if allocErr == nil {
+			if allocation, aErr := alloc.Allocate(m.Name, ep.Name); aErr == nil {
+				transportSubnet = allocation.Subnet.String()
+				localTransportIP = allocation.EndpointIP.String()
+				peerTransportIP = allocation.MasterIP.String()
+				if aips, bErr := topology.BuildAllowedIPsForEndpoint(topo, m.OverlayIP, transportSubnet); bErr == nil {
+					allowedIPs = aips
+				}
+			}
+		}
+		if len(allowedIPs) == 0 {
+			// Minimal fallback: at least send the master overlay /32 so the
+			// endpoint has a route to reach the master on the overlay network.
+			allowedIPs = []string{m.OverlayIP + "/32"}
+			fmt.Fprintf(os.Stderr, "endpoint %s: master %s: transport allocator unavailable, using fallback allowed_ips\n", ep.Name, m.Name)
+		}
+
+		fmt.Printf("reconcile: AddPeer to endpoint %s (master %s) with allowed_ips=%v\n", ep.Name, m.Name, allowedIPs)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, rpcErr := client.Agent().AddPeer(ctx, &proto.AddPeerRequest{
 			PublicKey:           masterPubkey,
-			AllowedIps:          []string{m.OverlayIP + "/32"},
+			AllowedIps:          allowedIPs,
 			EndpointHost:        m.PeerAddr(),
 			PersistentKeepalive: 25,
+			TransportSubnet:     transportSubnet,
+			LocalTransportIp:    localTransportIP,
+			PeerTransportIp:     peerTransportIP,
 		})
 		cancel()
 
