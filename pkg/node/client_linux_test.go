@@ -4,6 +4,7 @@ package node
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net"
 	"regexp"
 	"sync"
@@ -403,7 +404,13 @@ func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
 	// want to catch.
 	runner.platformState.configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
 		close(configureEntered)
-		runner.platformState.mu.Lock()
+		// TryLock is the whole point of this check: it succeeds iff AddPeer
+		// has already released platformState.mu. The alternative — Lock then
+		// Unlock — would still work functionally but staticcheck flags it as
+		// an empty critical section (SA2001).
+		if !runner.platformState.mu.TryLock() {
+			return fmt.Errorf("platformState.mu still held at configurePeerOnIfaceFn entry")
+		}
 		runner.platformState.mu.Unlock()
 		close(platformMuReleased)
 		<-resumeConfigure
