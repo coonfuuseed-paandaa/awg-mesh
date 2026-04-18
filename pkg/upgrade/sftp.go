@@ -29,7 +29,7 @@ func UploadComposeFile(sshClient *ssh.Client, adminPath, remotePath string) erro
 	if err != nil {
 		return fmt.Errorf("open sftp subsystem on %q: %w", remotePath, err)
 	}
-	defer sftpClient.Close()
+	defer func() { _ = sftpClient.Close() }()
 
 	// 3. open local source
 	localFile, err := os.Open(adminPath)
@@ -78,7 +78,7 @@ func execRemote(sshClient *ssh.Client, cmd string) error {
 	if err != nil {
 		return fmt.Errorf("open ssh session: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 	var errBuf strings.Builder
 	sess.Stderr = &errBuf
 	if err := sess.Run(cmd); err != nil {
