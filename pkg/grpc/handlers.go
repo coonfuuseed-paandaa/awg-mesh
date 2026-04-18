@@ -759,52 +759,77 @@ func (h *AgentHandler) GetTransportState(_ context.Context, _ *proto.Empty) (*pr
 
 	var peers []*proto.TransportPeerState
 
+	// Build a lookup map: name → TunnelTransport (from disk) for name-based lookups.
+	diskByName := make(map[string]tunnelTransport, len(diskState.Tunnels))
+	for _, tt := range diskState.Tunnels {
+		if tt.Name != "" {
+			diskByName[tt.Name] = tt
+		}
+	}
+
 	switch {
 	case h.tunnelMgr != nil:
-		// Master mode: derive peers from live tunnel list, enrich with disk AllowedIPs.
+		// Master mode: runtime key comes from the live tunnel peer key.
+		// Disk key and allowed IPs come from transport.yml, looked up by tunnel name.
 		tunnels := h.tunnelMgr.ListTunnels()
 		peers = make([]*proto.TransportPeerState, 0, len(tunnels))
 		for _, t := range tunnels {
-			pubKeyHex := hex.EncodeToString(t.PeerPublicKey)
-			var allowedIPs []string
-			if dt, ok := diskByKey[pubKeyHex]; ok {
-				allowedIPs = dt.AllowedIPs
-			}
-			peers = append(peers, &proto.TransportPeerState{
+			runtimeKeyHex := hex.EncodeToString(t.PeerPublicKey)
+			peer := &proto.TransportPeerState{
 				Name:              t.Name,
-				PublicKeyHex:      pubKeyHex,
-				AllowedIps:        allowedIPs,
+				PublicKeyHex:      runtimeKeyHex,
 				LastHandshakeUnix: 0, // not surfaced through TunnelManager interface
-			})
+			}
+			// Populate disk fields. Prefer name-based lookup; fall back to runtime-key lookup.
+			if dt, ok := diskByName[t.Name]; ok {
+				peer.DiskPublicKeyHex = dt.PeerPublicKey
+				peer.DiskAllowedIps = append([]string(nil), dt.AllowedIPs...)
+				peer.AllowedIps = append([]string(nil), dt.AllowedIPs...) // runtime IPs same source for master
+			} else if dt, ok := diskByKey[runtimeKeyHex]; ok {
+				peer.DiskPublicKeyHex = dt.PeerPublicKey
+				peer.DiskAllowedIps = append([]string(nil), dt.AllowedIPs...)
+				peer.AllowedIps = append([]string(nil), dt.AllowedIPs...)
+			}
+			peers = append(peers, peer)
 		}
 
 	case h.peerMgr != nil:
-		// Endpoint mode: derive peers from live peer list, look up names from disk.
+		// Endpoint mode: runtime key and allowed IPs come from live peer manager.
+		// Disk key and name come from transport.yml, looked up by runtime key first.
 		peerInfos := h.peerMgr.ListPeers()
 		peers = make([]*proto.TransportPeerState, 0, len(peerInfos))
 		for _, p := range peerInfos {
-			pubKeyHex := hex.EncodeToString(p.PublicKey)
-			name := pubKeyHex[:8] // fallback: first 8 hex chars
-			if dt, ok := diskByKey[pubKeyHex]; ok && dt.Name != "" {
-				name = dt.Name
+			runtimeKeyHex := hex.EncodeToString(p.PublicKey)
+			name := runtimeKeyHex[:8] // fallback: first 8 hex chars
+			var diskKeyHex string
+			var diskAllowedIPs []string
+			if dt, ok := diskByKey[runtimeKeyHex]; ok {
+				if dt.Name != "" {
+					name = dt.Name
+				}
+				diskKeyHex = dt.PeerPublicKey
+				diskAllowedIPs = append([]string(nil), dt.AllowedIPs...)
 			}
 			peers = append(peers, &proto.TransportPeerState{
 				Name:              name,
-				PublicKeyHex:      pubKeyHex,
-				AllowedIps:        p.AllowedIPs,
+				PublicKeyHex:      runtimeKeyHex,
+				AllowedIps:        append([]string(nil), p.AllowedIPs...),
 				LastHandshakeUnix: p.LastHandshake,
+				DiskPublicKeyHex:  diskKeyHex,
+				DiskAllowedIps:    diskAllowedIPs,
 			})
 		}
 
 	default:
-		// Neither manager available; return disk state only.
+		// Neither manager available; return disk state only (runtime = disk).
 		peers = make([]*proto.TransportPeerState, 0, len(diskState.Tunnels))
 		for _, tt := range diskState.Tunnels {
 			peers = append(peers, &proto.TransportPeerState{
-				Name:              tt.Name,
-				PublicKeyHex:      tt.PeerPublicKey,
-				AllowedIps:        tt.AllowedIPs,
-				LastHandshakeUnix: 0,
+				Name:             tt.Name,
+				PublicKeyHex:     tt.PeerPublicKey,
+				AllowedIps:       append([]string(nil), tt.AllowedIPs...),
+				DiskPublicKeyHex: tt.PeerPublicKey,
+				DiskAllowedIps:   append([]string(nil), tt.AllowedIPs...),
 			})
 		}
 	}

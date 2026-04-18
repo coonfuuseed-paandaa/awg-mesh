@@ -10,7 +10,7 @@ import (
 )
 
 // acquireFileLock obtains an exclusive advisory flock on path.
-// Returns a release function (close+remove) and any error.
+// Returns a release function (unlock+close) and any error.
 // On Unix systems this uses syscall.Flock; on Windows the build-tag
 // routes to reconcile_lock_windows.go which provides a no-op fallback.
 func acquireFileLock(path string) (release func(), err error) {

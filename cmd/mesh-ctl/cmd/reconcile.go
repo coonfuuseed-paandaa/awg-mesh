@@ -59,9 +59,12 @@ Exit code: 0 if all nodes acknowledged, 1 if any gRPC failed.`,
 			// Pre-compute balancer IP lookup table from overlay ranges.
 			parsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))
 			for _, nr := range topo.Overlay.Ranges {
-				if r, rErr := topology.ParseRange(nr); rErr == nil {
-					parsedRanges = append(parsedRanges, r)
+				r, rErr := topology.ParseRange(nr)
+				if rErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: skipping unparseable overlay range %q: %v\n", nr.Name, rErr)
+					continue
 				}
+				parsedRanges = append(parsedRanges, r)
 			}
 
 			var results []reconcileNodeResult

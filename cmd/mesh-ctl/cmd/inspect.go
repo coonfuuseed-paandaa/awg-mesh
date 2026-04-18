@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,8 +22,8 @@ import (
 type driftRow struct {
 	peerName     string
 	adminKey     string // hex pubkey known to admin (from disk pubkey file)
-	diskKey      string // hex pubkey from node's GetTransportState (disk+runtime combined)
-	runtimeKey   string // hex pubkey from ListPeers / ListTunnels
+	diskKey      string // hex pubkey from node's transport.yml (disk state)
+	runtimeKey   string // hex pubkey from live wg/tunnel state (runtime)
 	adminIPs     string // allowed IPs per topology
 	diskIPs      string
 	runtimeIPs   string
@@ -43,10 +45,12 @@ func newInspectCommand() *cobra.Command {
 and compares it against admin's expected configuration (from topology + local admin state).
 
 Drift reasons:
-  key_mismatch       — peer public key differs between admin/disk/runtime
-  missing_peer       — peer present in admin view but absent from node
-  stale_allowed_ips  — allowed IPs do not match admin expectation
-  extra_peer         — peer present on node but not in admin view
+  key_mismatch          — peer public key differs between admin and runtime
+  admin_pubkey_missing  — admin pubkey file missing; re-run 'endpoint init' or restore pubkey
+  disk_runtime_diverge  — disk key (transport.yml) differs from live runtime key
+  missing_peer          — peer present in admin view but absent from node
+  stale_allowed_ips     — allowed IPs do not match admin expectation
+  extra_peer            — peer present on node but not in admin view
 
 Exit code: 0 if no drift found, 1 if drift detected.
 Pre-v1.10.1 nodes (returning codes.Unimplemented) are reported gracefully.`,
@@ -109,10 +113,12 @@ Pre-v1.10.1 nodes (returning codes.Unimplemented) are reported gracefully.`,
 			// Build admin expected view.
 			adminPeers := buildAdminView(topo, nodeName, configDir, master, ep)
 
-			// Build node-reported peer map (keyed by pubkey hex).
+			// Build node-reported peer maps keyed by runtime pubkey and by name.
 			nodePeersByKey := make(map[string]*proto.TransportPeerState, len(tsResp.GetPeers()))
+			nodePeersByName := make(map[string]*proto.TransportPeerState, len(tsResp.GetPeers()))
 			for _, p := range tsResp.GetPeers() {
 				nodePeersByKey[p.PublicKeyHex] = p
+				nodePeersByName[p.Name] = p
 			}
 
 			// Drift analysis: admin view vs node-reported.
@@ -126,29 +132,47 @@ Pre-v1.10.1 nodes (returning codes.Unimplemented) are reported gracefully.`,
 					adminIPs: strings.Join(ap.allowedIPs, ","),
 				}
 
-				np, found := nodePeersByKey[ap.pubkeyHex]
-				if !found {
-					// Try to find a peer with the same name but different key (key_mismatch).
-					for _, candidate := range tsResp.GetPeers() {
-						if candidate.Name == ap.name {
-							np = candidate
-							break
-						}
-					}
+				// Locate node peer: prefer exact key match, fall back to name match.
+				np := nodePeersByKey[ap.pubkeyHex]
+				if np == nil {
+					np = nodePeersByName[ap.name]
 				}
 
 				if np == nil {
 					row.driftReasons = append(row.driftReasons, "missing_peer")
 				} else {
 					seenNodeKeys[np.PublicKeyHex] = true
-					row.diskKey = np.PublicKeyHex
-					row.runtimeKey = np.PublicKeyHex // GetTransportState merges disk+runtime
-					row.diskIPs = strings.Join(np.AllowedIps, ",")
-					row.runtimeIPs = row.diskIPs
 
-					if ap.pubkeyHex != "" && np.PublicKeyHex != ap.pubkeyHex {
+					// Populate disk vs runtime columns from the split fields (v1.10.1+).
+					// For pre-split nodes DiskPublicKeyHex is empty; fall back to PublicKeyHex.
+					diskKey := np.GetDiskPublicKeyHex()
+					if diskKey == "" {
+						diskKey = np.PublicKeyHex
+					}
+					diskIPs := np.GetDiskAllowedIps()
+					if len(diskIPs) == 0 {
+						diskIPs = np.AllowedIps
+					}
+
+					row.diskKey = diskKey
+					row.runtimeKey = np.PublicKeyHex
+					row.diskIPs = strings.Join(diskIPs, ",")
+					row.runtimeIPs = strings.Join(np.AllowedIps, ",")
+
+					// Fix C: distinguish missing admin pubkey from key_mismatch.
+					switch {
+					case ap.pubkeyHex == "":
+						// readAdminPubkey returned empty — pubkey file missing or unreadable.
+						row.driftReasons = append(row.driftReasons, "admin_pubkey_missing")
+					case np.PublicKeyHex != ap.pubkeyHex:
 						row.driftReasons = append(row.driftReasons, "key_mismatch")
 					}
+
+					// Fix B: report disk/runtime key divergence when they differ.
+					if diskKey != np.PublicKeyHex {
+						row.driftReasons = append(row.driftReasons, "disk_runtime_diverge")
+					}
+
 					if len(ap.allowedIPs) > 0 {
 						if !ipsMatch(ap.allowedIPs, np.AllowedIps) {
 							row.driftReasons = append(row.driftReasons, "stale_allowed_ips")
@@ -162,11 +186,19 @@ Pre-v1.10.1 nodes (returning codes.Unimplemented) are reported gracefully.`,
 			// Extra peers: present on node but not in admin view.
 			for _, np := range tsResp.GetPeers() {
 				if !seenNodeKeys[np.PublicKeyHex] {
+					diskKey := np.GetDiskPublicKeyHex()
+					if diskKey == "" {
+						diskKey = np.PublicKeyHex
+					}
+					diskIPs := np.GetDiskAllowedIps()
+					if len(diskIPs) == 0 {
+						diskIPs = np.AllowedIps
+					}
 					rows = append(rows, driftRow{
 						peerName:     np.Name,
-						diskKey:      np.PublicKeyHex,
+						diskKey:      diskKey,
 						runtimeKey:   np.PublicKeyHex,
-						diskIPs:      strings.Join(np.AllowedIps, ","),
+						diskIPs:      strings.Join(diskIPs, ","),
 						runtimeIPs:   strings.Join(np.AllowedIps, ","),
 						driftReasons: []string{"extra_peer"},
 					})
@@ -230,42 +262,53 @@ func buildAdminView(
 
 // readAdminPubkey reads the 32-byte raw public key file saved by 'endpoint init' / 'master init'
 // and returns it as lowercase hex. Returns empty string if the file is missing or malformed.
+// The empty-string sentinel is used by the caller to distinguish admin_pubkey_missing (empty)
+// from key_mismatch (non-empty but differs from node key).
 func readAdminPubkey(cfgDir, name string) string {
-	path := nodeDir(cfgDir, name) + "/pubkey"
+	path := filepath.Join(nodeDir(cfgDir, name), "pubkey")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "" // not yet initialized
+		return "" // not yet initialized — caller reports admin_pubkey_missing
 	}
+	// Fix D: trim trailing whitespace/newlines (common editor behaviour) BEFORE length check.
+	// A file written as "<64 hex chars>\n" is 65 bytes and would fail len==64 without trimming.
+	trimmed := strings.TrimSpace(string(data))
 	// pubkey file is raw 32-byte WireGuard public key (written by resp.NodePublicKey).
 	if len(data) == 32 {
 		return hex.EncodeToString(data)
 	}
-	// Some callers write hex-encoded pubkeys; support both.
-	if len(data) == 64 {
-		return strings.ToLower(strings.TrimSpace(string(data)))
+	// Some callers write hex-encoded pubkeys; support both with and without trailing newline.
+	if len(trimmed) == 64 {
+		return strings.ToLower(trimmed)
 	}
 	return ""
 }
 
-// ipsMatch returns true when expected and actual contain the same set of CIDRs
-// (order-independent). Empty expected slice = no admin expectation → always match.
+// ipsMatch returns true when expected and actual contain the same unique set of CIDRs
+// (order-independent, duplicate-tolerant). Empty expected slice = no admin expectation → always match.
+//
+// Fix E: converts both slices to sorted unique sets before comparing so that
+// duplicates (e.g. expected=[a,b], actual=[a,a]) are correctly detected as mismatches.
 func ipsMatch(expected, actual []string) bool {
 	if len(expected) == 0 {
 		return true
 	}
-	if len(expected) != len(actual) {
-		return false
+	return sortedUniqueIPs(expected) == sortedUniqueIPs(actual)
+}
+
+// sortedUniqueIPs returns a canonical comma-joined string of the unique, sorted, trimmed CIDRs
+// in s. Used by ipsMatch to detect duplicates and order differences in a single comparison.
+func sortedUniqueIPs(s []string) string {
+	seen := make(map[string]struct{}, len(s))
+	for _, ip := range s {
+		seen[strings.TrimSpace(ip)] = struct{}{}
 	}
-	set := make(map[string]bool, len(expected))
-	for _, ip := range expected {
-		set[strings.TrimSpace(ip)] = true
+	unique := make([]string, 0, len(seen))
+	for ip := range seen {
+		unique = append(unique, ip)
 	}
-	for _, ip := range actual {
-		if !set[strings.TrimSpace(ip)] {
-			return false
-		}
-	}
-	return true
+	sort.Strings(unique)
+	return strings.Join(unique, ",")
 }
 
 // printInspectReport renders the 3-column drift report. Returns true if drift was found.
