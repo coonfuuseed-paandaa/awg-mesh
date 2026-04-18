@@ -33,6 +33,18 @@ type transportLink struct {
 	healthy          bool
 }
 
+var configurePeerOnIfaceFn = func(
+	c *ClientRunner,
+	iface *wg.Interface,
+	publicKey []byte,
+	presharedKey []byte,
+	allowedIPs []string,
+	endpointHost string,
+	persistentKeepalive int32,
+) error {
+	return c.configurePeerOnIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+}
+
 // ifaceName returns the kernel interface name for this transport link.
 func (l *transportLink) ifaceName() string {
 	if l.iface == nil {
@@ -170,9 +182,12 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	c.platformState.mu.Lock()
 	existingLink, hasExistingLink := c.platformState.byKey[pubkeyHex]
 	if hasExistingLink {
-		// Hold lock across configure to prevent concurrent AddPeer race on same pubkey.
-		defer c.platformState.mu.Unlock()
-		return c.configurePeerOnIface(existingLink.iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+		configureIface := existingLink.iface
+		c.platformState.mu.Unlock()
+		if configureIface == nil {
+			return fmt.Errorf("existing interface is nil for peer %q", pubkeyHex[:8])
+		}
+		return configurePeerOnIfaceFn(c, configureIface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
 	}
 
 	// Mark this key as pending to prevent concurrent AddPeer from creating a duplicate.
@@ -219,7 +234,7 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 		return fmt.Errorf("bring up interface %q: %w", ifaceName, err)
 	}
 
-	if err := c.configurePeerOnIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive); err != nil {
+	if err := configurePeerOnIfaceFn(c, iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("configure peer on %q: %w", ifaceName, err)
 	}
@@ -231,6 +246,15 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	}
 
 	c.platformState.mu.Lock()
+	// Re-check after re-acquiring mu: another goroutine may have inserted a link
+	// for this pubkey between the `pending` clear (deferred) and this lock. If so,
+	// our freshly created interface is redundant — close it and return idempotently
+	// to avoid orphaning a kernel interface.
+	if existing, alreadyExists := c.platformState.byKey[pubkeyHex]; alreadyExists && existing != nil {
+		c.platformState.mu.Unlock()
+		_ = iface.Close()
+		return nil
+	}
 	nextLinks := append(append([]*transportLink(nil), c.platformState.links...), newLink)
 	c.platformState.links = nextLinks
 	c.platformState.byKey[pubkeyHex] = newLink
@@ -871,28 +895,49 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 
 	go hc.Run(ctx, c.healthTargets,
 		func(name string) {
-			c.platformState.mu.Lock()
-			link := c.platformState.byKey[name]
-			if link != nil {
-				link.healthy = false
-			}
-			c.platformState.mu.Unlock()
+			c.setPeerHealth(name, false)
 			if err := c.rebuildClientECMP("onDown"); err != nil {
 				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link down")
 			}
 		},
 		func(name string) {
-			c.platformState.mu.Lock()
-			link := c.platformState.byKey[name]
-			if link != nil {
-				link.healthy = true
-			}
-			c.platformState.mu.Unlock()
+			c.setPeerHealth(name, true)
 			if err := c.rebuildClientECMP("onUp"); err != nil {
 				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link up")
 			}
 		},
 	)
+}
+
+func (c *ClientRunner) setPeerHealth(peerHex string, healthy bool) {
+	trimmed := strings.TrimSpace(peerHex)
+	if trimmed == "" {
+		return
+	}
+
+	c.platformState.mu.Lock()
+	defer c.platformState.mu.Unlock()
+
+	existing, exists := c.platformState.byKey[trimmed]
+	if !exists || existing == nil {
+		return
+	}
+
+	updated := *existing
+	updated.healthy = healthy
+	updatedPeer := &updated
+
+	nextLinks := make([]*transportLink, 0, len(c.platformState.links))
+	for _, link := range c.platformState.links {
+		if link == existing {
+			nextLinks = append(nextLinks, updatedPeer)
+			continue
+		}
+		nextLinks = append(nextLinks, link)
+	}
+
+	c.platformState.byKey[trimmed] = updatedPeer
+	c.platformState.links = nextLinks
 }
 
 // SetBalancerIP sets the balancer IP for a specific peer link using copy-on-write.

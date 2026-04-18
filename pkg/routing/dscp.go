@@ -244,8 +244,8 @@ func TeardownDSCPPolicyRouting() error {
 		Name:   "awg_dscp",
 	})
 	if err := conn.Flush(); err != nil {
-		// Table may not exist — not an error.
-		return nil
+		// Table may not exist yet. Continue with ip rule cleanup anyway to avoid
+		// leaking stale fwmark routing rules after restart or schema changes.
 	}
 
 	// Clean up ip rules with marks matching DSCP range.
@@ -255,7 +255,7 @@ func TeardownDSCPPolicyRouting() error {
 	}
 
 	for _, rule := range rules {
-		if rule.Mark >= 1 && rule.Mark <= 63 && rule.Priority >= 101 && rule.Priority <= 163 {
+		if shouldCleanupDSCPRule(rule) {
 			if deleteErr := netlink.RuleDel(&rule); deleteErr != nil {
 				// Best effort cleanup.
 				continue
@@ -264,6 +264,30 @@ func TeardownDSCPPolicyRouting() error {
 	}
 
 	return nil
+}
+
+// DSCP policy-routing invariant ranges, established by setup:
+//   - mark values are DSCP codepoints 1..63 (SetupDSCPPolicyRouting enforces this)
+//   - priorities are assigned in 101..163 (awg-mesh convention, co-located with Table)
+//   - routing tables are 100 + DSCP (see cmd/mesh-ctl/cmd/routing.go generateLinux),
+//     so 101..163 matches the priority range by design
+// A rule matching all THREE ranges is unambiguously an awg-mesh DSCP rule.
+// A narrower match (e.g. mark+priority only) risked deleting foreign rules from
+// other subsystems (VRFs, strongSwan, IPVS) that happened to use overlapping
+// mark and priority but unrelated tables.
+const (
+	dscpMarkMin     uint32 = 1
+	dscpMarkMax     uint32 = 63
+	dscpPriorityMin        = 101
+	dscpPriorityMax        = 163
+	dscpTableMin           = 101
+	dscpTableMax           = 163
+)
+
+func shouldCleanupDSCPRule(rule netlink.Rule) bool {
+	return rule.Mark >= dscpMarkMin && rule.Mark <= dscpMarkMax &&
+		rule.Priority >= dscpPriorityMin && rule.Priority <= dscpPriorityMax &&
+		rule.Table >= dscpTableMin && rule.Table <= dscpTableMax
 }
 
 // encodeUint32 encodes a uint32 in little-endian byte order for nftables register values.

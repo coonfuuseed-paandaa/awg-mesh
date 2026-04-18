@@ -3,10 +3,12 @@
 package node
 
 import (
+	"encoding/hex"
 	"net"
 	"regexp"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -332,6 +334,101 @@ func TestRebuildClientECMP_HealthyVIP(t *testing.T) {
 	router.mu.Unlock()
 }
 
+func TestSetPeerHealth_CopiesTransportLinkState(t *testing.T) {
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 1)
+	}
+	peerHex := hex.EncodeToString(peerKey)
+
+	link := &transportLink{
+		iface:     stubIface(),
+		pubkeyHex: peerHex,
+		healthy:   true,
+	}
+
+	runner := NewClientRunner(newTestNode(nil))
+	runner.platformState.byKey[peerHex] = link
+	runner.platformState.links = []*transportLink{link}
+
+	runner.setPeerHealth(peerHex, false)
+
+	updated, ok := runner.platformState.byKey[peerHex]
+	if !ok || updated == nil {
+		t.Fatalf("peer health update did not preserve key entry")
+	}
+	if updated == link {
+		t.Fatalf("expected new transportLink instance, got pointer alias")
+	}
+	if updated.healthy {
+		t.Fatalf("expected rebuilt transportLink to be marked unhealthy")
+	}
+	if !link.healthy {
+		t.Fatalf("expected original transportLink to remain healthy")
+	}
+	if got := runner.platformState.links[0]; got != updated {
+		t.Fatalf("expected links slice to hold rebuilt transportLink, got %v", got)
+	}
+}
+
+func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 1)
+	}
+	peerHex := hex.EncodeToString(peerKey)
+
+	runner := NewClientRunner(newTestNode(nil))
+	runner.platformState.byKey[peerHex] = &transportLink{
+		iface:     &wg.Interface{},
+		pubkeyHex: peerHex,
+		healthy:   true,
+	}
+	runner.platformState.links = []*transportLink{runner.platformState.byKey[peerHex]}
+
+	configureEntered := make(chan struct{})
+	resumeConfigure := make(chan struct{})
+	done := make(chan error, 1)
+
+	originalConfigurer := configurePeerOnIfaceFn
+	configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
+		close(configureEntered)
+		<-resumeConfigure
+		return nil
+	}
+	t.Cleanup(func() {
+		configurePeerOnIfaceFn = originalConfigurer
+	})
+
+	go func() {
+		done <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25)
+	}()
+
+	select {
+	case <-configureEntered:
+	case <-time.After(time.Second):
+		t.Fatal("existing-link configure path was not entered")
+	}
+
+	lockAcquired := make(chan struct{})
+	go func() {
+		runner.platformState.mu.Lock()
+		close(lockAcquired)
+		runner.platformState.mu.Unlock()
+	}()
+	select {
+	case <-lockAcquired:
+	case <-time.After(200 * time.Millisecond):
+		close(resumeConfigure)
+		t.Fatal("expected client platformState mutex to be released before existing-peer configuration")
+	}
+
+	close(resumeConfigure)
+	if err := <-done; err != nil {
+		t.Fatalf("AddPeer(existing link) returned error: %v", err)
+	}
+}
+
 // TestRebuildClientECMP_HealthyLegacy verifies the legacy path with 2 healthy links
 // (no balancerIP): SetECMPRoute called for 0.0.0.0/0, EnableStickyECMP(overlay.space),
 // EnableL4Hash called.
@@ -440,7 +537,7 @@ func TestRebuildClientECMP_MixedBalancerIP(t *testing.T) {
 	runner := newTestRunner(newTestNode(nil), router, fw, sysctl)
 	runner.platformState.links = []*transportLink{
 		makeTestLink("192.168.1.1", "10.100.0.1", true), // has balancerIP
-		makeTestLink("192.168.1.2", "", true),             // no balancerIP
+		makeTestLink("192.168.1.2", "", true),           // no balancerIP
 	}
 
 	err := runner.rebuildClientECMP("init")
@@ -539,10 +636,12 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 		t.Errorf("expected SetECMPRoute(0.0.0.0/0) on initial install, got: %+v", router.setECMPCalls)
 	}
 
-	// Simulate onDown: mark unhealthy and rebuild.
-	runner.platformState.mu.Lock()
-	link.healthy = false
-	runner.platformState.mu.Unlock()
+	// Simulate onDown: mark unhealthy via CoW and rebuild.
+	// Direct in-place mutation of `link.healthy` would violate the immutability
+	// contract setPeerHealth establishes — readers of platformState.links (e.g.
+	// rebuildClientECMP) take a snapshot without re-locking, so live links must
+	// be treated as immutable after insertion.
+	runner.setPeerHealth("aabbccdd", false)
 
 	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("onDown rebuild error: %v", err)
@@ -551,10 +650,8 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 		t.Errorf("expected RemoveECMPRoute(0.0.0.0/0) on link down, got: %+v", router.removeECMPCalls)
 	}
 
-	// Simulate onUp: mark healthy and rebuild.
-	runner.platformState.mu.Lock()
-	link.healthy = true
-	runner.platformState.mu.Unlock()
+	// Simulate onUp: mark healthy via CoW and rebuild.
+	runner.setPeerHealth("aabbccdd", true)
 
 	beforeCount := router.setECMPCallCount()
 	if err := runner.rebuildClientECMP("init"); err != nil {
