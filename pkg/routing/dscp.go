@@ -5,6 +5,7 @@ package routing
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"syscall"
 
@@ -244,8 +245,14 @@ func TeardownDSCPPolicyRouting() error {
 		Name:   "awg_dscp",
 	})
 	if err := conn.Flush(); err != nil {
-		// Table may not exist yet. Continue with ip rule cleanup anyway to avoid
-		// leaking stale fwmark routing rules after restart or schema changes.
+		// Most common cause: table does not exist yet (first teardown or already
+		// deleted) — that is the expected fast path and is not a failure mode.
+		// Less common: nftables daemon down, insufficient permissions, or a
+		// transient kernel error. In those cases we still continue with the
+		// ip rule cleanup below to avoid leaking stale fwmark routing rules
+		// after restart or schema changes, but we surface the error via the
+		// stdlib logger so operators see a signal rather than silent recovery.
+		log.Printf("awg-mesh/routing: nftables DelTable flush returned %v; continuing with ip rule cleanup (non-fatal)", err)
 	}
 
 	// Clean up ip rules with marks matching DSCP range.

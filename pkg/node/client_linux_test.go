@@ -265,6 +265,7 @@ func newTestRunner(node *Node, router *mockRouter, fw *mockFirewall, sc *mockSys
 	runner.platformState.router = router
 	runner.platformState.firewall = fw
 	runner.platformState.sysctl = sc
+	runner.platformState.configurePeerOnIfaceFn = defaultConfigurePeerOnIfaceFn
 	return runner
 }
 
@@ -372,6 +373,8 @@ func TestSetPeerHealth_CopiesTransportLinkState(t *testing.T) {
 }
 
 func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
+	t.Parallel()
+
 	peerKey := make([]byte, 32)
 	for i := range peerKey {
 		peerKey[i] = byte(i + 1)
@@ -390,15 +393,12 @@ func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
 	resumeConfigure := make(chan struct{})
 	done := make(chan error, 1)
 
-	originalConfigurer := configurePeerOnIfaceFn
-	configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
+	// Swap the per-instance hook (no global state — safe with t.Parallel).
+	runner.platformState.configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
 		close(configureEntered)
 		<-resumeConfigure
 		return nil
 	}
-	t.Cleanup(func() {
-		configurePeerOnIfaceFn = originalConfigurer
-	})
 
 	go func() {
 		done <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25)
