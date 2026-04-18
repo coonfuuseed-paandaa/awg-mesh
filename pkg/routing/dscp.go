@@ -5,6 +5,7 @@ package routing
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"syscall"
 
@@ -52,6 +53,13 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 	for _, p := range policies {
 		if p.DSCP < 1 || p.DSCP > 63 {
 			return fmt.Errorf("DSCP value %d out of range (1-63)", p.DSCP)
+		}
+		if p.Fwmark != p.DSCP {
+			return fmt.Errorf("fwmark %d must equal DSCP %d (invariant: mark == DSCP)", p.Fwmark, p.DSCP)
+		}
+		expectedTable := dscpPriorityBase + p.DSCP
+		if p.TableID != expectedTable {
+			return fmt.Errorf("table ID %d must equal %d + DSCP (%d)", p.TableID, dscpPriorityBase, expectedTable)
 		}
 		if seenDSCP[p.DSCP] {
 			return fmt.Errorf("duplicate DSCP value %d in routing policies", p.DSCP)
@@ -231,7 +239,9 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 	return nil
 }
 
-// TeardownDSCPPolicyRouting removes all DSCP routing rules and the nftables table.
+// TeardownDSCPPolicyRouting removes all DSCP routing rules and the nftables
+// table. It logs and continues ip rule cleanup if table teardown fails, but still
+// returns the captured nftables flush error.
 func TeardownDSCPPolicyRouting() error {
 	conn, err := nftables.New()
 	if err != nil {
@@ -243,9 +253,19 @@ func TeardownDSCPPolicyRouting() error {
 		Family: nftables.TableFamilyIPv4,
 		Name:   "awg_dscp",
 	})
+	var teardownErr error
 	if err := conn.Flush(); err != nil {
-		// Table may not exist — not an error.
-		return nil
+		// Missing table (ENOENT) is the expected fast path: first teardown or
+		// already-removed. Log and return nil for idempotence. Anything else
+		// (daemon down, EPERM, transient kernel error) is captured and returned
+		// after ip rule cleanup so operators see the signal without leaking
+		// stale fwmark routing rules.
+		if errors.Is(err, syscall.ENOENT) {
+			log.Printf("awg-mesh/routing: awg_dscp table absent; continuing with ip rule cleanup (expected)")
+		} else {
+			log.Printf("awg-mesh/routing: nftables DelTable flush returned %v; continuing with ip rule cleanup", err)
+			teardownErr = fmt.Errorf("nftables flush awg_dscp table: %w", err)
+		}
 	}
 
 	// Clean up ip rules with marks matching DSCP range.
@@ -255,7 +275,7 @@ func TeardownDSCPPolicyRouting() error {
 	}
 
 	for _, rule := range rules {
-		if rule.Mark >= 1 && rule.Mark <= 63 && rule.Priority >= 101 && rule.Priority <= 163 {
+		if shouldCleanupDSCPRule(rule) {
 			if deleteErr := netlink.RuleDel(&rule); deleteErr != nil {
 				// Best effort cleanup.
 				continue
@@ -263,7 +283,26 @@ func TeardownDSCPPolicyRouting() error {
 		}
 	}
 
-	return nil
+	return teardownErr
+}
+
+// DSCP policy-routing invariant established by SetupDSCPPolicyRouting:
+// - mark values are DSCP codepoints 1..63
+// - priority and table are both exactly equal to dscpPriorityBase + mark
+// This stricter predicate prevents deleting foreign rules that coincidentally
+// fall in broad ranges but do not follow awg-mesh's exact mapping.
+const (
+	dscpPriorityBase        = 100
+	dscpMarkMin      uint32 = 1
+	dscpMarkMax      uint32 = 63
+)
+
+func shouldCleanupDSCPRule(rule netlink.Rule) bool {
+	if rule.Mark < dscpMarkMin || rule.Mark > dscpMarkMax {
+		return false
+	}
+	expected := dscpPriorityBase + int(rule.Mark)
+	return rule.Priority == expected && rule.Table == expected
 }
 
 // encodeUint32 encodes a uint32 in little-endian byte order for nftables register values.

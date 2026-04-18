@@ -3,10 +3,13 @@
 package node
 
 import (
+	"encoding/hex"
+	"fmt"
 	"net"
 	"regexp"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -263,6 +266,7 @@ func newTestRunner(node *Node, router *mockRouter, fw *mockFirewall, sc *mockSys
 	runner.platformState.router = router
 	runner.platformState.firewall = fw
 	runner.platformState.sysctl = sc
+	runner.platformState.configurePeerOnIfaceFn = defaultConfigurePeerOnIfaceFn
 	return runner
 }
 
@@ -330,6 +334,225 @@ func TestRebuildClientECMP_HealthyVIP(t *testing.T) {
 		}
 	}
 	router.mu.Unlock()
+}
+
+func TestSetPeerHealth_CopiesTransportLinkState(t *testing.T) {
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 1)
+	}
+	peerHex := hex.EncodeToString(peerKey)
+
+	link := &transportLink{
+		iface:     stubIface(),
+		pubkeyHex: peerHex,
+		healthy:   true,
+	}
+
+	runner := NewClientRunner(newTestNode(nil))
+	runner.platformState.byKey[peerHex] = link
+	runner.platformState.links = []*transportLink{link}
+
+	runner.setPeerHealth(peerHex, false)
+
+	updated, ok := runner.platformState.byKey[peerHex]
+	if !ok || updated == nil {
+		t.Fatalf("peer health update did not preserve key entry")
+	}
+	if updated == link {
+		t.Fatalf("expected new transportLink instance, got pointer alias")
+	}
+	if updated.healthy {
+		t.Fatalf("expected rebuilt transportLink to be marked unhealthy")
+	}
+	if !link.healthy {
+		t.Fatalf("expected original transportLink to remain healthy")
+	}
+	if got := runner.platformState.links[0]; got != updated {
+		t.Fatalf("expected links slice to hold rebuilt transportLink, got %v", got)
+	}
+}
+
+func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
+	t.Parallel()
+
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 1)
+	}
+	peerHex := hex.EncodeToString(peerKey)
+
+	runner := NewClientRunner(newTestNode(nil))
+	runner.platformState.byKey[peerHex] = &transportLink{
+		iface:     &wg.Interface{},
+		pubkeyHex: peerHex,
+		healthy:   true,
+	}
+	runner.platformState.links = []*transportLink{runner.platformState.byKey[peerHex]}
+
+	configureEntered := make(chan struct{})
+	platformMuReleased := make(chan struct{})
+	resumeConfigure := make(chan struct{})
+	done := make(chan error, 1)
+
+	// Swap the per-instance hook (no global state — safe with t.Parallel).
+	// Acquire platformState.mu from INSIDE the stub to prove that AddPeer has
+	// released it before entering the reconfigure path. If AddPeer were still
+	// holding platformState.mu at this point, Lock() below would deadlock
+	// against the goroutine that issued AddPeer — the test's outer timeout
+	// would expire on platformMuReleased, which is the real failure mode we
+	// want to catch.
+	runner.platformState.configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
+		close(configureEntered)
+		// TryLock is the whole point of this check: it succeeds iff AddPeer
+		// has already released platformState.mu. The alternative — Lock then
+		// Unlock — would still work functionally but staticcheck flags it as
+		// an empty critical section (SA2001).
+		if !runner.platformState.mu.TryLock() {
+			return fmt.Errorf("platformState.mu still held at configurePeerOnIfaceFn entry")
+		}
+		runner.platformState.mu.Unlock()
+		close(platformMuReleased)
+		<-resumeConfigure
+		return nil
+	}
+
+	go func() {
+		done <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25)
+	}()
+
+	select {
+	case <-configureEntered:
+	case <-time.After(time.Second):
+		t.Fatal("existing-link configure path was not entered")
+	}
+
+	select {
+	case <-platformMuReleased:
+	case <-time.After(time.Second):
+		close(resumeConfigure)
+		t.Fatal("expected client platformState mutex to be released before existing-peer configuration")
+	}
+
+	close(resumeConfigure)
+	if err := <-done; err != nil {
+		t.Fatalf("AddPeer(existing link) returned error: %v", err)
+	}
+}
+
+func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
+	t.Parallel()
+
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 2) // different from other tests
+	}
+	peerHex := hex.EncodeToString(peerKey)
+
+	runner := NewClientRunner(newTestNode(nil))
+	link := &transportLink{
+		iface:     &wg.Interface{},
+		pubkeyHex: peerHex,
+		healthy:   true,
+	}
+	runner.platformState.byKey[peerHex] = link
+	runner.platformState.links = []*transportLink{link}
+
+	firstEntered := make(chan struct{})
+	firstResume := make(chan struct{})
+	secondReachedLock := make(chan struct{})
+	configureCount := int32(0)
+	var firstInConfigure, secondInConfigure bool
+	var stateMu sync.Mutex
+
+	// configurePeerOnIfaceFn: first call blocks on firstResume (holding
+	// link.mu); second call would run straight through if it ever got past
+	// link.mu.Lock(). We assert the second call does NOT enter configure
+	// before the first releases link.mu.
+	runner.platformState.configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
+		stateMu.Lock()
+		if !firstInConfigure {
+			firstInConfigure = true
+			stateMu.Unlock()
+			close(firstEntered)
+			<-firstResume
+		} else {
+			secondInConfigure = true
+			stateMu.Unlock()
+		}
+		configureCount++
+		return nil
+	}
+
+	// beforeExistingLinkLockFn: fires in the SECOND AddPeer call immediately
+	// before existingLink.mu.Lock(). Signalling here proves the second call
+	// truly reached the per-peer-lock point and is about to block. We only
+	// fire this once — first call's beforeLinkLock is not meaningful for this
+	// test because the first call doesn't block there.
+	var beforeLockFired int32
+	runner.platformState.beforeExistingLinkLockFn = func() {
+		stateMu.Lock()
+		if firstInConfigure && beforeLockFired == 0 {
+			beforeLockFired = 1
+			stateMu.Unlock()
+			close(secondReachedLock)
+			return
+		}
+		stateMu.Unlock()
+	}
+
+	done1 := make(chan error, 1)
+	done2 := make(chan error, 1)
+
+	go func() {
+		done1 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25)
+	}()
+
+	// Wait for first to be inside configure (holding link.mu).
+	select {
+	case <-firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first AddPeer did not enter configure")
+	}
+
+	// Launch second. It MUST block on existingLink.mu.Lock() inside AddPeer.
+	go func() {
+		done2 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.2:51820", 25)
+	}()
+
+	// Synchronize on the beforeExistingLinkLockFn seam — after this fires the
+	// second goroutine is guaranteed to be at link.mu.Lock() (or past it).
+	select {
+	case <-secondReachedLock:
+	case <-time.After(time.Second):
+		close(firstResume) // unblock first to avoid leaking the goroutine
+		t.Fatal("second AddPeer did not reach existingLink.mu.Lock() seam")
+	}
+
+	// Prove serialization: second must NOT be in configurePeerOnIfaceFn yet
+	// because it is still blocked on existingLink.mu held by first.
+	stateMu.Lock()
+	if secondInConfigure {
+		stateMu.Unlock()
+		close(firstResume)
+		t.Fatal("second AddPeer entered configure before first released link.mu — serialization broken")
+	}
+	stateMu.Unlock()
+
+	// Release the first — second should now acquire link.mu and complete.
+	close(firstResume)
+
+	if err := <-done1; err != nil {
+		t.Fatalf("first AddPeer returned error: %v", err)
+	}
+	if err := <-done2; err != nil {
+		t.Fatalf("second AddPeer returned error: %v", err)
+	}
+
+	// Both should have completed.
+	if configureCount != 2 {
+		t.Fatalf("expected 2 configure calls, got %d", configureCount)
+	}
 }
 
 // TestRebuildClientECMP_HealthyLegacy verifies the legacy path with 2 healthy links
@@ -440,7 +663,7 @@ func TestRebuildClientECMP_MixedBalancerIP(t *testing.T) {
 	runner := newTestRunner(newTestNode(nil), router, fw, sysctl)
 	runner.platformState.links = []*transportLink{
 		makeTestLink("192.168.1.1", "10.100.0.1", true), // has balancerIP
-		makeTestLink("192.168.1.2", "", true),             // no balancerIP
+		makeTestLink("192.168.1.2", "", true),           // no balancerIP
 	}
 
 	err := runner.rebuildClientECMP("init")
@@ -539,10 +762,12 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 		t.Errorf("expected SetECMPRoute(0.0.0.0/0) on initial install, got: %+v", router.setECMPCalls)
 	}
 
-	// Simulate onDown: mark unhealthy and rebuild.
-	runner.platformState.mu.Lock()
-	link.healthy = false
-	runner.platformState.mu.Unlock()
+	// Simulate onDown: mark unhealthy via CoW and rebuild.
+	// Direct in-place mutation of `link.healthy` would violate the immutability
+	// contract setPeerHealth establishes — readers of platformState.links (e.g.
+	// rebuildClientECMP) take a snapshot without re-locking, so live links must
+	// be treated as immutable after insertion.
+	runner.setPeerHealth("aabbccdd", false)
 
 	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("onDown rebuild error: %v", err)
@@ -551,10 +776,8 @@ func TestRebuildClientECMP_FailoverSingleMaster(t *testing.T) {
 		t.Errorf("expected RemoveECMPRoute(0.0.0.0/0) on link down, got: %+v", router.removeECMPCalls)
 	}
 
-	// Simulate onUp: mark healthy and rebuild.
-	runner.platformState.mu.Lock()
-	link.healthy = true
-	runner.platformState.mu.Unlock()
+	// Simulate onUp: mark healthy via CoW and rebuild.
+	runner.setPeerHealth("aabbccdd", true)
 
 	beforeCount := router.setECMPCallCount()
 	if err := runner.rebuildClientECMP("init"); err != nil {

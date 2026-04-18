@@ -25,12 +25,53 @@ import (
 const clientInterfacePrefix = "wg-c"
 
 type transportLink struct {
+	mu               sync.Mutex // serializes concurrent reconfigures/teardowns for this peer
 	iface            *wg.Interface
 	pubkeyHex        string
 	localTransportIP string
 	peerTransportIP  string
 	balancerIP       string
 	healthy          bool
+}
+
+// configurePeerOnIfaceFunc is the signature of the wg-configure hook.
+// Stored as a field on clientPlatformState so tests can override it per
+// ClientRunner instance without mutating package-level state (which would
+// race under t.Parallel and leak between tests).
+type configurePeerOnIfaceFunc func(
+	c *ClientRunner,
+	iface *wg.Interface,
+	publicKey []byte,
+	presharedKey []byte,
+	allowedIPs []string,
+	endpointHost string,
+	persistentKeepalive int32,
+) error
+
+// defaultConfigurePeerOnIfaceFn is the production implementation used when
+// the clientPlatformState field is nil (e.g. from raw struct construction).
+func defaultConfigurePeerOnIfaceFn(
+	c *ClientRunner,
+	iface *wg.Interface,
+	publicKey []byte,
+	presharedKey []byte,
+	allowedIPs []string,
+	endpointHost string,
+	persistentKeepalive int32,
+) error {
+	return c.configurePeerOnIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+}
+
+// configurePeerHook returns the per-instance wg-configure hook, falling back to
+// the production default if the field was never initialised (e.g. raw struct
+// construction from tests). Keeping the lookup behind a method lets tests swap
+// `c.platformState.configurePeerOnIfaceFn` directly without racing on a
+// package-level variable.
+func (c *ClientRunner) configurePeerHook() configurePeerOnIfaceFunc {
+	if fn := c.platformState.configurePeerOnIfaceFn; fn != nil {
+		return fn
+	}
+	return defaultConfigurePeerOnIfaceFn
 }
 
 // ifaceName returns the kernel interface name for this transport link.
@@ -56,13 +97,26 @@ type clientPlatformState struct {
 	router   routing.Router
 	firewall routing.Firewall
 	sysctl   routing.Sysctl
+
+	// configurePeerOnIfaceFn is the wg-configure hook. Per-instance rather
+	// than package-level so parallel tests can swap independently without
+	// data races on a shared global.
+	configurePeerOnIfaceFn configurePeerOnIfaceFunc
+
+	// beforeExistingLinkLockFn is a test-only seam invoked in AddPeer's
+	// existing-link path immediately before acquiring existingLink.mu.
+	// Production default is nil (no-op). Tests can set this to signal when
+	// the AddPeer call has reached the per-peer-lock point, avoiding
+	// time.Sleep-based race assertions.
+	beforeExistingLinkLockFn func()
 }
 
 func initClientPlatformState() clientPlatformState {
 	return clientPlatformState{
-		byKey:              make(map[string]*transportLink),
-		pending:            make(map[string]bool),
-		currentStickyCIDRs: make(map[string]bool),
+		byKey:                  make(map[string]*transportLink),
+		pending:                make(map[string]bool),
+		currentStickyCIDRs:     make(map[string]bool),
+		configurePeerOnIfaceFn: defaultConfigurePeerOnIfaceFn,
 	}
 }
 
@@ -170,9 +224,19 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	c.platformState.mu.Lock()
 	existingLink, hasExistingLink := c.platformState.byKey[pubkeyHex]
 	if hasExistingLink {
-		// Hold lock across configure to prevent concurrent AddPeer race on same pubkey.
-		defer c.platformState.mu.Unlock()
-		return c.configurePeerOnIface(existingLink.iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+		configureIface := existingLink.iface
+		beforeLinkLock := c.platformState.beforeExistingLinkLockFn
+		c.platformState.mu.Unlock()
+		if configureIface == nil {
+			return fmt.Errorf("existing interface is nil for peer %q", pubkeyHex[:8])
+		}
+		if beforeLinkLock != nil {
+			beforeLinkLock()
+		}
+		existingLink.mu.Lock()
+		err := c.configurePeerHook()(c, configureIface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+		existingLink.mu.Unlock()
+		return err
 	}
 
 	// Mark this key as pending to prevent concurrent AddPeer from creating a duplicate.
@@ -219,7 +283,7 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 		return fmt.Errorf("bring up interface %q: %w", ifaceName, err)
 	}
 
-	if err := c.configurePeerOnIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive); err != nil {
+	if err := c.configurePeerHook()(c, iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("configure peer on %q: %w", ifaceName, err)
 	}
@@ -231,6 +295,15 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	}
 
 	c.platformState.mu.Lock()
+	// Re-check after re-acquiring mu: another goroutine may have inserted a link
+	// for this pubkey between the `pending` clear (deferred) and this lock. If so,
+	// our freshly created interface is redundant — close it and return idempotently
+	// to avoid orphaning a kernel interface.
+	if existing, alreadyExists := c.platformState.byKey[pubkeyHex]; alreadyExists && existing != nil {
+		c.platformState.mu.Unlock()
+		_ = iface.Close()
+		return nil
+	}
 	nextLinks := append(append([]*transportLink(nil), c.platformState.links...), newLink)
 	c.platformState.links = nextLinks
 	c.platformState.byKey[pubkeyHex] = newLink
@@ -374,11 +447,14 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 	c.platformState.byKey = nextByKey
 	c.platformState.mu.Unlock()
 
+	link.mu.Lock()
 	if err := c.rebuildClientECMP("balancer_change"); err != nil {
 		c.node.logger.Warn().Err(err).Msg("rebuildClientECMP after peer removal failed")
 	}
+	closeErr := link.iface.Close()
+	link.mu.Unlock()
 
-	return link.iface.Close()
+	return closeErr
 }
 
 // ConfigureTransport implements grpcserver.TransportConfigurator.
@@ -793,6 +869,18 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 // It updates currentStickyCIDRs to {newCIDR} on success.
 // If fw is nil (nftables unavailable), it is a no-op.
 // reason is threaded from the rebuildClientECMP caller for structured log events (NFR-5).
+//
+// Concurrency note: this function does NOT hold platformState.mu across the
+// firewall syscalls (they are fast, but blocking them under the state mutex
+// would serialise all peer operations). Two concurrent rebuild callers can
+// therefore both read the same oldCIDRs snapshot and both invoke Enable/Disable
+// for the same CIDR. Both are idempotent at the nftables level: EnableStickyECMP
+// appends rules using ensureTable semantics that no-op when the target rule
+// already exists, and DisableStickyECMP deletes-by-match. Last-writer-wins on
+// the final currentStickyCIDRs assignment, and the kernel table always ends in
+// a consistent state matching whichever newCIDR was written last. Explicitly
+// documented here so future readers don't add a broader lock thinking this is
+// a race.
 func (c *ClientRunner) applyStickyECMPDiff(newCIDR, reason string) error {
 	fw := c.firewallDep()
 	if fw == nil {
@@ -871,28 +959,58 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 
 	go hc.Run(ctx, c.healthTargets,
 		func(name string) {
-			c.platformState.mu.Lock()
-			link := c.platformState.byKey[name]
-			if link != nil {
-				link.healthy = false
-			}
-			c.platformState.mu.Unlock()
+			c.setPeerHealth(name, false)
 			if err := c.rebuildClientECMP("onDown"); err != nil {
 				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link down")
 			}
 		},
 		func(name string) {
-			c.platformState.mu.Lock()
-			link := c.platformState.byKey[name]
-			if link != nil {
-				link.healthy = true
-			}
-			c.platformState.mu.Unlock()
+			c.setPeerHealth(name, true)
 			if err := c.rebuildClientECMP("onUp"); err != nil {
 				c.node.logger.Warn().Err(err).Str("peer", name).Msg("rebuildClientECMP failed on link up")
 			}
 		},
 	)
+}
+
+func (c *ClientRunner) setPeerHealth(peerHex string, healthy bool) {
+	trimmed := strings.TrimSpace(peerHex)
+	if trimmed == "" {
+		return
+	}
+
+	c.platformState.mu.Lock()
+	defer c.platformState.mu.Unlock()
+
+	existing, exists := c.platformState.byKey[trimmed]
+	if !exists || existing == nil {
+		return
+	}
+
+	// Explicit field-by-field copy: transportLink contains a sync.Mutex which
+	// cannot be copied by value. The mu on the new instance is fresh — correct
+	// under CoW semantics since readers of the old instance (holding old.mu)
+	// are unrelated to readers who will discover updatedPeer via byKey.
+	updatedPeer := &transportLink{
+		iface:            existing.iface,
+		pubkeyHex:        existing.pubkeyHex,
+		localTransportIP: existing.localTransportIP,
+		peerTransportIP:  existing.peerTransportIP,
+		balancerIP:       existing.balancerIP,
+		healthy:          healthy,
+	}
+
+	nextLinks := make([]*transportLink, 0, len(c.platformState.links))
+	for _, link := range c.platformState.links {
+		if link == existing {
+			nextLinks = append(nextLinks, updatedPeer)
+			continue
+		}
+		nextLinks = append(nextLinks, link)
+	}
+
+	c.platformState.byKey[trimmed] = updatedPeer
+	c.platformState.links = nextLinks
 }
 
 // SetBalancerIP sets the balancer IP for a specific peer link using copy-on-write.
