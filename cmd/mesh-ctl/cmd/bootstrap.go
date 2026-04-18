@@ -334,6 +334,12 @@ func loadPrivateKey(path, passphrase string) (ssh.Signer, error) {
 
 	signer, err := ssh.ParsePrivateKey(keyBytes)
 	if err != nil {
+		// golang.org/x/crypto/ssh exposes *ssh.PassphraseMissingError starting v0.0.0
+		// but as of v0.30+ the public API still returns a plain error from
+		// ParsePrivateKey; errors.As against *ssh.PassphraseMissingError only works
+		// when the caller invokes ParsePrivateKeyWithPassphrase. For keys without
+		// a passphrase attempt, we must string-match. If a future upstream release
+		// exports a typed error from ParsePrivateKey, swap this for errors.As.
 		if strings.Contains(err.Error(), "passphrase protected") {
 			return nil, fmt.Errorf(
 				"private key at %q is passphrase-protected but no passphrase provided. "+
