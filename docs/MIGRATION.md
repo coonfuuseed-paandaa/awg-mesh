@@ -293,8 +293,10 @@ diff /etc/docker/compose/<node>-docker-compose.yml /tmp/migrated.yml
 ```
 
 > **Note:** If the node has `MESH_TOKEN=<plain>` (schema v1.5.1), the migrated file
-> will contain `MESH_TOKEN_HASH=REPLACE_WITH_HASH`. Replace this with the bcrypt hash
-> of the actual token before deploying: `mesh-ctl token hash <token-value>`.
+> will contain `MESH_TOKEN_HASH=REPLACE_WITH_HASH`. Before deploying, rotate the token
+> with `mesh-ctl token rotate <node>` — this generates a new token, bcrypt-hashes it,
+> writes the hash to master state, and prints the plain value for the `MESH_TOKEN_HASH`
+> substitution on the endpoint.
 
 ### Step 1 — Preview the plan
 

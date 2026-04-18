@@ -188,10 +188,9 @@ func ComputePlan(topo *topology.Topology, version string, opts PlanOptions) (*Up
 			NewImage: newImage,
 			Status:   StatusPlanned,
 		}
-		if m, ok := masterByName[name]; ok {
+		if _, ok := masterByName[name]; ok {
 			step.Role = "master"
 			step.Region = ""
-			_ = m // suppress unused-variable warning; used for role detection
 		} else if e, ok := endpointByName[name]; ok {
 			step.Role = "endpoint"
 			step.Region = e.Region

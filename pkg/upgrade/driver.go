@@ -404,10 +404,10 @@ func isImageRefChar(r rune) bool {
 }
 
 // shellQuote wraps s in single quotes for safe inclusion in a remote shell command.
-// Panics if s contains a single quote (caller must validate first).
+// Handles embedded single quotes via the POSIX `'\''` escape sequence so any
+// input (including unusual node names or compose paths) is safe.
 func shellQuote(s string) string {
-	if strings.ContainsRune(s, '\'') {
-		panic("shellQuote: value contains a single quote — validateImageRef must be called first")
-	}
-	return "'" + s + "'"
+	// End the quoted string, emit an escaped single quote, resume quoting.
+	escaped := strings.ReplaceAll(s, "'", `'\''`)
+	return "'" + escaped + "'"
 }

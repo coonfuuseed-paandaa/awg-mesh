@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
@@ -137,22 +138,22 @@ func waitReady(ctx context.Context, cfg DriverConfig, step *NodeUpgradeStep) err
 
 // backupComposePath returns the path of the pre-upgrade compose snapshot.
 func backupComposePath(cfg DriverConfig, name string) string {
-	return nodeDir(cfg.ConfigDir, name) + "/" + name + "-docker-compose.yml.bak"
+	return filepath.Join(nodeDir(cfg.ConfigDir, name), name+"-docker-compose.yml.bak")
 }
 
 // liveComposePath returns the live compose file path for a node.
 func liveComposePath(cfg DriverConfig, name string) string {
-	return nodeDir(cfg.ConfigDir, name) + "/" + name + "-docker-compose.yml"
+	return filepath.Join(nodeDir(cfg.ConfigDir, name), name+"-docker-compose.yml")
 }
 
 // nodeDir returns the config directory for one node.
 func nodeDir(configDir, name string) string {
-	return configDir + "/nodes/" + name
+	return filepath.Join(configDir, "nodes", name)
 }
 
 // caPath returns the CA certificate path for a config directory.
 func caPath(configDir string) string {
-	return configDir + "/ca.crt"
+	return filepath.Join(configDir, "ca.crt")
 }
 
 // grpcAddrFor returns the gRPC address for a node from the topology.

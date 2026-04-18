@@ -147,9 +147,16 @@ func TestMostRecentLogPath(t *testing.T) {
 	if err := os.WriteFile(older, []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	// Ensure newer has a later mtime by sleeping 10 ms.
-	time.Sleep(10 * time.Millisecond)
 	if err := os.WriteFile(newer, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Explicitly set distinct mtimes to avoid filesystem mtime-granularity races.
+	oldTime := time.Now().Add(-time.Hour)
+	newTime := time.Now()
+	if err := os.Chtimes(older, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newer, newTime, newTime); err != nil {
 		t.Fatal(err)
 	}
 

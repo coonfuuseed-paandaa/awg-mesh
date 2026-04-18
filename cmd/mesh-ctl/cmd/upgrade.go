@@ -407,14 +407,22 @@ func renderByMigration(nodeName, cfgDir, newImage, outputPath string) error {
 	return os.WriteFile(outputPath, []byte(out), 0600)
 }
 
-// patchImageLine replaces the `image: ...` line in a compose YAML with newImage.
+// patchImageLine replaces the `image: ...` line of the awg-mesh-node service
+// only (not every image: line). Scans for the service header and rewrites the
+// first image: line inside that service scope; leaves unrelated sidecars untouched.
 func patchImageLine(compose, newImage string) string {
 	lines := strings.Split(compose, "\n")
+	inAwgService := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "image:") {
+		if strings.HasPrefix(trimmed, "awg-mesh-node:") {
+			inAwgService = true
+			continue
+		}
+		if inAwgService && strings.HasPrefix(trimmed, "image:") {
 			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 			lines[i] = indent + "image: " + newImage
+			inAwgService = false
 		}
 	}
 	return strings.Join(lines, "\n")

@@ -347,13 +347,12 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
-func TestShellQuote_PanicOnSingleQuote(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic for single-quote input")
-		}
-	}()
-	shellQuote("path/with'quote")
+func TestShellQuote_EscapesSingleQuote(t *testing.T) {
+	got := shellQuote("path/with'quote")
+	want := `'path/with'\''quote'`
+	if got != want {
+		t.Errorf("shellQuote: got %q want %q", got, want)
+	}
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
