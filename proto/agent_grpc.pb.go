@@ -19,21 +19,22 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AwgAgent_Init_FullMethodName             = "/awgmesh.AwgAgent/Init"
-	AwgAgent_RotateToken_FullMethodName      = "/awgmesh.AwgAgent/RotateToken"
-	AwgAgent_AddTunnel_FullMethodName        = "/awgmesh.AwgAgent/AddTunnel"
-	AwgAgent_RemoveTunnel_FullMethodName     = "/awgmesh.AwgAgent/RemoveTunnel"
-	AwgAgent_ListTunnels_FullMethodName      = "/awgmesh.AwgAgent/ListTunnels"
-	AwgAgent_UpdateTunnelPeer_FullMethodName = "/awgmesh.AwgAgent/UpdateTunnelPeer"
-	AwgAgent_AddPeer_FullMethodName          = "/awgmesh.AwgAgent/AddPeer"
-	AwgAgent_RemovePeer_FullMethodName       = "/awgmesh.AwgAgent/RemovePeer"
-	AwgAgent_ListPeers_FullMethodName        = "/awgmesh.AwgAgent/ListPeers"
-	AwgAgent_RotateParams_FullMethodName     = "/awgmesh.AwgAgent/RotateParams"
-	AwgAgent_GetParams_FullMethodName        = "/awgmesh.AwgAgent/GetParams"
-	AwgAgent_CaptureRefresh_FullMethodName   = "/awgmesh.AwgAgent/CaptureRefresh"
-	AwgAgent_GetStatus_FullMethodName        = "/awgmesh.AwgAgent/GetStatus"
-	AwgAgent_GetRoutes_FullMethodName        = "/awgmesh.AwgAgent/GetRoutes"
-	AwgAgent_GetHealth_FullMethodName        = "/awgmesh.AwgAgent/GetHealth"
+	AwgAgent_Init_FullMethodName              = "/awgmesh.AwgAgent/Init"
+	AwgAgent_RotateToken_FullMethodName       = "/awgmesh.AwgAgent/RotateToken"
+	AwgAgent_AddTunnel_FullMethodName         = "/awgmesh.AwgAgent/AddTunnel"
+	AwgAgent_RemoveTunnel_FullMethodName      = "/awgmesh.AwgAgent/RemoveTunnel"
+	AwgAgent_ListTunnels_FullMethodName       = "/awgmesh.AwgAgent/ListTunnels"
+	AwgAgent_UpdateTunnelPeer_FullMethodName  = "/awgmesh.AwgAgent/UpdateTunnelPeer"
+	AwgAgent_AddPeer_FullMethodName           = "/awgmesh.AwgAgent/AddPeer"
+	AwgAgent_RemovePeer_FullMethodName        = "/awgmesh.AwgAgent/RemovePeer"
+	AwgAgent_ListPeers_FullMethodName         = "/awgmesh.AwgAgent/ListPeers"
+	AwgAgent_RotateParams_FullMethodName      = "/awgmesh.AwgAgent/RotateParams"
+	AwgAgent_GetParams_FullMethodName         = "/awgmesh.AwgAgent/GetParams"
+	AwgAgent_CaptureRefresh_FullMethodName    = "/awgmesh.AwgAgent/CaptureRefresh"
+	AwgAgent_GetStatus_FullMethodName         = "/awgmesh.AwgAgent/GetStatus"
+	AwgAgent_GetRoutes_FullMethodName         = "/awgmesh.AwgAgent/GetRoutes"
+	AwgAgent_GetHealth_FullMethodName         = "/awgmesh.AwgAgent/GetHealth"
+	AwgAgent_GetTransportState_FullMethodName = "/awgmesh.AwgAgent/GetTransportState"
 )
 
 // AwgAgentClient is the client API for AwgAgent service.
@@ -61,6 +62,7 @@ type AwgAgentClient interface {
 	GetStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*NodeStatus, error)
 	GetRoutes(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*RouteTable, error)
 	GetHealth(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthResponse, error)
+	GetTransportState(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TransportStateResponse, error)
 }
 
 type awgAgentClient struct {
@@ -221,6 +223,16 @@ func (c *awgAgentClient) GetHealth(ctx context.Context, in *Empty, opts ...grpc.
 	return out, nil
 }
 
+func (c *awgAgentClient) GetTransportState(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TransportStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TransportStateResponse)
+	err := c.cc.Invoke(ctx, AwgAgent_GetTransportState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AwgAgentServer is the server API for AwgAgent service.
 // All implementations must embed UnimplementedAwgAgentServer
 // for forward compatibility.
@@ -246,6 +258,7 @@ type AwgAgentServer interface {
 	GetStatus(context.Context, *Empty) (*NodeStatus, error)
 	GetRoutes(context.Context, *Empty) (*RouteTable, error)
 	GetHealth(context.Context, *Empty) (*HealthResponse, error)
+	GetTransportState(context.Context, *Empty) (*TransportStateResponse, error)
 	mustEmbedUnimplementedAwgAgentServer()
 }
 
@@ -300,6 +313,9 @@ func (UnimplementedAwgAgentServer) GetRoutes(context.Context, *Empty) (*RouteTab
 }
 func (UnimplementedAwgAgentServer) GetHealth(context.Context, *Empty) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetHealth not implemented")
+}
+func (UnimplementedAwgAgentServer) GetTransportState(context.Context, *Empty) (*TransportStateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTransportState not implemented")
 }
 func (UnimplementedAwgAgentServer) mustEmbedUnimplementedAwgAgentServer() {}
 func (UnimplementedAwgAgentServer) testEmbeddedByValue()                  {}
@@ -592,6 +608,24 @@ func _AwgAgent_GetHealth_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AwgAgent_GetTransportState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AwgAgentServer).GetTransportState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AwgAgent_GetTransportState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AwgAgentServer).GetTransportState(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AwgAgent_ServiceDesc is the grpc.ServiceDesc for AwgAgent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -658,6 +692,10 @@ var AwgAgent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetHealth",
 			Handler:    _AwgAgent_GetHealth_Handler,
+		},
+		{
+			MethodName: "GetTransportState",
+			Handler:    _AwgAgent_GetTransportState_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

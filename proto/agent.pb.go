@@ -24,7 +24,7 @@ var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\aawgmesh\x1a\vtypes.proto2\xc4\a\n" +
+	"\vagent.proto\x12\aawgmesh\x1a\vtypes.proto2\x8a\b\n" +
 	"\bAwgAgent\x123\n" +
 	"\x04Init\x12\x14.awgmesh.InitRequest\x1a\x15.awgmesh.InitResponse\x12H\n" +
 	"\vRotateToken\x12\x1b.awgmesh.RotateTokenRequest\x1a\x1c.awgmesh.RotateTokenResponse\x12B\n" +
@@ -41,7 +41,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x0eCaptureRefresh\x12\x17.awgmesh.CaptureRequest\x1a\x18.awgmesh.CaptureResponse\x120\n" +
 	"\tGetStatus\x12\x0e.awgmesh.Empty\x1a\x13.awgmesh.NodeStatus\x120\n" +
 	"\tGetRoutes\x12\x0e.awgmesh.Empty\x1a\x13.awgmesh.RouteTable\x124\n" +
-	"\tGetHealth\x12\x0e.awgmesh.Empty\x1a\x17.awgmesh.HealthResponseB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
+	"\tGetHealth\x12\x0e.awgmesh.Empty\x1a\x17.awgmesh.HealthResponse\x12D\n" +
+	"\x11GetTransportState\x12\x0e.awgmesh.Empty\x1a\x1f.awgmesh.TransportStateResponseB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
 
 var file_agent_proto_goTypes = []any{
 	(*InitRequest)(nil),              // 0: awgmesh.InitRequest
@@ -70,6 +71,7 @@ var file_agent_proto_goTypes = []any{
 	(*NodeStatus)(nil),               // 23: awgmesh.NodeStatus
 	(*RouteTable)(nil),               // 24: awgmesh.RouteTable
 	(*HealthResponse)(nil),           // 25: awgmesh.HealthResponse
+	(*TransportStateResponse)(nil),   // 26: awgmesh.TransportStateResponse
 }
 var file_agent_proto_depIdxs = []int32{
 	0,  // 0: awgmesh.AwgAgent.Init:input_type -> awgmesh.InitRequest
@@ -87,23 +89,25 @@ var file_agent_proto_depIdxs = []int32{
 	4,  // 12: awgmesh.AwgAgent.GetStatus:input_type -> awgmesh.Empty
 	4,  // 13: awgmesh.AwgAgent.GetRoutes:input_type -> awgmesh.Empty
 	4,  // 14: awgmesh.AwgAgent.GetHealth:input_type -> awgmesh.Empty
-	11, // 15: awgmesh.AwgAgent.Init:output_type -> awgmesh.InitResponse
-	12, // 16: awgmesh.AwgAgent.RotateToken:output_type -> awgmesh.RotateTokenResponse
-	13, // 17: awgmesh.AwgAgent.AddTunnel:output_type -> awgmesh.AddTunnelResponse
-	14, // 18: awgmesh.AwgAgent.RemoveTunnel:output_type -> awgmesh.RemoveTunnelResponse
-	15, // 19: awgmesh.AwgAgent.ListTunnels:output_type -> awgmesh.TunnelList
-	16, // 20: awgmesh.AwgAgent.UpdateTunnelPeer:output_type -> awgmesh.UpdateTunnelPeerResponse
-	17, // 21: awgmesh.AwgAgent.AddPeer:output_type -> awgmesh.AddPeerResponse
-	18, // 22: awgmesh.AwgAgent.RemovePeer:output_type -> awgmesh.RemovePeerResponse
-	19, // 23: awgmesh.AwgAgent.ListPeers:output_type -> awgmesh.PeerList
-	20, // 24: awgmesh.AwgAgent.RotateParams:output_type -> awgmesh.RotateParamsResponse
-	21, // 25: awgmesh.AwgAgent.GetParams:output_type -> awgmesh.AwgParams
-	22, // 26: awgmesh.AwgAgent.CaptureRefresh:output_type -> awgmesh.CaptureResponse
-	23, // 27: awgmesh.AwgAgent.GetStatus:output_type -> awgmesh.NodeStatus
-	24, // 28: awgmesh.AwgAgent.GetRoutes:output_type -> awgmesh.RouteTable
-	25, // 29: awgmesh.AwgAgent.GetHealth:output_type -> awgmesh.HealthResponse
-	15, // [15:30] is the sub-list for method output_type
-	0,  // [0:15] is the sub-list for method input_type
+	4,  // 15: awgmesh.AwgAgent.GetTransportState:input_type -> awgmesh.Empty
+	11, // 16: awgmesh.AwgAgent.Init:output_type -> awgmesh.InitResponse
+	12, // 17: awgmesh.AwgAgent.RotateToken:output_type -> awgmesh.RotateTokenResponse
+	13, // 18: awgmesh.AwgAgent.AddTunnel:output_type -> awgmesh.AddTunnelResponse
+	14, // 19: awgmesh.AwgAgent.RemoveTunnel:output_type -> awgmesh.RemoveTunnelResponse
+	15, // 20: awgmesh.AwgAgent.ListTunnels:output_type -> awgmesh.TunnelList
+	16, // 21: awgmesh.AwgAgent.UpdateTunnelPeer:output_type -> awgmesh.UpdateTunnelPeerResponse
+	17, // 22: awgmesh.AwgAgent.AddPeer:output_type -> awgmesh.AddPeerResponse
+	18, // 23: awgmesh.AwgAgent.RemovePeer:output_type -> awgmesh.RemovePeerResponse
+	19, // 24: awgmesh.AwgAgent.ListPeers:output_type -> awgmesh.PeerList
+	20, // 25: awgmesh.AwgAgent.RotateParams:output_type -> awgmesh.RotateParamsResponse
+	21, // 26: awgmesh.AwgAgent.GetParams:output_type -> awgmesh.AwgParams
+	22, // 27: awgmesh.AwgAgent.CaptureRefresh:output_type -> awgmesh.CaptureResponse
+	23, // 28: awgmesh.AwgAgent.GetStatus:output_type -> awgmesh.NodeStatus
+	24, // 29: awgmesh.AwgAgent.GetRoutes:output_type -> awgmesh.RouteTable
+	25, // 30: awgmesh.AwgAgent.GetHealth:output_type -> awgmesh.HealthResponse
+	26, // 31: awgmesh.AwgAgent.GetTransportState:output_type -> awgmesh.TransportStateResponse
+	16, // [16:32] is the sub-list for method output_type
+	0,  // [0:16] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name

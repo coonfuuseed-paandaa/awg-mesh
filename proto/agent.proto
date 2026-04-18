@@ -33,4 +33,5 @@ service AwgAgent {
   rpc GetStatus(Empty) returns (NodeStatus);
   rpc GetRoutes(Empty) returns (RouteTable);
   rpc GetHealth(Empty) returns (HealthResponse);
+  rpc GetTransportState(Empty) returns (TransportStateResponse);
 }

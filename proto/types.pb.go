@@ -2134,6 +2134,142 @@ func (x *TunnelHealth) GetConsecutiveFailures() int32 {
 	return 0
 }
 
+type TransportPeerState struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Name              string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                       // peer name (endpoint or master name)
+	PublicKeyHex      string                 `protobuf:"bytes,2,opt,name=public_key_hex,json=publicKeyHex,proto3" json:"public_key_hex,omitempty"`                 // public key as hex string (64 chars for 32 bytes)
+	AllowedIps        []string               `protobuf:"bytes,3,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`                         // configured allowed IP CIDRs
+	LastHandshakeUnix int64                  `protobuf:"varint,4,opt,name=last_handshake_unix,json=lastHandshakeUnix,proto3" json:"last_handshake_unix,omitempty"` // Unix timestamp of last WireGuard handshake (0 = never)
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *TransportPeerState) Reset() {
+	*x = TransportPeerState{}
+	mi := &file_types_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransportPeerState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransportPeerState) ProtoMessage() {}
+
+func (x *TransportPeerState) ProtoReflect() protoreflect.Message {
+	mi := &file_types_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransportPeerState.ProtoReflect.Descriptor instead.
+func (*TransportPeerState) Descriptor() ([]byte, []int) {
+	return file_types_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *TransportPeerState) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TransportPeerState) GetPublicKeyHex() string {
+	if x != nil {
+		return x.PublicKeyHex
+	}
+	return ""
+}
+
+func (x *TransportPeerState) GetAllowedIps() []string {
+	if x != nil {
+		return x.AllowedIps
+	}
+	return nil
+}
+
+func (x *TransportPeerState) GetLastHandshakeUnix() int64 {
+	if x != nil {
+		return x.LastHandshakeUnix
+	}
+	return 0
+}
+
+type TransportStateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeName      string                 `protobuf:"bytes,1,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
+	OverlayIp     string                 `protobuf:"bytes,3,opt,name=overlay_ip,json=overlayIp,proto3" json:"overlay_ip,omitempty"`
+	Peers         []*TransportPeerState  `protobuf:"bytes,4,rep,name=peers,proto3" json:"peers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransportStateResponse) Reset() {
+	*x = TransportStateResponse{}
+	mi := &file_types_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransportStateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransportStateResponse) ProtoMessage() {}
+
+func (x *TransportStateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_types_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransportStateResponse.ProtoReflect.Descriptor instead.
+func (*TransportStateResponse) Descriptor() ([]byte, []int) {
+	return file_types_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *TransportStateResponse) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *TransportStateResponse) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *TransportStateResponse) GetOverlayIp() string {
+	if x != nil {
+		return x.OverlayIp
+	}
+	return ""
+}
+
+func (x *TransportStateResponse) GetPeers() []*TransportPeerState {
+	if x != nil {
+		return x.Peers
+	}
+	return nil
+}
+
 var File_types_proto protoreflect.FileDescriptor
 
 const file_types_proto_rawDesc = "" +
@@ -2320,7 +2456,19 @@ const file_types_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\ahealthy\x18\x02 \x01(\bR\ahealthy\x12\"\n" +
 	"\rlast_check_ms\x18\x03 \x01(\x03R\vlastCheckMs\x121\n" +
-	"\x14consecutive_failures\x18\x04 \x01(\x05R\x13consecutiveFailuresB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
+	"\x14consecutive_failures\x18\x04 \x01(\x05R\x13consecutiveFailures\"\x9f\x01\n" +
+	"\x12TransportPeerState\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12$\n" +
+	"\x0epublic_key_hex\x18\x02 \x01(\tR\fpublicKeyHex\x12\x1f\n" +
+	"\vallowed_ips\x18\x03 \x03(\tR\n" +
+	"allowedIps\x12.\n" +
+	"\x13last_handshake_unix\x18\x04 \x01(\x03R\x11lastHandshakeUnix\"\x9b\x01\n" +
+	"\x16TransportStateResponse\x12\x1b\n" +
+	"\tnode_name\x18\x01 \x01(\tR\bnodeName\x12\x12\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x1d\n" +
+	"\n" +
+	"overlay_ip\x18\x03 \x01(\tR\toverlayIp\x121\n" +
+	"\x05peers\x18\x04 \x03(\v2\x1b.awgmesh.TransportPeerStateR\x05peersB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
 
 var (
 	file_types_proto_rawDescOnce sync.Once
@@ -2334,7 +2482,7 @@ func file_types_proto_rawDescGZIP() []byte {
 	return file_types_proto_rawDescData
 }
 
-var file_types_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_types_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_types_proto_goTypes = []any{
 	(*Empty)(nil),                    // 0: awgmesh.Empty
 	(*AwgParams)(nil),                // 1: awgmesh.AwgParams
@@ -2368,6 +2516,8 @@ var file_types_proto_goTypes = []any{
 	(*RouteEntry)(nil),               // 29: awgmesh.RouteEntry
 	(*HealthResponse)(nil),           // 30: awgmesh.HealthResponse
 	(*TunnelHealth)(nil),             // 31: awgmesh.TunnelHealth
+	(*TransportPeerState)(nil),       // 32: awgmesh.TransportPeerState
+	(*TransportStateResponse)(nil),   // 33: awgmesh.TransportStateResponse
 }
 var file_types_proto_depIdxs = []int32{
 	3,  // 0: awgmesh.NodeConfig.peers:type_name -> awgmesh.PeerSpec
@@ -2381,11 +2531,12 @@ var file_types_proto_depIdxs = []int32{
 	27, // 8: awgmesh.NodeStatus.tunnels:type_name -> awgmesh.TunnelStatus
 	29, // 9: awgmesh.RouteTable.routes:type_name -> awgmesh.RouteEntry
 	31, // 10: awgmesh.HealthResponse.tunnel_health:type_name -> awgmesh.TunnelHealth
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	32, // 11: awgmesh.TransportStateResponse.peers:type_name -> awgmesh.TransportPeerState
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_types_proto_init() }
@@ -2399,7 +2550,7 @@ func file_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_types_proto_rawDesc), len(file_types_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   32,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
