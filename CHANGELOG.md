@@ -27,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ConfigureTransport` with persisted `tt.AllowedIPs`. Route-install errors now log at
   Warn (previously Debug — silent failure hid the bug). Regression tests in
   `pkg/node/endpoint_routes_linux_test.go`. Local tracker issue #95.
+- **Endpoint route-skip filter dead code** — `shouldSkipEndpointLinkRoute` had an
+  unreachable self-/32 IP-equality check because the preceding `ones >= 30` guard
+  swallowed all /32 prefixes. Behavior was correct for current /24-class overlay
+  topologies but would silently drop legitimate /32 host routes from peers in
+  future deployments. Filter now skips transport subnets `/30` and `/31` only;
+  /32 self-IP check now actually reachable. Regression test
+  `TestEndpointConfigureTransportInstallsNonSelfHostRoute` covers the gap.
+  Discovered by post-release multi-model code review (CONSOLIDATED.md).
+- **TransportConfigurator interface contract** — `allowedIPs []string` parameter
+  semantics now documented as mode-dependent (endpoint installs link routes;
+  client uses ECMP). Prevents future implementors from assuming uniform routing
+  contract. No behavior change.
+- **Endpoint reconcile log clarity** — split `peers_added` and `routes_configured`
+  counters so partial failures (peer added but route install failed) are visible.
+- **Endpoint package cleanup** — removed unused `endpointRouter` package-level
+  singleton; function-var test seam preserved.
+- Various clarifying comments around endpoint reconcile loop and route filter logic.
 
 ## [1.9.0] — 2026-04-17
 
@@ -627,7 +644,7 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.1...HEAD
 [1.9.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.7.0...v1.8.0

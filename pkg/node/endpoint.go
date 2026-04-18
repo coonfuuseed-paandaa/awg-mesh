@@ -67,12 +67,17 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 		Msg("endpoint runner started")
 
 	if state, err := loadNodeTransportState(e.node.config.ConfigDir); err == nil && len(state.Tunnels) > 0 {
-		reconciled := 0
+		peersAdded := 0
+		routesConfigured := 0
 		for _, tt := range state.Tunnels {
 			if tt.PeerPublicKey == "" {
 				continue
 			}
 
+			// AddPeer below receives only the transport /32 as the WireGuard peer allowed IP.
+			// Overlay CIDRs (tt.AllowedIPs) are installed as kernel link-scope routes by the
+			// subsequent ConfigureTransport call, NOT as WireGuard allowed IPs (which would
+			// conflict with the endpoint's own overlay subnet membership).
 			allowedIPs := make([]string, 0, 1)
 			if tt.PeerTransportIP != "" {
 				allowedIPs = append(allowedIPs, tt.PeerTransportIP+"/32")
@@ -105,6 +110,7 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 					Err(err).
 					Msg("reconcile peer failed")
 			} else {
+				peersAdded++
 				if err := e.ConfigureTransport(
 					hex.EncodeToString(peerBytes),
 					tt.TransportIP,
@@ -117,12 +123,13 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 						Msg("reconcile: configure transport failed")
 					continue
 				}
-				reconciled++
+				routesConfigured++
 			}
 		}
 
 		e.node.logger.Info().
-			Int("peers", reconciled).
+			Int("peers_added", peersAdded).
+			Int("routes_configured", routesConfigured).
 			Msg("reconciled peers from saved state")
 	}
 
