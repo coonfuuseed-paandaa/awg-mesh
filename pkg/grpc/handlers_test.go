@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -1838,5 +1839,96 @@ func TestGetTransportState(t *testing.T) {
 				t.Error("anti-stub: wantPeerLen > 0 but resp.Peers is nil — body may be a stub")
 			}
 		})
+	}
+}
+
+// TestUpdateTunnelPeer_Idempotent_AlreadyApplied verifies NFR-3 crash-safety
+// idempotency: when the tunnel manager's same-key check fires (newKey == current
+// in-memory key after a previous successful call or post-crash recovery),
+// UpdateTunnelPeer returns success with unchanged=true and no error.
+func TestUpdateTunnelPeer_Idempotent_AlreadyApplied(t *testing.T) {
+	t.Parallel()
+
+	key, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubKey := key.PublicKey()
+
+	// Stub manager that reports unchanged=true (same-key path).
+	mgr := &testTunnelManager{updatePeerUnchanged: true}
+	h := &AgentHandler{
+		logger:    zerolog.Nop(),
+		tunnelMgr: mgr,
+	}
+
+	resp, rpcErr := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+		Name:          "ep-01",
+		PeerPublicKey: pubKey[:],
+	})
+	if rpcErr != nil {
+		t.Fatalf("UpdateTunnelPeer (idempotent): unexpected error: %v", rpcErr)
+	}
+	if resp == nil {
+		t.Fatal("unexpected nil response")
+	}
+	if !resp.GetUnchanged() {
+		t.Error("expected Unchanged=true when same key re-applied, got false")
+	}
+	if !resp.GetSuccess() {
+		t.Error("expected Success=true on idempotent update")
+	}
+}
+
+// TestUpdateTunnelPeer_FR5_ErrorMessage verifies FR-5: the structured error
+// message for key-mismatch / drift scenarios must:
+//   - contain "drifted" (admin state has drifted)
+//   - contain "master remove" and "master init" (correct recovery steps)
+//   - NOT contain "master reload" (the wrong recovery hint)
+func TestUpdateTunnelPeer_FR5_ErrorMessage(t *testing.T) {
+	t.Parallel()
+
+	key, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubKey := key.PublicKey()
+
+	// Stub manager that returns a wgctrl peer-replace error, triggering FR-5 path.
+	mgr := &testTunnelManager{
+		updatePeerErr: fmt.Errorf("wgctrl peer-replace failed: device ep-01: operation not permitted"),
+	}
+	h := &AgentHandler{
+		logger:    zerolog.Nop(),
+		tunnelMgr: mgr,
+	}
+
+	_, rpcErr := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+		Name:          "ep-01",
+		PeerPublicKey: pubKey[:],
+	})
+	if rpcErr == nil {
+		t.Fatal("expected error for drift scenario, got nil")
+	}
+
+	msg := rpcErr.Error()
+	checks := []struct {
+		desc    string
+		present bool
+		needle  string
+	}{
+		{"drift language", true, "drifted"},
+		{"recovery: master remove", true, "master remove"},
+		{"recovery: master init", true, "master init"},
+		{"wrong hint absent: master reload", false, "master reload"},
+	}
+	for _, c := range checks {
+		contains := strings.Contains(msg, c.needle)
+		if c.present && !contains {
+			t.Errorf("FR-5: error should contain %q but does not. Full error: %v", c.needle, msg)
+		}
+		if !c.present && contains {
+			t.Errorf("FR-5: error must NOT contain %q but does. Full error: %v", c.needle, msg)
+		}
 	}
 }

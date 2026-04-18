@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/codes"
@@ -19,12 +21,13 @@ import (
 
 // reconcileNodeResult records the outcome of reconciling one node.
 type reconcileNodeResult struct {
-	name      string
-	role      string
-	updated   int
-	unchanged int
-	failed    int
-	skipped   int
+	name        string
+	role        string
+	updated     int
+	unchanged   int
+	failed      int
+	skipped     int
+	driftHealed int // FR-6: tunnels auto-healed via RemoveTunnel+AddTunnel downgrade
 }
 
 func newReconcileCommand() *cobra.Command {
@@ -110,13 +113,19 @@ Use --force-unlock to remove a stale reconcile.lock left by a crashed process.`,
 
 			// Print summary.
 			fmt.Println()
-			fmt.Printf("%-20s %-10s %8s %10s %7s %8s\n", "NODE", "ROLE", "UPDATED", "UNCHANGED", "FAILED", "SKIPPED")
-			fmt.Println(strings.Repeat("-", 70))
+			fmt.Printf("%-20s %-10s %8s %10s %7s %8s %12s\n", "NODE", "ROLE", "UPDATED", "UNCHANGED", "FAILED", "SKIPPED", "DRIFT_HEALED")
+			fmt.Println(strings.Repeat("-", 84))
+			totalDriftHealed := 0
 			for _, r := range results {
-				fmt.Printf("%-20s %-10s %8d %10d %7d %8d\n",
-					r.name, r.role, r.updated, r.unchanged, r.failed, r.skipped)
+				fmt.Printf("%-20s %-10s %8d %10d %7d %8d %12d\n",
+					r.name, r.role, r.updated, r.unchanged, r.failed, r.skipped, r.driftHealed)
+				totalDriftHealed += r.driftHealed
 			}
 			fmt.Println()
+
+			if totalDriftHealed > 0 {
+				fmt.Fprintf(os.Stderr, "WARNING: drift auto-healed on %d tunnel(s) via RemoveTunnel+AddTunnel — investigate root cause in logs\n", totalDriftHealed)
+			}
 
 			if anyFailed {
 				return fmt.Errorf("reconcile: one or more nodes reported failures — see above for details")
@@ -133,6 +142,12 @@ Use --force-unlock to remove a stale reconcile.lock left by a crashed process.`,
 
 // reconcileMasterNode pushes admin's endpoint key state to a single master.
 // Pure function w.r.t. external state (reads configDir, calls gRPC) — extracted for testability.
+//
+// FR-6: when UpdateTunnelPeer fails due to admin-state drift (key mismatch detected
+// by the error message from the handler), reconcile downgrades to RemoveTunnel +
+// AddTunnel for that specific tunnel.  This is the safety-net for operator-induced
+// drift (manual pubkey file edits). Option-D's FR-1..3 prevents drift in the normal
+// flow; FR-6 handles the abnormal case.
 func reconcileMasterNode(
 	topo *topology.Topology,
 	master *topology.MasterNode,
@@ -164,6 +179,9 @@ func reconcileMasterNode(
 			fmt.Fprintf(os.Stderr, "warning: close grpc client for master %s: %v\n", master.Name, closeErr)
 		}
 	}()
+
+	// Load transport allocator once — needed for the FR-6 AddTunnel downgrade path.
+	alloc, allocErr := loadOrCreateAllocator(cfgDir, topo)
 
 	for _, epName := range master.Endpoints {
 		ep := topo.FindEndpoint(epName)
@@ -201,8 +219,24 @@ func reconcileMasterNode(
 			statusLine, isPreV110 := updateTunnelPeerFailureStatus(rpcErr)
 			if isPreV110 {
 				fmt.Fprintf(os.Stderr, "master %s is pre-v1.10.0 — upgrade master before using 'reconcile'\n", master.Name)
+				result.failed++
+				continue
 			}
-			fmt.Fprintf(os.Stderr, "master %s: endpoint %s: %s\n", master.Name, epName, statusLine)
+
+			// FR-6: detect admin-state drift from the structured error message
+			// emitted by the handler (FR-5).  On drift, downgrade to
+			// RemoveTunnel + AddTunnel so reconcile self-heals this tunnel.
+			if isDriftError(rpcErr) && allocErr == nil {
+				fmt.Fprintf(os.Stderr, "master %s: endpoint %s: drift detected — attempting self-heal (RemoveTunnel + AddTunnel)\n", master.Name, epName)
+				if healed := reconcileSelfHeal(client, topo, master, ep, pubkeyBytes, balancerIP, alloc, cfgDir); healed {
+					result.driftHealed++
+					fmt.Fprintf(os.Stderr, "master %s: endpoint %s: drift self-healed successfully\n", master.Name, epName)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "master %s: endpoint %s: self-heal failed — manual recovery needed\n", master.Name, epName)
+			} else {
+				fmt.Fprintf(os.Stderr, "master %s: endpoint %s: %s\n", master.Name, epName, statusLine)
+			}
 			result.failed++
 			continue
 		}
@@ -221,6 +255,78 @@ func reconcileMasterNode(
 	}
 
 	return result
+}
+
+// isDriftError returns true when the gRPC error from UpdateTunnelPeer indicates
+// an admin-state drift condition (key mismatch).  Detection uses the structured
+// error message from the FR-5 handler — specifically the phrases injected there.
+// Pre-v1.10.0 errors are excluded (they use codes.Unimplemented, not Internal).
+func isDriftError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if status.Code(err) == codes.Unimplemented {
+		return false // pre-v1.10.0 master — not a drift, just old binary
+	}
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "key mismatch") ||
+		strings.Contains(errMsg, "admin state has drifted") ||
+		strings.Contains(errMsg, "wgctrl peer-replace")
+}
+
+// reconcileSelfHeal attempts a FR-6 downgrade heal: RemoveTunnel then AddTunnel
+// with the current admin pubkey.  Returns true only if BOTH calls succeed.
+func reconcileSelfHeal(
+	client *grpcclient.Client,
+	topo *topology.Topology,
+	master *topology.MasterNode,
+	ep *topology.EndpointNode,
+	pubkeyBytes []byte,
+	balancerIP string,
+	alloc *transport.Allocator,
+	cfgDir string,
+) bool {
+	// Step 1: RemoveTunnel.
+	rmCtx, rmCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	rmResp, rmErr := client.Agent().RemoveTunnel(rmCtx, &proto.RemoveTunnelRequest{Name: ep.Name})
+	rmCancel()
+	if rmErr != nil || rmResp == nil || !rmResp.Success {
+		fmt.Fprintf(os.Stderr, "self-heal: RemoveTunnel %s on master %s failed: %v\n", ep.Name, master.Name, rmErr)
+		return false
+	}
+
+	// Step 2: AddTunnel with current admin pubkey.
+	allocation, allocateErr := alloc.Allocate(master.Name, ep.Name)
+	if allocateErr != nil {
+		fmt.Fprintf(os.Stderr, "self-heal: allocate transport for %s/%s: %v\n", master.Name, ep.Name, allocateErr)
+		return false
+	}
+
+	addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	addResp, addErr := client.Agent().AddTunnel(addCtx, &proto.AddTunnelRequest{
+		Name:                ep.Name,
+		EndpointHost:        ep.PeerAddr(),
+		OverlayIp:           ep.OverlayIP,
+		BalancerIp:          balancerIP,
+		PeerPublicKey:       pubkeyBytes,
+		Weight:              1,
+		TransportSubnet:     allocation.Subnet.String(),
+		MasterTransportIp:   allocation.MasterIP.String(),
+		EndpointTransportIp: allocation.EndpointIP.String(),
+	})
+	addCancel()
+	if addErr != nil || addResp == nil || !addResp.Success {
+		fmt.Fprintf(os.Stderr, "self-heal: AddTunnel %s on master %s failed: %v\n", ep.Name, master.Name, addErr)
+		return false
+	}
+
+	// Persist the reallocated transport state so future reconciles and node
+	// restarts see the correct subnet assignments.
+	if saveErr := saveTransportState(alloc, cfgDir); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "self-heal: save transport state: %v (non-fatal)\n", saveErr)
+	}
+
+	return true
 }
 
 // reconcileEndpointNode pushes admin's master peer state to a single endpoint.
@@ -342,13 +448,30 @@ func reconcileEndpointNode(
 	return result
 }
 
-// readAdminPubkeyBytes reads the raw 32-byte pubkey from the admin state directory.
-// Returns nil if the file is missing or does not contain exactly 32 bytes.
+// readAdminPubkeyBytes reads the raw 32-byte WireGuard public key from the
+// admin-state directory.  Supports both storage formats:
+//   - 32 raw bytes  (legacy — written by pre-v1.11.2 init commands)
+//   - 64 hex chars + optional newline (current — written by adminstate.SetPubkey)
+//
+// Returns nil if the file is missing, unreadable, or in an unrecognised format.
 func readAdminPubkeyBytes(cfgDir, name string) []byte {
 	path := filepath.Join(nodeDir(cfgDir, name), "pubkey")
 	data, err := os.ReadFile(path)
-	if err != nil || len(data) != 32 {
+	if err != nil {
 		return nil
 	}
-	return data
+	// Legacy: raw 32-byte binary.
+	if len(data) == 32 {
+		return data
+	}
+	// Current: 64 hex chars (+ optional newline).
+	trimmed := strings.TrimSpace(string(data))
+	if len(trimmed) == 64 {
+		b, hexErr := hex.DecodeString(trimmed)
+		if hexErr != nil {
+			return nil
+		}
+		return b
+	}
+	return nil
 }

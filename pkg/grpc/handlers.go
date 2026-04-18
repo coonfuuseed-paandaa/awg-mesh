@@ -374,6 +374,21 @@ func (h *AgentHandler) UpdateTunnelPeer(_ context.Context, req *proto.UpdateTunn
 			return nil, status.Errorf(codes.NotFound, "tunnel not found: %s", name)
 		}
 		h.logger.Error().Err(err).Str("tunnel", name).Msg("update tunnel peer failed")
+		// FR-5: when the underlying error hints at a key mismatch (wgctrl peer-replace
+		// failed because the old key is no longer present in the WG device), emit a
+		// structured error with the recovery hint. The hint deliberately says
+		// "master remove + master init" — NOT "master reload", which issues the same
+		// UpdateTunnelPeer path and would fail identically.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "wgctrl peer-replace") || strings.Contains(errMsg, "peer not found") {
+			newKeyHex := hex.EncodeToString(rawKey)
+			return nil, status.Errorf(codes.Internal,
+				"update tunnel peer %q: key mismatch — admin sent %s but the WireGuard device "+
+					"does not have this peer. Admin state has drifted from the master. "+
+					"Recovery: mesh-ctl master remove <master> && mesh-ctl master init <master>. "+
+					"Underlying: %v",
+				name, newKeyHex[:min8(len(newKeyHex))], err)
+		}
 		return nil, status.Errorf(codes.Internal, "update tunnel peer: %v", err)
 	}
 
@@ -391,6 +406,15 @@ func (h *AgentHandler) UpdateTunnelPeer(_ context.Context, req *proto.UpdateTunn
 	}
 
 	return resp, nil
+}
+
+// min8 returns the smaller of n and 8.  Used to safely take a hex-prefix for
+// error messages without panicking on keys shorter than 8 chars.
+func min8(n int) int {
+	if n < 8 {
+		return n
+	}
+	return 8
 }
 
 func (h *AgentHandler) ListPeers(_ context.Context, _ *proto.Empty) (*proto.PeerList, error) {
