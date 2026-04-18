@@ -25,9 +25,12 @@ type testTunnelManager struct {
 	removeCalls    []string
 	getParamsCalls []string
 	getParamsCfg   wg.Config
+	updatePeerCalls     []updateTunnelPeerCall
 	addErr         error
 	removeErr      error
 	getParamsErr   error
+	updatePeerErr       error
+	updatePeerUnchanged bool
 	listenPort     int
 }
 
@@ -45,6 +48,13 @@ type addTunnelCall struct {
 	endpointTransportIP string
 	weight              int
 	peerKey             wg.Key
+}
+
+type updateTunnelPeerCall struct {
+	name       string
+	newPubkey  [32]byte
+	balancerIP string
+	allowedIPs []string
 }
 
 func (m *testTunnelManager) AddTunnel(
@@ -86,6 +96,16 @@ func (m *testTunnelManager) GetParams(tunnelName string) (wg.Config, error) {
 func (m *testTunnelManager) RemoveTunnel(name string) error {
 	m.removeCalls = append(m.removeCalls, name)
 	return m.removeErr
+}
+
+func (m *testTunnelManager) UpdateTunnelPeer(name string, newPubkey [32]byte, balancerIP string, allowedIPs []string) (unchanged bool, err error) {
+	m.updatePeerCalls = append(m.updatePeerCalls, updateTunnelPeerCall{
+		name:       name,
+		newPubkey:  newPubkey,
+		balancerIP: balancerIP,
+		allowedIPs: append([]string(nil), allowedIPs...),
+	})
+	return m.updatePeerUnchanged, m.updatePeerErr
 }
 
 type testParamApplier struct {
@@ -406,6 +426,88 @@ func TestAddTunnelReturnsMasterPublicKey(t *testing.T) {
 	if gotKey != pubKey {
 		t.Fatalf("master public key mismatch: got %s, want %s", gotKey, pubKey)
 	}
+}
+
+func TestAgentHandler_UpdateTunnelPeer_Validation(t *testing.T) {
+	logger := zerolog.Nop()
+	h := &AgentHandler{
+		logger:    logger,
+		tunnelMgr: &testTunnelManager{},
+	}
+
+	t.Run("empty name returns InvalidArgument", func(t *testing.T) {
+		_, err := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("expected InvalidArgument, got %v", st.Code())
+		}
+	})
+
+	t.Run("wrong pubkey length returns InvalidArgument", func(t *testing.T) {
+		_, err := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 31),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("expected InvalidArgument, got %v", st.Code())
+		}
+	})
+
+	t.Run("nil tunnelMgr returns Unimplemented", func(t *testing.T) {
+		h2 := &AgentHandler{logger: logger}
+		_, err := h2.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.Unimplemented {
+			t.Errorf("expected Unimplemented, got %v", st.Code())
+		}
+	})
+
+	t.Run("tunnel not found returns NotFound", func(t *testing.T) {
+		mgr := &testTunnelManager{updatePeerErr: errors.New("tunnel not found")}
+		h3 := &AgentHandler{logger: logger, tunnelMgr: mgr}
+		_, err := h3.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.NotFound {
+			t.Errorf("expected NotFound, got %v", st.Code())
+		}
+	})
+
+	t.Run("unchanged=true returns success with Unchanged", func(t *testing.T) {
+		mgr := &testTunnelManager{updatePeerUnchanged: true}
+		h4 := &AgentHandler{logger: logger, tunnelMgr: mgr}
+		resp, err := h4.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !resp.Unchanged {
+			t.Error("expected Unchanged=true")
+		}
+	})
 }
 
 func TestRotateParamsMapsProtoValuesToConfig(t *testing.T) {

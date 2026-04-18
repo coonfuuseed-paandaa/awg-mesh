@@ -336,6 +336,49 @@ func (h *AgentHandler) ListTunnels(_ context.Context, _ *proto.Empty) (*proto.Tu
 	return &proto.TunnelList{Tunnels: protoTunnels}, nil
 }
 
+// UpdateTunnelPeer updates the peer public key on a named tunnel idempotently.
+func (h *AgentHandler) UpdateTunnelPeer(_ context.Context, req *proto.UpdateTunnelPeerRequest) (*proto.UpdateTunnelPeerResponse, error) {
+	if h.tunnelMgr == nil {
+		return nil, status.Error(codes.Unimplemented, "tunnel management not available in this mode")
+	}
+
+	name := strings.TrimSpace(req.GetName())
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "tunnel name required")
+	}
+	rawKey := req.GetPeerPublicKey()
+	if len(rawKey) != 32 {
+		return nil, status.Error(codes.InvalidArgument, "peer_public_key must be exactly 32 bytes")
+	}
+
+	var newKey [32]byte
+	copy(newKey[:], rawKey)
+
+	unchanged, err := h.tunnelMgr.UpdateTunnelPeer(name, newKey, req.GetBalancerIp(), req.GetAllowedIps())
+	if err != nil {
+		if strings.Contains(err.Error(), "tunnel not found") {
+			return nil, status.Errorf(codes.NotFound, "tunnel not found: %s", name)
+		}
+		h.logger.Error().Err(err).Str("tunnel", name).Msg("update tunnel peer failed")
+		return nil, status.Errorf(codes.Internal, "update tunnel peer: %v", err)
+	}
+
+	resp := &proto.UpdateTunnelPeerResponse{
+		Success:   true,
+		Unchanged: unchanged,
+	}
+	if h.keyProvider != nil {
+		pubKey, kErr := h.keyProvider.GetPublicKey()
+		if kErr != nil {
+			h.logger.Warn().Err(kErr).Msg("update tunnel peer: failed to read master public key")
+		} else {
+			resp.MasterPublicKey = pubKey[:]
+		}
+	}
+
+	return resp, nil
+}
+
 func (h *AgentHandler) ListPeers(_ context.Context, _ *proto.Empty) (*proto.PeerList, error) {
 	if h.peerMgr == nil {
 		return nil, status.Error(codes.Unimplemented, "peer management not available in this mode")

@@ -169,7 +169,7 @@ func (m *MasterRunner) removeOverlayRoute(overlayIP string) {
 	if _, destNet, parseErr := net.ParseCIDR(cidr); parseErr == nil {
 		router := routing.NewNetlinkRouter()
 		if err := router.RouteDelete(destNet); err != nil {
-			m.node.logger.Error().Str("overlay_ip", overlayIP).Err(err).Msg("failed to remove overlay route — will retry on next health cycle")
+			m.node.logger.Error().Str("overlay_ip", overlayIP).Err(err).Msg("failed to remove overlay route - will retry on next health cycle")
 		}
 	}
 }
@@ -444,14 +444,81 @@ func (m *MasterRunner) setupExitMode() error {
 }
 
 // setupDSCPRouting reads routing_policies from topology and sets up DSCP->fwmark->table policy routing.
-// Masters don't have routing_policies directly — they read DSCP from incoming
+// Masters don't have routing_policies directly - they read DSCP from incoming
 // setupDSCPRouting is intentionally a no-op for masters.
 // Masters forward traffic via ECMP overlay routes; DSCP marking and
 // policy-based routing is a client-side concern. If master-side DSCP
 // forwarding is needed in the future, this function should install
 // nftables rules to match incoming DSCP-marked WG packets and apply
-// fwmark→table routing analogous to client_linux.go:setupDSCPRouting.
+// fwmark->table routing analogous to client_linux.go:setupDSCPRouting.
 func (m *MasterRunner) setupDSCPRouting() error {
+	return nil
+}
+
+// applyPeerKeyUpdate performs the UAPI peer-replace for UpdateTunnelPeer.
+// Must be called with m.mu held (write lock). Linux-only.
+func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key, allowedIPs []string) error {
+	if tunnel.platformState.iface == nil {
+		return fmt.Errorf("tunnel %q interface is not initialized", tunnel.Name)
+	}
+
+	dev, err := tunnel.platformState.iface.GetDevice()
+	if err != nil {
+		return fmt.Errorf("get device state for tunnel %q: %w", tunnel.Name, err)
+	}
+
+	var existingAllowedIPs []net.IPNet
+	var existingEndpoint *net.UDPAddr
+	var existingPresharedKey *wg.Key
+	for _, peer := range dev.Peers {
+		if peer.PublicKey == tunnel.PeerPublicKey {
+			existingAllowedIPs = append([]net.IPNet(nil), peer.AllowedIPs...)
+			existingEndpoint = peer.Endpoint
+			if peer.PresharedKey != (wg.Key{}) {
+				k := peer.PresharedKey
+				existingPresharedKey = &k
+			}
+			break
+		}
+	}
+
+	peerAllowedIPs := existingAllowedIPs
+	if len(allowedIPs) > 0 {
+		parsed := make([]net.IPNet, 0, len(allowedIPs))
+		for _, cidr := range allowedIPs {
+			_, ipNet, parseErr := net.ParseCIDR(strings.TrimSpace(cidr))
+			if parseErr != nil {
+				return fmt.Errorf("parse allowed IP %q: %w", cidr, parseErr)
+			}
+			parsed = append(parsed, *ipNet)
+		}
+		peerAllowedIPs = parsed
+	}
+
+	removeCfg := wg.Config{
+		Peers: []wg.PeerConfig{{
+			PublicKey: tunnel.PeerPublicKey,
+			Remove:    true,
+		}},
+	}
+	if removeErr := tunnel.platformState.iface.Configure(removeCfg); removeErr != nil {
+		return fmt.Errorf("remove old peer from tunnel %q: %w", tunnel.Name, removeErr)
+	}
+
+	addCfg := wg.Config{
+		Peers: []wg.PeerConfig{{
+			PublicKey:         newPubkey,
+			ReplaceAllowedIPs: false,
+			UpdateOnly:        false,
+			AllowedIPs:        peerAllowedIPs,
+			Endpoint:          existingEndpoint,
+			PresharedKey:      existingPresharedKey,
+		}},
+	}
+	if addErr := tunnel.platformState.iface.Configure(addCfg); addErr != nil {
+		return fmt.Errorf("add new peer to tunnel %q: %w", tunnel.Name, addErr)
+	}
+
 	return nil
 }
 

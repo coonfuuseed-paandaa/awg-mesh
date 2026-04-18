@@ -13,6 +13,12 @@ type TunnelManager interface {
 	ListTunnels() []TunnelInfo
 	GetParams(tunnelName string) (wg.Config, error)
 	GetListenPort(tunnelName string) (int, error)
+
+	// UpdateTunnelPeer replaces the existing peer's public key on a named tunnel
+	// atomically. Idempotent: when newPubkey matches the stored key, returns
+	// (unchanged=true, nil) without touching the data plane.
+	// On UAPI failure, restores the previous in-memory key and does NOT persist.
+	UpdateTunnelPeer(name string, newPubkey [32]byte, balancerIP string, allowedIPs []string) (unchanged bool, err error)
 }
 
 // ParamApplier applies AWG runtime parameter updates to an interface/tunnel.
@@ -33,7 +39,7 @@ type PeerManager interface {
 // The allowedIPs parameter is mode-specific:
 //   - In endpoint mode (EndpointRunner): allowedIPs lists overlay CIDRs to
 //     install as kernel routes via RouteReplaceLink.
-//   - In client mode (ClientRunner): allowedIPs is ignored — overlay routing
+//   - In client mode (ClientRunner): allowedIPs is ignored - overlay routing
 //     is handled separately via ECMP in rebuildClientECMP.
 //
 // Implementations MUST be safe to call concurrently with each other but
@@ -64,7 +70,7 @@ type CaptureFunc func(interfaceName string, domains []string, countPerDomain int
 
 // CaptureScheduler manages autonomous capture scheduling on a node.
 // SetSchedule configures domains, interval, and retention. The node runs capture
-// autonomously — admin PC is not needed after configuration.
+// autonomously - admin PC is not needed after configuration.
 type CaptureScheduler interface {
 	SetSchedule(domains []string, countPerDomain int, schedule string, retentionDays int) error
 	StopSchedule()

@@ -41,12 +41,12 @@ func (m *MasterRunner) GetListenPort(tunnelName string) (int, error) {
 	return 0, fmt.Errorf("UAPI not supported on this platform")
 }
 
-// masterHandshakeChecker returns nil on non-Linux platforms — WG UAPI is unavailable.
+// masterHandshakeChecker returns nil on non-Linux platforms - WG UAPI is unavailable.
 func (m *MasterRunner) masterHandshakeChecker() HandshakeChecker {
 	return nil
 }
 
-func (m *MasterRunner) setupExitMode() error   { return nil }
+func (m *MasterRunner) setupExitMode() error    { return nil }
 func (m *MasterRunner) setupDSCPRouting() error { return nil }
 
 func (m *MasterRunner) rebuildECMP(balancerIP string) {}
