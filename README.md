@@ -67,6 +67,19 @@ graph TB
 
 ## What's New
 
+### Guided upgrade (v1.10.2+)
+
+```bash
+mesh-ctl upgrade v1.10.2 -t mesh-topology.yml --confirm
+# Prints plan, requires --confirm. Orders masters-last by default. Per-node: prepare → deploy → init → verify → rollback-on-fail. Writes log to ~/.mesh-ctl/upgrade-<version>-<ts>.log.
+
+mesh-ctl upgrade status -t mesh-topology.yml
+# Prints most recent upgrade log.
+
+mesh-ctl upgrade compose old-compose.yml > new-compose.yml
+# Migrates an older docker-compose.yml to current schema. Use --from-schema <ver> if auto-detection fails; --in-place to rewrite with .bak backup.
+```
+
 ### v1.10.1
 
 - **`mesh-ctl inspect <node>`** — 3-column drift report (Admin | Disk | Runtime) for any master or endpoint. Detects key mismatches and IP divergence between admin expected state, node-persisted state, and live WireGuard runtime. Exit 1 on drift. Requires node running v1.10.1+ (`GetTransportState` RPC).
@@ -488,6 +501,55 @@ mesh-ctl status -t mesh-topology.yml
 # Then update Master 2
 ssh master-02 'docker compose -f master-02-docker-compose.yml pull && docker compose -f master-02-docker-compose.yml up -d'
 ```
+
+### Guided upgrade (v1.10.2+)
+
+`mesh-ctl upgrade` orchestrates a zero-downtime rolling upgrade of the entire mesh with
+automatic verification and per-node rollback on failure.
+
+**Preview the plan:**
+
+```bash
+mesh-ctl upgrade v1.10.2 --dry-run
+```
+
+**Execute with SSH auto-deploy:**
+
+```bash
+mesh-ctl upgrade v1.10.2 \
+    --ssh \
+    --ssh-user deploy \
+    --ssh-key ~/.ssh/mesh_deploy_ed25519
+```
+
+**Execute with manual deploy** (for air-gapped or restricted hosts):
+
+```bash
+mesh-ctl upgrade v1.10.2 --deploy-wait 300
+# CLI prints compose file path for each node; copy and run docker compose up -d manually
+```
+
+**Monitor progress:**
+
+```bash
+mesh-ctl upgrade status
+```
+
+Nodes are upgraded in dependency order: endpoints first (region-grouped), masters last.
+If the data-plane verify phase fails for any node, the driver automatically rolls back
+that node (restores the `.bak` compose, redeploys, reconciles) and halts the upgrade.
+
+**Migrate an older compose file** (pre-v1.9.0 nodes):
+
+```bash
+# Print migrated compose to stdout:
+mesh-ctl upgrade compose /etc/docker/compose/<node>-docker-compose.yml
+
+# Rewrite in-place (original saved as .bak):
+mesh-ctl upgrade compose /etc/docker/compose/<node>-docker-compose.yml --in-place
+```
+
+See `docs/MIGRATION.md` — Rolling Upgrade Procedure for the full operator checklist.
 
 ## Deployment
 

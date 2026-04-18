@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.2] — 2026-04-18
+
+### Added
+
+- **`mesh-ctl upgrade <version>`** — guided rolling upgrade of all cluster nodes to a
+  target image version (e.g. `v1.10.2`). Five phases per node: `prepare` → `deploy` →
+  `wait_ready` → `init` → `verify`. Endpoints upgraded region-by-region before masters.
+  Automatic per-node rollback on `verify` failure (restores `.bak` compose, redeploys,
+  reconciles). JSONL audit log at `~/.mesh-ctl/upgrade-<version>-<timestamp>.log`.
+  Flags: `--dry-run` (print plan only), `--order` (override node sequence),
+  `--ssh` / `--ssh-user` / `--ssh-key` (remote deploy), `--downtime-budget` (gRPC poll
+  timeout), `--deploy-wait` (manual-deploy window). Local tracker issue #93.
+- **`mesh-ctl upgrade status`** — reads the most recent upgrade log and prints a
+  timestamped phase/status table. Local tracker issue #93.
+- **`mesh-ctl upgrade compose <old-file>`** — standalone compose schema migration helper.
+  Reads any older-format `docker-compose.yml`, auto-detects its schema (`v1.5.1`, `v1.6.0`,
+  `v1.9.0`), and migrates it to the current schema. Without `--in-place` the result is
+  written to stdout; with `--in-place` the original is saved as `<file>.bak` and the file
+  is rewritten in-place. Use `--from-schema <ver>` to override auto-detection when
+  heuristics are ambiguous. Migration is idempotent: current-schema files are returned
+  unchanged. Local tracker issue #93.
+- **`pkg/upgrade` package** — core upgrade engine:
+  - `ComputeOrder` / `ComputePlan` — dependency-ordered node list (endpoints → masters,
+    region-grouped, alphabetical within group)
+  - `Driver` / `DriverConfig` — five-phase per-node state machine with rollback
+  - `Logger` / `UpgradeLogEntry` — JSONL audit log with concurrent-safe `Append` and
+    `ReadAll`; `LogPath` / `MostRecentLogPath` helpers
+  - `DetectSchema` / `MigrateCompose` / `ParseSchemaVersion` — compose schema detection
+    and migration (three historical schemas supported)
+  - `SSHDeployer` / `DataPlaneProber` / `Reconciler` / `ComposeRenderer` function types
+    injected via `DriverConfig` to decouple the engine from the CLI package
+
 ## [1.10.1] — 2026-04-18
 
 ### Added
@@ -724,7 +756,10 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.2...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...HEAD
+[1.10.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.1...v1.10.2
+[1.10.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.0...v1.10.1
+[1.10.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.2...v1.10.0
 [1.9.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.1...v1.9.0

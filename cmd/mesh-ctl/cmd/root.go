@@ -40,6 +40,10 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(newInspectCommand())
 	rootCmd.AddCommand(newReconcileCommand())
 
+	upgradeCmd := newUpgradeCommand()
+	upgradeCmd.AddCommand(newUpgradeComposeCommand())
+	rootCmd.AddCommand(upgradeCmd)
+
 	return rootCmd
 }
 

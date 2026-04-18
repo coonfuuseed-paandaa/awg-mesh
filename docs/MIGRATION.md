@@ -260,6 +260,116 @@ After Phase 6 completes:
   you configured plus gRPC on `:9090` (mTLS). Open these inbound from
   endpoints + admin workstation only. gRPC should NOT be public.
 
+---
+
+## Rolling Upgrade Procedure (v1.10.2+)
+
+Starting with v1.10.2, `mesh-ctl upgrade` orchestrates a zero-downtime rolling upgrade
+of every node in the mesh. This section covers the typical operator workflow.
+
+### Prerequisites
+
+- All nodes running v1.9.0 or later (for compose schema compatibility).
+- `mesh-ctl` v1.10.2+ installed on the admin workstation.
+- `mesh-topology.yml` up to date.
+- If using SSH auto-deploy: passwordless SSH access to each host.
+
+### Older compose files (pre-v1.9.0 nodes)
+
+If any node is running a pre-v1.9.0 docker-compose schema (i.e. it uses a `command:`
+block instead of environment variables, or `MESH_TOKEN` instead of `MESH_TOKEN_HASH`),
+migrate the compose file first:
+
+```bash
+# Detect schema version:
+mesh-ctl upgrade compose /etc/docker/compose/<node>-docker-compose.yml
+
+# Migrate in-place (original saved as .bak):
+mesh-ctl upgrade compose /etc/docker/compose/<node>-docker-compose.yml --in-place
+
+# Or write to stdout and inspect before applying:
+mesh-ctl upgrade compose /etc/docker/compose/<node>-docker-compose.yml > /tmp/migrated.yml
+diff /etc/docker/compose/<node>-docker-compose.yml /tmp/migrated.yml
+```
+
+> **Note:** If the node has `MESH_TOKEN=<plain>` (schema v1.5.1), the migrated file
+> will contain `MESH_TOKEN_HASH=REPLACE_WITH_HASH`. Before deploying, rotate the token
+> with `mesh-ctl token rotate <node>` — this generates a new token, bcrypt-hashes it,
+> writes the hash to master state, and prints the plain value for the `MESH_TOKEN_HASH`
+> substitution on the endpoint.
+
+### Step 1 — Preview the plan
+
+```bash
+mesh-ctl upgrade v1.10.2 --dry-run
+```
+
+Output shows the ordered node list, roles, regions, and target image for each node.
+Endpoints are upgraded first (region-grouped, alphabetical within region), then masters.
+
+### Step 2 — Execute the upgrade
+
+**With SSH auto-deploy** (recommended for unattended use):
+
+```bash
+mesh-ctl upgrade v1.10.2 \
+    --ssh \
+    --ssh-user deploy \
+    --ssh-key ~/.ssh/mesh_deploy_ed25519 \
+    --downtime-budget 120 \
+    --deploy-wait 180
+```
+
+**Manual deploy** (if SSH access is restricted):
+
+```bash
+mesh-ctl upgrade v1.10.2 --deploy-wait 300
+```
+
+For each node the CLI prints the compose file path. Copy it to the host and run
+`docker compose up -d` manually. The CLI polls gRPC until the node reports ready
+(up to `--deploy-wait` seconds) before moving to the next node.
+
+### Step 3 — Monitor progress
+
+In a second terminal:
+
+```bash
+watch mesh-ctl upgrade status
+```
+
+The JSONL audit log is written to `~/.mesh-ctl/upgrade-v1.10.2-<timestamp>.log`.
+
+### Rollback behaviour
+
+If the `verify` phase fails for a node (data-plane probes detect packet loss), the
+driver automatically:
+
+1. Restores the pre-upgrade compose from the `.bak` snapshot.
+2. Re-runs `docker compose up -d` (if SSH is enabled) or prints the rollback path.
+3. Polls gRPC until the node is ready again.
+4. Re-runs mesh reconciliation.
+
+The rolling upgrade halts at the failed node. Nodes upgraded earlier are left at the
+new version; rolled-back nodes return to their previous version.
+
+To check rollback status after a partial upgrade:
+
+```bash
+mesh-ctl upgrade status
+```
+
+### Override upgrade order
+
+```bash
+# Upgrade two specific nodes only (manual order):
+mesh-ctl upgrade v1.10.2 --dry-run --order ep-eu-1,master-eu-1
+
+# Check the plan, then apply without --dry-run.
+```
+
+---
+
 ## See Also
 
 - `README.md` — high-level architecture and quick start.
