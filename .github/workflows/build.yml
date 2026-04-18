@@ -108,6 +108,28 @@ jobs:
           name: coverage
           path: coverage-merged.out
 
+  windows-compile:
+    # Cross-compile mesh-ctl for Windows (amd64 + arm64) on a Linux runner.
+    # No Windows runner needed — compile-only check catches build-tag errors
+    # that would otherwise be invisible in Linux CI (NFR-3).
+    if: github.event_name != 'workflow_dispatch' || inputs.retag_version == ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Cross-compile mesh-ctl for Windows amd64
+        run: GOOS=windows GOARCH=amd64 go build ./cmd/mesh-ctl
+
+      - name: Cross-compile mesh-ctl for Windows arm64
+        run: GOOS=windows GOARCH=arm64 go build ./cmd/mesh-ctl
+
   build:
     if: github.event_name != 'workflow_dispatch' || inputs.retag_version == ''
     runs-on: ubuntu-latest

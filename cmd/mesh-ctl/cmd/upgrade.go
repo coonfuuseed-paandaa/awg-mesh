@@ -27,6 +27,7 @@ func newUpgradeCommand() *cobra.Command {
 		sshUser          string
 		sshPort          int
 		sshKey           string
+		sshPassphrase    string
 		acceptNewHosts   bool
 		downtimeSecs     int
 		deployWaitSecs   int
@@ -119,6 +120,7 @@ Exit code: 0 = all nodes succeeded; 1 = one or more nodes failed or rolled back.
 				User:           sshUser,
 				Port:           sshPort,
 				KeyPath:        sshKey,
+				Passphrase:     sshPassphrase,
 				AcceptNewHosts: acceptNewHosts,
 			}
 
@@ -191,6 +193,7 @@ Exit code: 0 = all nodes succeeded; 1 = one or more nodes failed or rolled back.
 	cmd.Flags().StringVar(&sshUser, "ssh-user", "root", "SSH username")
 	cmd.Flags().IntVar(&sshPort, "ssh-port", 22, "SSH port")
 	cmd.Flags().StringVar(&sshKey, "ssh-key", "", "Path to SSH private key (default: ssh-agent or ~/.ssh/id_ed25519)")
+	cmd.Flags().StringVar(&sshPassphrase, "ssh-passphrase", "", "Passphrase for --ssh-key (falls back to MESH_SSH_KEY_PASSPHRASE env var)")
 	cmd.Flags().BoolVar(&acceptNewHosts, "accept-new-host-key", false, "Accept unknown SSH host keys (TOFU; use only on first contact)")
 	cmd.Flags().IntVar(&downtimeSecs, "downtime-budget", 60, "Per-node gRPC ready poll budget in seconds")
 	cmd.Flags().IntVar(&deployWaitSecs, "deploy-wait", 120, "Manual-deploy gRPC poll window in seconds")
@@ -265,6 +268,7 @@ func buildSSHDeployer(opts upgrade.SSHOpts) upgrade.SSHDeployer {
 			user:             user,
 			port:             port,
 			sshKey:           keyPath,
+			sshPassphrase:    opts.Passphrase,
 			acceptNewHostKey: acceptNewHosts,
 		}
 		client, dialErr := dialSSH(sshClientOpts, log.With().Str("node", host).Logger())
@@ -313,6 +317,7 @@ func buildSSHUploader(opts upgrade.SSHOpts) upgrade.SSHUploader {
 			user:             user,
 			port:             port,
 			sshKey:           keyPath,
+			sshPassphrase:    opts.Passphrase,
 			acceptNewHostKey: acceptNewHosts,
 		}
 		client, dialErr := dialSSH(sshClientOpts, log.With().Str("node", host).Logger())
