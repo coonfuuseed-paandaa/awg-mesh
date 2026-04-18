@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,9 +20,9 @@ import (
 )
 
 const (
-	defaultRotatePreset = "Balanced"
-	rotateAgentPort     = "9090"
-	rotateTimeout       = 30 * time.Second
+	defaultRotatePreset    = "Balanced"
+	defaultRotateAgentPort = 9090
+	rotateTimeout          = 30 * time.Second
 )
 
 type rotateOptions struct {
@@ -270,8 +271,13 @@ func connectMasterAgent(master topology.MasterNode) (*grpcclient.Client, error) 
 		return nil, fmt.Errorf("load token for %q: %w", master.Name, err)
 	}
 
+	port := master.GRPCPort
+	if port == 0 {
+		port = defaultRotateAgentPort
+	}
+
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-		Target:     net.JoinHostPort(master.Host, rotateAgentPort),
+		Target:     net.JoinHostPort(master.Host, strconv.Itoa(port)),
 		CACertPath: caPath(configDir),
 		Token:      token,
 	})

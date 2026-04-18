@@ -60,12 +60,14 @@ func newStatusCommand() *cobra.Command {
 
 			transportStatePath := filepath.Join(configDir, "transport.yml")
 			transportByTunnel := make(map[string]string)
+			transportTotalAllocations := 0
 			if transportData, err := os.ReadFile(transportStatePath); err == nil {
 				var transportState localTransportState
 				if yaml.Unmarshal(transportData, &transportState) == nil {
 					for _, allocation := range transportState.Allocations {
 						transportByTunnel[allocation.Tunnel] = allocation.MasterIP + "->" + allocation.EndpointIP
 					}
+					transportTotalAllocations = len(transportState.Allocations)
 				}
 			}
 
@@ -114,8 +116,10 @@ func newStatusCommand() *cobra.Command {
 					transportDisplay = strings.Join(transportPairs, ",")
 				}
 
+				tunnelCount := tunnelDisplayCount(n.mode, len(resp.Tunnels), transportTotalAllocations)
+
 				fmt.Printf("%-20s %-10s %-20s %-10s %-15s %-25s %s\n",
-					resp.Name, resp.Mode, n.host, "ONLINE", resp.OverlayIp, transportDisplay, fmt.Sprintf("%d", len(resp.Tunnels)))
+					resp.Name, resp.Mode, n.host, "ONLINE", resp.OverlayIp, transportDisplay, fmt.Sprintf("%d", tunnelCount))
 			}
 
 			// --verify-data-plane: probe each (master, endpoint) overlay pair.
@@ -149,6 +153,19 @@ func newStatusCommand() *cobra.Command {
 		"Maximum concurrent node probes when --verify-data-plane is set")
 
 	return cmd
+}
+
+// tunnelDisplayCount returns the TUNNELS column value for a node row.
+//
+// Semantics differ by mode (issue #105):
+//   - master   → active WG peer count from GetStatus (clients connected to ingress)
+//   - endpoint → transport allocation count from admin-side transport.yml
+//     (outbound links to masters; endpoint has no ingress peer list)
+func tunnelDisplayCount(mode string, grpcTunnelCount, transportAllocations int) int {
+	if mode == "endpoint" {
+		return transportAllocations
+	}
+	return grpcTunnelCount
 }
 
 // pairProbeResult holds the data-plane verification result for one
