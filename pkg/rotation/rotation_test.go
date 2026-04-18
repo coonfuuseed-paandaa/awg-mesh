@@ -102,6 +102,10 @@ func (m *mockAwgAgentClient) GetHealth(_ context.Context, _ *proto.Empty, _ ...g
 	return m.healthResp, nil
 }
 
+func (m *mockAwgAgentClient) GetTransportState(_ context.Context, _ *proto.Empty, _ ...grpc.CallOption) (*proto.TransportStateResponse, error) {
+	return &proto.TransportStateResponse{}, nil
+}
+
 func TestTier1ExecuteValidation(t *testing.T) {
 	t.Parallel()
 
