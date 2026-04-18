@@ -2,11 +2,13 @@ package node
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"strings"
 	"time"
 
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 // EndpointRunner runs node logic for endpoint mode.
@@ -76,12 +78,24 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 				allowedIPs = append(allowedIPs, tt.PeerTransportIP+"/32")
 			}
 
-			peerKey, err := wg.ParseKey(tt.PeerPublicKey)
+			// Persisted transport.yml encodes peer_public_key as hex
+			// (written by saveNodeTransportStateAfterPeerAdded in pkg/grpc/handlers.go).
+			// Previously decoded as base64 → "invalid key length 48" → all peers
+			// silently dropped on every restart (local tracker issue #94).
+			peerBytes, err := hex.DecodeString(strings.TrimSpace(tt.PeerPublicKey))
 			if err != nil {
 				e.node.logger.Warn().
 					Str("tunnel", tt.Name).
 					Err(err).
-					Msg("reconcile peer: parse key failed")
+					Msg("reconcile peer: decode hex key failed")
+				continue
+			}
+			peerKey, err := wg.NewKey(peerBytes)
+			if err != nil {
+				e.node.logger.Warn().
+					Str("tunnel", tt.Name).
+					Err(err).
+					Msg("reconcile peer: invalid key length")
 				continue
 			}
 
@@ -91,6 +105,18 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 					Err(err).
 					Msg("reconcile peer failed")
 			} else {
+				if err := e.ConfigureTransport(
+					hex.EncodeToString(peerBytes),
+					tt.TransportIP,
+					tt.PeerTransportIP,
+					tt.AllowedIPs,
+				); err != nil {
+					e.node.logger.Warn().
+						Err(err).
+						Str("tunnel", tt.Name).
+						Msg("reconcile: configure transport failed")
+					continue
+				}
 				reconciled++
 			}
 		}

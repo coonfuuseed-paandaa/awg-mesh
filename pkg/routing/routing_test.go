@@ -18,6 +18,7 @@ func TestNetlinkRouterStubsReturnNotSupported(t *testing.T) {
 	}{
 		{"RouteAdd", func() error { return r.RouteAdd(dest, net.ParseIP("10.0.0.1"), "wg0") }},
 		{"RouteReplace", func() error { return r.RouteReplace(dest, net.ParseIP("10.0.0.1"), "wg0") }},
+		{"RouteReplaceLink", func() error { return r.RouteReplaceLink(dest, "wg0") }},
 		{"RouteDelete", func() error { return r.RouteDelete(dest) }},
 		{"SetECMPRoute", func() error { return r.SetECMPRoute(dest, []NextHop{{Via: "10.0.0.1", Dev: "wg0", Weight: 1}}) }},
 		{"RemoveECMPRoute", func() error { return r.RemoveECMPRoute(dest) }},

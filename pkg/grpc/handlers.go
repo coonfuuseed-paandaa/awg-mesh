@@ -14,17 +14,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rs/zerolog"
-	"golang.org/x/crypto/bcrypt"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog"
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
-
 )
 
 // AgentHandler implements proto.AwgAgentServer for the awg-mesh-node.
@@ -395,7 +394,7 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 					bs.SetBalancerIP(pubkeyHex, balancerIP)
 				}
 			}
-			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP); err != nil {
+			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP, req.GetAllowedIps()); err != nil {
 				h.logger.Warn().Err(err).Msg("configure transport after AddPeer failed")
 			}
 		}

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -123,9 +123,10 @@ type testTransportPeerManager struct {
 }
 
 type configureTransportCall struct {
-	pubkeyHex string
-	localIP   string
-	peerIP    string
+	pubkeyHex  string
+	localIP    string
+	peerIP     string
+	allowedIPs []string
 }
 
 type addPeerCall struct {
@@ -167,11 +168,12 @@ func (m *testPeerManager) RemovePeer(publicKey []byte) error {
 	return m.removeErr
 }
 
-func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string) error {
+func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error {
 	m.configureCalls = append(m.configureCalls, configureTransportCall{
-		pubkeyHex: pubkeyHex,
-		localIP:   localIP,
-		peerIP:    peerIP,
+		pubkeyHex:  pubkeyHex,
+		localIP:    localIP,
+		peerIP:     peerIP,
+		allowedIPs: append([]string(nil), allowedIPs...),
 	})
 
 	if strings.TrimSpace(m.configDir) != "" {
@@ -1116,6 +1118,9 @@ func TestAddPeerConfiguresTransportAfterStatePersisted(t *testing.T) {
 	}
 	if call.localIP != "10.250.0.2" || call.peerIP != "10.250.0.1" {
 		t.Fatalf("unexpected transport call: %#v", call)
+	}
+	if !reflect.DeepEqual(call.allowedIPs, []string{"0.0.0.0/0"}) {
+		t.Fatalf("unexpected transport allowed IPs: %#v", call.allowedIPs)
 	}
 	if !peerMgr.stateSeen {
 		t.Fatal("expected transport state to be persisted before ConfigureTransport")

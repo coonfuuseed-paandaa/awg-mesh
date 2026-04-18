@@ -31,7 +31,7 @@ type PeerManager interface {
 // require per-peer transport IP assignment and routing (client mode).
 // It is called by the AddPeer handler after saving transport state.
 type TransportConfigurator interface {
-	ConfigureTransport(pubkeyHex, localIP, peerIP string) error
+	ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error
 }
 
 // BalancerIPSetter is an optional extension for setting balancer IP on a peer

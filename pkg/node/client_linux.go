@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
-	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/dns"
+	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
@@ -382,7 +382,9 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 }
 
 // ConfigureTransport implements grpcserver.TransportConfigurator.
-func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string) error {
+// allowedIPs is accepted for interface compliance but ignored in client mode:
+// client overlay routing uses ECMP via rebuildClientECMP, not per-peer link routes.
+func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ []string) error {
 	if c == nil || c.node == nil {
 		return fmt.Errorf("client runner node is required")
 	}
@@ -518,7 +520,7 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 		if balancerIP := strings.TrimSpace(tunnel.BalancerIP); balancerIP != "" {
 			c.SetBalancerIP(pubkeyHex, balancerIP)
 		}
-		if err := c.ConfigureTransport(pubkeyHex, strings.TrimSpace(tunnel.TransportIP), strings.TrimSpace(tunnel.PeerTransportIP)); err != nil {
+		if err := c.ConfigureTransport(pubkeyHex, strings.TrimSpace(tunnel.TransportIP), strings.TrimSpace(tunnel.PeerTransportIP), tunnel.AllowedIPs); err != nil {
 			c.node.logger.Warn().
 				Str("tunnel", tunnel.Name).
 				Err(err).
