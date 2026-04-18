@@ -22,6 +22,8 @@ Unified node binary (`awg-mesh-node`) + CLI control plane (`mesh-ctl`).
 - AWG parameter rotation (anti-DPI)
 - gRPC management with mTLS + token dual auth
 - Prepare → deploy → init onboarding
+- Endpoint key rotation propagates without container restart (v1.10+, via `UpdateTunnelPeer` RPC — fixes the split-brain scenario in `.agent/investigations/issue-92-endpoint-init-propagation.md`)
+- `mesh-ctl master reload <name>` recovery primitive — force-reconciles admin-state pubkey to every bound endpoint on a named master
 
 ## ARCHITECTURE
 
