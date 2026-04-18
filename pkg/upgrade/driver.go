@@ -19,6 +19,7 @@ type SSHOpts struct {
 	User           string
 	Port           int
 	KeyPath        string
+	Passphrase     string // --ssh-passphrase or MESH_SSH_KEY_PASSPHRASE env var
 	AcceptNewHosts bool
 }
 

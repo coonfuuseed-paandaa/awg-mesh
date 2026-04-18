@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,6 +57,7 @@ type bootstrapOpts struct {
 	user             string
 	port             int
 	sshKey           string
+	sshPassphrase    string // --ssh-passphrase or MESH_SSH_KEY_PASSPHRASE env var
 	image            string
 	acceptNewHostKey bool
 }
@@ -226,25 +226,34 @@ func dialSSH(opts bootstrapOpts, logger zerolog.Logger) (*ssh.Client, error) {
 }
 
 // buildAuthMethods returns SSH auth methods (agent first, then key file), plus
-// a cleanup function that closes the agent socket connection. The cleanup MUST
-// be called after ssh.Dial returns — authentication is complete by then and
-// the agent connection is no longer needed.
+// a cleanup function that closes the agent connection. The cleanup MUST be
+// called after ssh.Dial returns — authentication is complete by then and the
+// agent connection is no longer needed.
+//
+// Agent dial is handled by the platform-specific dialSSHAgent() helper
+// (agent_unix.go / agent_windows.go).
 func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMethod, func(), error) {
 	var methods []ssh.AuthMethod
 	cleanup := func() {} // no-op by default; replaced when agent conn is opened
 
-	// Prefer SSH agent when SSH_AUTH_SOCK is set.
-	if agentSock := os.Getenv("SSH_AUTH_SOCK"); agentSock != "" {
-		conn, err := net.Dial("unix", agentSock)
-		if err != nil {
-			logger.Warn().Err(err).Msg("SSH agent available but dial failed — falling back to key file")
+	agentSock := os.Getenv("SSH_AUTH_SOCK")
+
+	conn, agentErr := dialSSHAgent()
+	if agentErr != nil {
+		// Agent dial failed — emit FR-3 diagnostic when no key file is available.
+		if opts.sshKey == "" {
+			logger.Warn().Err(agentErr).Str("ssh_auth_sock", agentSock).
+				Msg("SSH agent dial failed and no --ssh-key provided")
 		} else {
-			cleanup = func() { _ = conn.Close() }
-			agentClient := agent.NewClient(conn)
-			methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
-			logger.Debug().Msg("Using SSH agent for authentication")
+			logger.Warn().Err(agentErr).Msg("SSH agent dial failed — falling back to key file")
 		}
+	} else if conn != nil {
+		cleanup = func() { _ = conn.Close() }
+		agentClient := agent.NewClient(conn)
+		methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
+		logger.Debug().Msg("Using SSH agent for authentication")
 	}
+	// conn == nil && agentErr == nil means no agent configured (SSH_AUTH_SOCK unset on Unix).
 
 	// Resolve key path: explicit flag → id_ed25519 → id_rsa.
 	keyPath := opts.sshKey
@@ -253,7 +262,7 @@ func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMeth
 	}
 
 	if keyPath != "" {
-		signer, err := loadPrivateKey(keyPath)
+		signer, err := loadPrivateKey(keyPath, opts.sshPassphrase)
 		if err != nil {
 			if len(methods) == 0 {
 				cleanup()
@@ -268,6 +277,15 @@ func buildAuthMethods(opts bootstrapOpts, logger zerolog.Logger) ([]ssh.AuthMeth
 
 	if len(methods) == 0 {
 		cleanup()
+		// Emit FR-3 diagnostic when agent dial failed and no key is available.
+		if agentErr != nil && agentSock != "" {
+			return nil, nil, fmt.Errorf(
+				"SSH authentication unavailable: SSH_AUTH_SOCK is set to %q but the agent dial failed: %v. "+
+					"On Windows, ensure the OpenSSH agent service is running (`Get-Service ssh-agent`) "+
+					"and SSH_AUTH_SOCK points to `\\\\.\\pipe\\openssh-ssh-agent`. "+
+					"Or pass --ssh-key <path> to load a key file directly",
+				agentSock, agentErr)
+		}
 		return nil, nil, fmt.Errorf("no SSH auth method available: no agent and no private key found")
 	}
 
@@ -293,14 +311,43 @@ func resolveDefaultSSHKey() string {
 }
 
 // loadPrivateKey reads and parses a PEM-encoded private key.
-func loadPrivateKey(path string) (ssh.Signer, error) {
+// passphrase is tried first from the argument; if empty, MESH_SSH_KEY_PASSPHRASE
+// is consulted. If neither is set and the key is passphrase-protected, a
+// user-friendly error matching FR-2 is returned.
+func loadPrivateKey(path, passphrase string) (ssh.Signer, error) {
 	keyBytes, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read key file: %w", err)
+		return nil, fmt.Errorf("read key %q: %w", path, err)
 	}
+
+	if passphrase == "" {
+		passphrase = os.Getenv("MESH_SSH_KEY_PASSPHRASE")
+	}
+
+	if passphrase != "" {
+		signer, err := ssh.ParsePrivateKeyWithPassphrase(keyBytes, []byte(passphrase))
+		if err != nil {
+			return nil, fmt.Errorf("parse passphrase-protected key %q: %w", path, err)
+		}
+		return signer, nil
+	}
+
 	signer, err := ssh.ParsePrivateKey(keyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse private key: %w", err)
+		// golang.org/x/crypto/ssh exposes *ssh.PassphraseMissingError starting v0.0.0
+		// but as of v0.30+ the public API still returns a plain error from
+		// ParsePrivateKey; errors.As against *ssh.PassphraseMissingError only works
+		// when the caller invokes ParsePrivateKeyWithPassphrase. For keys without
+		// a passphrase attempt, we must string-match. If a future upstream release
+		// exports a typed error from ParsePrivateKey, swap this for errors.As.
+		if strings.Contains(err.Error(), "passphrase protected") {
+			return nil, fmt.Errorf(
+				"private key at %q is passphrase-protected but no passphrase provided. "+
+					"Set --ssh-passphrase or MESH_SSH_KEY_PASSPHRASE, or use an unprotected key, "+
+					"or load the key into an SSH agent and leave --ssh-key unset",
+				path)
+		}
+		return nil, fmt.Errorf("parse private key %q: %w", path, err)
 	}
 	return signer, nil
 }

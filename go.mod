@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.25.9
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/amnezia-vpn/amneziawg-go v1.0.4
 	github.com/cilium/ebpf v0.21.0
 	github.com/google/gopacket v1.1.19
