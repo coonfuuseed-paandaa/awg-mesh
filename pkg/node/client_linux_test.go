@@ -429,6 +429,86 @@ func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
 	}
 }
 
+func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
+	t.Parallel()
+
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 2) // different from other tests
+	}
+	peerHex := hex.EncodeToString(peerKey)
+
+	runner := NewClientRunner(newTestNode(nil))
+	link := &transportLink{
+		iface:     &wg.Interface{},
+		pubkeyHex: peerHex,
+		healthy:   true,
+	}
+	runner.platformState.byKey[peerHex] = link
+	runner.platformState.links = []*transportLink{link}
+
+	firstEntered := make(chan struct{})
+	firstResume := make(chan struct{})
+	secondStarted := make(chan struct{})
+	var order []int
+	var orderMu sync.Mutex
+
+	runner.platformState.configurePeerOnIfaceFn = func(_ *ClientRunner, _ *wg.Interface, _ []byte, _ []byte, _ []string, _ string, _ int32) error {
+		// Signal that configure was entered; block until resumed.
+		select {
+		case <-firstEntered:
+		default:
+			close(firstEntered)
+			<-firstResume
+		}
+		orderMu.Lock()
+		order = append(order, len(order)+1)
+		orderMu.Unlock()
+		return nil
+	}
+
+	done1 := make(chan error, 1)
+	done2 := make(chan error, 1)
+
+	go func() {
+		done1 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25)
+	}()
+
+	// Wait for first to be inside configure (holding link.mu).
+	select {
+	case <-firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first AddPeer did not enter configure")
+	}
+
+	// Second AddPeer should block on link.mu.
+	go func() {
+		close(secondStarted)
+		done2 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.2:51820", 25)
+	}()
+
+	<-secondStarted
+	// Give the second goroutine to reach the link.mu.Lock() point.
+	time.Sleep(50 * time.Millisecond)
+
+	// Release the first — second should now proceed.
+	close(firstResume)
+
+	if err := <-done1; err != nil {
+		t.Fatalf("first AddPeer returned error: %v", err)
+	}
+	if err := <-done2; err != nil {
+		t.Fatalf("second AddPeer returned error: %v", err)
+	}
+
+	// Both should have completed (order has 2 entries).
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	if len(order) != 2 {
+		t.Fatalf("expected 2 configure calls, got %d", len(order))
+	}
+}
+
 // TestRebuildClientECMP_HealthyLegacy verifies the legacy path with 2 healthy links
 // (no balancerIP): SetECMPRoute called for 0.0.0.0/0, EnableStickyECMP(overlay.space),
 // EnableL4Hash called.

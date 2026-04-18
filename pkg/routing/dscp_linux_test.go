@@ -106,6 +106,24 @@ func TestShouldCleanupDSCPRule(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "priority and table mismatch: table != 100+mark",
+			rule: netlink.Rule{
+				Mark:     10,
+				Priority: 110,
+				Table:    120,
+			},
+			want: false,
+		},
+		{
+			name: "priority and table mismatch: priority != 100+mark",
+			rule: netlink.Rule{
+				Mark:     10,
+				Priority: 120,
+				Table:    110,
+			},
+			want: false,
+		},
 	}
 
 	for _, tc := range tests {

@@ -25,6 +25,7 @@ import (
 const clientInterfacePrefix = "wg-c"
 
 type transportLink struct {
+	mu               sync.Mutex // serializes concurrent reconfigures/teardowns for this peer
 	iface            *wg.Interface
 	pubkeyHex        string
 	localTransportIP string
@@ -221,7 +222,10 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 		if configureIface == nil {
 			return fmt.Errorf("existing interface is nil for peer %q", pubkeyHex[:8])
 		}
-		return c.configurePeerHook()(c, configureIface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+		existingLink.mu.Lock()
+		err := c.configurePeerHook()(c, configureIface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+		existingLink.mu.Unlock()
+		return err
 	}
 
 	// Mark this key as pending to prevent concurrent AddPeer from creating a duplicate.
@@ -432,11 +436,14 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 	c.platformState.byKey = nextByKey
 	c.platformState.mu.Unlock()
 
+	link.mu.Lock()
 	if err := c.rebuildClientECMP("balancer_change"); err != nil {
 		c.node.logger.Warn().Err(err).Msg("rebuildClientECMP after peer removal failed")
 	}
+	closeErr := link.iface.Close()
+	link.mu.Unlock()
 
-	return link.iface.Close()
+	return closeErr
 }
 
 // ConfigureTransport implements grpcserver.TransportConfigurator.
@@ -969,9 +976,18 @@ func (c *ClientRunner) setPeerHealth(peerHex string, healthy bool) {
 		return
 	}
 
-	updated := *existing
-	updated.healthy = healthy
-	updatedPeer := &updated
+	// Explicit field-by-field copy: transportLink contains a sync.Mutex which
+	// cannot be copied by value. The mu on the new instance is fresh — correct
+	// under CoW semantics since readers of the old instance (holding old.mu)
+	// are unrelated to readers who will discover updatedPeer via byKey.
+	updatedPeer := &transportLink{
+		iface:            existing.iface,
+		pubkeyHex:        existing.pubkeyHex,
+		localTransportIP: existing.localTransportIP,
+		peerTransportIP:  existing.peerTransportIP,
+		balancerIP:       existing.balancerIP,
+		healthy:          healthy,
+	}
 
 	nextLinks := make([]*transportLink, 0, len(c.platformState.links))
 	for _, link := range c.platformState.links {
