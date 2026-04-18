@@ -115,7 +115,7 @@ echo "  Starting SSH server container..."
 # Wait for SSH server to start.
 echo "  Waiting for SSH server to be ready..."
 READY=0
-for i in $(seq 1 15); do
+for _ in $(seq 1 15); do
     if "$DOCKER" exec "$SSH_CONTAINER" true 2>/dev/null; then
         READY=1
         break
@@ -160,9 +160,11 @@ services:
     restart: unless-stopped
 COMPOSE
 
-REMOTE_COMPOSE_PATH="${REMOTE_COMPOSE_DIR}/m1-docker-compose.yml"
-
 # Test SFTP upload via a Go test helper if available, otherwise note limitation.
+# The remote path used by mesh-ctl would be:
+#   ${REMOTE_COMPOSE_DIR}/m1-docker-compose.yml
+# — constructed in pkg/upgrade/sftp.go::remoteComposePath. This script defers
+# the end-to-end verification to the CI harness (see note above).
 echo "  SFTP upload path validated via unit tests (TestSSHDeploy_UsesSSHUploadWhenConfigured)"
 pass "Docker SSH server available for manual SFTP verification"
 
