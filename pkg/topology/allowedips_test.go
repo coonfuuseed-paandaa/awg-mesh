@@ -158,3 +158,51 @@ func TestBuildAllowedIPsForEndpoint_EmptyCIDRRangeSkipped(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildAllowedIPsForEndpoint_InvalidMasterOverlayIP verifies that a
+// malformed masterOverlayIP (non-IP string) returns an error.
+func TestBuildAllowedIPsForEndpoint_InvalidMasterOverlayIP(t *testing.T) {
+	t.Parallel()
+
+	topo := makeTopo()
+	_, err := BuildAllowedIPsForEndpoint(topo, "not-an-ip", "10.255.0.24/30")
+	if err == nil {
+		t.Fatal("expected error for malformed masterOverlayIP, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid master overlay IP") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestBuildAllowedIPsForEndpoint_InvalidTransportSubnet verifies that a
+// malformed transportSubnet (non-CIDR string) returns an error.
+func TestBuildAllowedIPsForEndpoint_InvalidTransportSubnet(t *testing.T) {
+	t.Parallel()
+
+	topo := makeTopo()
+	_, err := BuildAllowedIPsForEndpoint(topo, "172.20.70.2", "not-a-cidr")
+	if err == nil {
+		t.Fatal("expected error for malformed transportSubnet, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid transport subnet") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestBuildAllowedIPsForEndpoint_InvalidOverlayRangeCIDR verifies that a
+// malformed CIDR in an overlay range entry returns an error.
+func TestBuildAllowedIPsForEndpoint_InvalidOverlayRangeCIDR(t *testing.T) {
+	t.Parallel()
+
+	topo := makeTopo(
+		NamedRange{Name: "good", CIDR: "172.20.70.0/27"},
+		NamedRange{Name: "bad", CIDR: "999.999.999.999/33"},
+	)
+	_, err := BuildAllowedIPsForEndpoint(topo, "172.20.70.2", "10.255.0.24/30")
+	if err == nil {
+		t.Fatal("expected error for malformed overlay range CIDR, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid overlay range CIDR") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}

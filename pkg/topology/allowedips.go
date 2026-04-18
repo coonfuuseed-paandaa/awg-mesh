@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"net"
 )
 
 // BuildAllowedIPsForEndpoint returns the allowed_ips list that a master
@@ -14,7 +15,7 @@ import (
 // Called from both `master init`, `endpoint init`, and `reconcile` paths to ensure
 // identical AllowedIPs semantics across all code paths.
 //
-// Returns an error if masterOverlayIP or transportSubnet are empty.
+// Returns an error if masterOverlayIP or transportSubnet are empty or malformed.
 func BuildAllowedIPsForEndpoint(topo *Topology, masterOverlayIP, transportSubnet string) ([]string, error) {
 	if masterOverlayIP == "" {
 		return nil, fmt.Errorf("master overlay IP is required")
@@ -23,14 +24,28 @@ func BuildAllowedIPsForEndpoint(topo *Topology, masterOverlayIP, transportSubnet
 		return nil, fmt.Errorf("transport subnet is required")
 	}
 
+	// Validate masterOverlayIP is a plain IP (not a CIDR).
+	if net.ParseIP(masterOverlayIP) == nil {
+		return nil, fmt.Errorf("invalid master overlay IP %q: not a valid IP address", masterOverlayIP)
+	}
+
+	// Validate transportSubnet is a valid CIDR.
+	if _, _, err := net.ParseCIDR(transportSubnet); err != nil {
+		return nil, fmt.Errorf("invalid transport subnet %q: %w", transportSubnet, err)
+	}
+
 	out := make([]string, 0, 4+len(topo.Overlay.Ranges))
 	out = append(out, transportSubnet)       // e.g. 10.255.0.24/30
 	out = append(out, masterOverlayIP+"/32") // e.g. 172.20.70.2/32
 
 	for _, r := range topo.Overlay.Ranges {
-		if r.CIDR != "" {
-			out = append(out, r.CIDR) // 172.20.70.0/27, etc.
+		if r.CIDR == "" {
+			continue
 		}
+		if _, _, err := net.ParseCIDR(r.CIDR); err != nil {
+			return nil, fmt.Errorf("invalid overlay range CIDR %q in range %q: %w", r.CIDR, r.Name, err)
+		}
+		out = append(out, r.CIDR) // 172.20.70.0/27, etc.
 	}
 
 	return dedup(out), nil

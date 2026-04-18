@@ -49,8 +49,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Compose project name — unique to avoid conflicts with other simulations.
-COMPOSE_PROJECT="issue99aip"
+# Compose project name — unique per run (PID + timestamp) to avoid collisions
+# when two test instances run concurrently on the same host.
+COMPOSE_PROJECT="issue99aip-$$-$(date +%s)"
 
 # Mesh node names (max 12 chars each for IFNAMSIZ: "wg-" + 12 = 15 chars).
 MASTER_01="mst-a-01"
@@ -495,13 +496,26 @@ for EP_CTR in "${CTR_ENDPOINT_01}" "${CTR_ENDPOINT_02}"; do
         continue
     fi
 
+    # Extract only the allowed_ips block(s) from the YAML to prevent false-passes
+    # where overlay CIDRs appear elsewhere in the file (comments, other fields).
+    # The awk pattern captures lines from "    allowed_ips:" until the next
+    # same-or-lesser-indented key or end of file.
+    ALLOWED_IPS_BLOB=$(echo "${TRANSPORT_YAML}" | awk '/^    allowed_ips:/,/^  [a-z]|^[a-z]/')
+
+    if [[ -z "${ALLOWED_IPS_BLOB}" ]]; then
+        fail "A4: ${EP_CTR}: transport.yml has no allowed_ips block"
+        echo "  --- transport.yml content ---"
+        echo "${TRANSPORT_YAML}" | head -40 | sed 's/^/    /'
+        continue
+    fi
+
     for CIDR in "${OVERLAY_RANGES[@]}"; do
-        if echo "${TRANSPORT_YAML}" | grep -q "${CIDR}"; then
-            pass "A4: ${EP_CTR}: transport.yml contains overlay CIDR ${CIDR}"
+        if echo "${ALLOWED_IPS_BLOB}" | grep -qF "${CIDR}"; then
+            pass "A4: ${EP_CTR}: transport.yml allowed_ips contains overlay CIDR ${CIDR}"
         else
-            fail "A4: ${EP_CTR}: transport.yml MISSING overlay CIDR ${CIDR}"
-            echo "  --- transport.yml content ---"
-            echo "${TRANSPORT_YAML}" | head -40 | sed 's/^/    /'
+            fail "A4: ${EP_CTR}: transport.yml allowed_ips MISSING overlay CIDR ${CIDR}"
+            echo "  --- allowed_ips block ---"
+            echo "${ALLOWED_IPS_BLOB}" | sed 's/^/    /'
         fi
     done
 done
@@ -524,12 +538,9 @@ for EP_CHECK in "${CTR_ENDPOINT_01}:${ENDPOINT_01_OVERLAY}:${EP_01_TRANSPORT}" \
 
     if echo "${TRANSPORT_CONTENT}" | grep -q "overlay_ip: ${EXPECTED_IP}"; then
         pass "A5: ${EP_CTR}: transport.yml overlay_ip=${EXPECTED_IP} (populated)"
-    elif echo "${TRANSPORT_CONTENT}" | grep -q "overlay_ip: \"\"" || \
-         echo "${TRANSPORT_CONTENT}" | grep -q "overlay_ip:$"; then
-        fail "A5: ${EP_CTR}: transport.yml overlay_ip is EMPTY (expected ${EXPECTED_IP})"
     else
-        warn "A5: ${EP_CTR}: overlay_ip not exactly matched — check manually"
-        echo "${TRANSPORT_CONTENT}" | grep "overlay_ip" | sed 's/^/    /'
+        fail "A5: ${EP_CTR}: overlay_ip missing or malformed in transport.yml (expected ${EXPECTED_IP})"
+        echo "${TRANSPORT_CONTENT}" | grep "overlay_ip" | sed 's/^/    /' >&2
     fi
 done
 
