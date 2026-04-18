@@ -894,6 +894,134 @@ func (x *RemoveTunnelResponse) GetSuccess() bool {
 	return false
 }
 
+type UpdateTunnelPeerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                          // existing tunnel name (e.g. endpoint name "us-01")
+	PeerPublicKey []byte                 `protobuf:"bytes,2,opt,name=peer_public_key,json=peerPublicKey,proto3" json:"peer_public_key,omitempty"` // new pubkey (required, 32 bytes)
+	BalancerIp    string                 `protobuf:"bytes,3,opt,name=balancer_ip,json=balancerIp,proto3" json:"balancer_ip,omitempty"`            // optional — refresh ECMP mapping
+	AllowedIps    []string               `protobuf:"bytes,4,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`            // optional — if non-empty, replace; else keep
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateTunnelPeerRequest) Reset() {
+	*x = UpdateTunnelPeerRequest{}
+	mi := &file_types_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateTunnelPeerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateTunnelPeerRequest) ProtoMessage() {}
+
+func (x *UpdateTunnelPeerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_types_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateTunnelPeerRequest.ProtoReflect.Descriptor instead.
+func (*UpdateTunnelPeerRequest) Descriptor() ([]byte, []int) {
+	return file_types_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *UpdateTunnelPeerRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateTunnelPeerRequest) GetPeerPublicKey() []byte {
+	if x != nil {
+		return x.PeerPublicKey
+	}
+	return nil
+}
+
+func (x *UpdateTunnelPeerRequest) GetBalancerIp() string {
+	if x != nil {
+		return x.BalancerIp
+	}
+	return ""
+}
+
+func (x *UpdateTunnelPeerRequest) GetAllowedIps() []string {
+	if x != nil {
+		return x.AllowedIps
+	}
+	return nil
+}
+
+type UpdateTunnelPeerResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Success         bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	MasterPublicKey []byte                 `protobuf:"bytes,2,opt,name=master_public_key,json=masterPublicKey,proto3" json:"master_public_key,omitempty"` // echo back for caller verification
+	Unchanged       bool                   `protobuf:"varint,3,opt,name=unchanged,proto3" json:"unchanged,omitempty"`                                     // true when the new key matches existing (idempotent no-op)
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *UpdateTunnelPeerResponse) Reset() {
+	*x = UpdateTunnelPeerResponse{}
+	mi := &file_types_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateTunnelPeerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateTunnelPeerResponse) ProtoMessage() {}
+
+func (x *UpdateTunnelPeerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_types_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateTunnelPeerResponse.ProtoReflect.Descriptor instead.
+func (*UpdateTunnelPeerResponse) Descriptor() ([]byte, []int) {
+	return file_types_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UpdateTunnelPeerResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *UpdateTunnelPeerResponse) GetMasterPublicKey() []byte {
+	if x != nil {
+		return x.MasterPublicKey
+	}
+	return nil
+}
+
+func (x *UpdateTunnelPeerResponse) GetUnchanged() bool {
+	if x != nil {
+		return x.Unchanged
+	}
+	return false
+}
+
 type TunnelList struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Tunnels       []*TunnelStatus        `protobuf:"bytes,1,rep,name=tunnels,proto3" json:"tunnels,omitempty"`
@@ -903,7 +1031,7 @@ type TunnelList struct {
 
 func (x *TunnelList) Reset() {
 	*x = TunnelList{}
-	mi := &file_types_proto_msgTypes[12]
+	mi := &file_types_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -915,7 +1043,7 @@ func (x *TunnelList) String() string {
 func (*TunnelList) ProtoMessage() {}
 
 func (x *TunnelList) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[12]
+	mi := &file_types_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -928,7 +1056,7 @@ func (x *TunnelList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelList.ProtoReflect.Descriptor instead.
 func (*TunnelList) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{12}
+	return file_types_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *TunnelList) GetTunnels() []*TunnelStatus {
@@ -956,7 +1084,7 @@ type AddPeerRequest struct {
 
 func (x *AddPeerRequest) Reset() {
 	*x = AddPeerRequest{}
-	mi := &file_types_proto_msgTypes[13]
+	mi := &file_types_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -968,7 +1096,7 @@ func (x *AddPeerRequest) String() string {
 func (*AddPeerRequest) ProtoMessage() {}
 
 func (x *AddPeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[13]
+	mi := &file_types_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -981,7 +1109,7 @@ func (x *AddPeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddPeerRequest.ProtoReflect.Descriptor instead.
 func (*AddPeerRequest) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{13}
+	return file_types_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AddPeerRequest) GetPublicKey() []byte {
@@ -1063,7 +1191,7 @@ type AddPeerResponse struct {
 
 func (x *AddPeerResponse) Reset() {
 	*x = AddPeerResponse{}
-	mi := &file_types_proto_msgTypes[14]
+	mi := &file_types_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1075,7 +1203,7 @@ func (x *AddPeerResponse) String() string {
 func (*AddPeerResponse) ProtoMessage() {}
 
 func (x *AddPeerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[14]
+	mi := &file_types_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1088,7 +1216,7 @@ func (x *AddPeerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddPeerResponse.ProtoReflect.Descriptor instead.
 func (*AddPeerResponse) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{14}
+	return file_types_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AddPeerResponse) GetSuccess() bool {
@@ -1107,7 +1235,7 @@ type RemovePeerRequest struct {
 
 func (x *RemovePeerRequest) Reset() {
 	*x = RemovePeerRequest{}
-	mi := &file_types_proto_msgTypes[15]
+	mi := &file_types_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1119,7 +1247,7 @@ func (x *RemovePeerRequest) String() string {
 func (*RemovePeerRequest) ProtoMessage() {}
 
 func (x *RemovePeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[15]
+	mi := &file_types_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1132,7 +1260,7 @@ func (x *RemovePeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemovePeerRequest.ProtoReflect.Descriptor instead.
 func (*RemovePeerRequest) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{15}
+	return file_types_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RemovePeerRequest) GetPublicKey() []byte {
@@ -1151,7 +1279,7 @@ type RemovePeerResponse struct {
 
 func (x *RemovePeerResponse) Reset() {
 	*x = RemovePeerResponse{}
-	mi := &file_types_proto_msgTypes[16]
+	mi := &file_types_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1163,7 +1291,7 @@ func (x *RemovePeerResponse) String() string {
 func (*RemovePeerResponse) ProtoMessage() {}
 
 func (x *RemovePeerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[16]
+	mi := &file_types_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1176,7 +1304,7 @@ func (x *RemovePeerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemovePeerResponse.ProtoReflect.Descriptor instead.
 func (*RemovePeerResponse) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{16}
+	return file_types_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RemovePeerResponse) GetSuccess() bool {
@@ -1195,7 +1323,7 @@ type PeerList struct {
 
 func (x *PeerList) Reset() {
 	*x = PeerList{}
-	mi := &file_types_proto_msgTypes[17]
+	mi := &file_types_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1207,7 +1335,7 @@ func (x *PeerList) String() string {
 func (*PeerList) ProtoMessage() {}
 
 func (x *PeerList) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[17]
+	mi := &file_types_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1220,7 +1348,7 @@ func (x *PeerList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerList.ProtoReflect.Descriptor instead.
 func (*PeerList) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{17}
+	return file_types_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *PeerList) GetPeers() []*PeerStatus {
@@ -1244,7 +1372,7 @@ type PeerStatus struct {
 
 func (x *PeerStatus) Reset() {
 	*x = PeerStatus{}
-	mi := &file_types_proto_msgTypes[18]
+	mi := &file_types_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1256,7 +1384,7 @@ func (x *PeerStatus) String() string {
 func (*PeerStatus) ProtoMessage() {}
 
 func (x *PeerStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[18]
+	mi := &file_types_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1269,7 +1397,7 @@ func (x *PeerStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerStatus.ProtoReflect.Descriptor instead.
 func (*PeerStatus) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{18}
+	return file_types_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *PeerStatus) GetPublicKey() []byte {
@@ -1326,7 +1454,7 @@ type RotateParamsRequest struct {
 
 func (x *RotateParamsRequest) Reset() {
 	*x = RotateParamsRequest{}
-	mi := &file_types_proto_msgTypes[19]
+	mi := &file_types_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1338,7 +1466,7 @@ func (x *RotateParamsRequest) String() string {
 func (*RotateParamsRequest) ProtoMessage() {}
 
 func (x *RotateParamsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[19]
+	mi := &file_types_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1351,7 +1479,7 @@ func (x *RotateParamsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateParamsRequest.ProtoReflect.Descriptor instead.
 func (*RotateParamsRequest) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{19}
+	return file_types_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RotateParamsRequest) GetTunnelName() string {
@@ -1392,7 +1520,7 @@ type RotateParamsResponse struct {
 
 func (x *RotateParamsResponse) Reset() {
 	*x = RotateParamsResponse{}
-	mi := &file_types_proto_msgTypes[20]
+	mi := &file_types_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1404,7 +1532,7 @@ func (x *RotateParamsResponse) String() string {
 func (*RotateParamsResponse) ProtoMessage() {}
 
 func (x *RotateParamsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[20]
+	mi := &file_types_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1417,7 +1545,7 @@ func (x *RotateParamsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateParamsResponse.ProtoReflect.Descriptor instead.
 func (*RotateParamsResponse) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{20}
+	return file_types_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RotateParamsResponse) GetSuccess() bool {
@@ -1443,7 +1571,7 @@ type GetParamsRequest struct {
 
 func (x *GetParamsRequest) Reset() {
 	*x = GetParamsRequest{}
-	mi := &file_types_proto_msgTypes[21]
+	mi := &file_types_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1455,7 +1583,7 @@ func (x *GetParamsRequest) String() string {
 func (*GetParamsRequest) ProtoMessage() {}
 
 func (x *GetParamsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[21]
+	mi := &file_types_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1468,7 +1596,7 @@ func (x *GetParamsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetParamsRequest.ProtoReflect.Descriptor instead.
 func (*GetParamsRequest) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{21}
+	return file_types_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetParamsRequest) GetTunnelName() string {
@@ -1490,7 +1618,7 @@ type CaptureRequest struct {
 
 func (x *CaptureRequest) Reset() {
 	*x = CaptureRequest{}
-	mi := &file_types_proto_msgTypes[22]
+	mi := &file_types_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1502,7 +1630,7 @@ func (x *CaptureRequest) String() string {
 func (*CaptureRequest) ProtoMessage() {}
 
 func (x *CaptureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[22]
+	mi := &file_types_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1515,7 +1643,7 @@ func (x *CaptureRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureRequest.ProtoReflect.Descriptor instead.
 func (*CaptureRequest) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{22}
+	return file_types_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CaptureRequest) GetDomains() []string {
@@ -1556,7 +1684,7 @@ type CaptureResponse struct {
 
 func (x *CaptureResponse) Reset() {
 	*x = CaptureResponse{}
-	mi := &file_types_proto_msgTypes[23]
+	mi := &file_types_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1568,7 +1696,7 @@ func (x *CaptureResponse) String() string {
 func (*CaptureResponse) ProtoMessage() {}
 
 func (x *CaptureResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[23]
+	mi := &file_types_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1581,7 +1709,7 @@ func (x *CaptureResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureResponse.ProtoReflect.Descriptor instead.
 func (*CaptureResponse) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{23}
+	return file_types_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CaptureResponse) GetSuccess() bool {
@@ -1611,7 +1739,7 @@ type NodeStatus struct {
 
 func (x *NodeStatus) Reset() {
 	*x = NodeStatus{}
-	mi := &file_types_proto_msgTypes[24]
+	mi := &file_types_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1623,7 +1751,7 @@ func (x *NodeStatus) String() string {
 func (*NodeStatus) ProtoMessage() {}
 
 func (x *NodeStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[24]
+	mi := &file_types_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1636,7 +1764,7 @@ func (x *NodeStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeStatus.ProtoReflect.Descriptor instead.
 func (*NodeStatus) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{24}
+	return file_types_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *NodeStatus) GetName() string {
@@ -1689,7 +1817,7 @@ type TunnelStatus struct {
 
 func (x *TunnelStatus) Reset() {
 	*x = TunnelStatus{}
-	mi := &file_types_proto_msgTypes[25]
+	mi := &file_types_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1701,7 +1829,7 @@ func (x *TunnelStatus) String() string {
 func (*TunnelStatus) ProtoMessage() {}
 
 func (x *TunnelStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[25]
+	mi := &file_types_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1714,7 +1842,7 @@ func (x *TunnelStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelStatus.ProtoReflect.Descriptor instead.
 func (*TunnelStatus) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{25}
+	return file_types_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TunnelStatus) GetName() string {
@@ -1775,7 +1903,7 @@ type RouteTable struct {
 
 func (x *RouteTable) Reset() {
 	*x = RouteTable{}
-	mi := &file_types_proto_msgTypes[26]
+	mi := &file_types_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1787,7 +1915,7 @@ func (x *RouteTable) String() string {
 func (*RouteTable) ProtoMessage() {}
 
 func (x *RouteTable) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[26]
+	mi := &file_types_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1800,7 +1928,7 @@ func (x *RouteTable) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteTable.ProtoReflect.Descriptor instead.
 func (*RouteTable) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{26}
+	return file_types_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RouteTable) GetRoutes() []*RouteEntry {
@@ -1823,7 +1951,7 @@ type RouteEntry struct {
 
 func (x *RouteEntry) Reset() {
 	*x = RouteEntry{}
-	mi := &file_types_proto_msgTypes[27]
+	mi := &file_types_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1835,7 +1963,7 @@ func (x *RouteEntry) String() string {
 func (*RouteEntry) ProtoMessage() {}
 
 func (x *RouteEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[27]
+	mi := &file_types_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1848,7 +1976,7 @@ func (x *RouteEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteEntry.ProtoReflect.Descriptor instead.
 func (*RouteEntry) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{27}
+	return file_types_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *RouteEntry) GetDestination() string {
@@ -1896,7 +2024,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_types_proto_msgTypes[28]
+	mi := &file_types_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1908,7 +2036,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[28]
+	mi := &file_types_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1921,7 +2049,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{28}
+	return file_types_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -1950,7 +2078,7 @@ type TunnelHealth struct {
 
 func (x *TunnelHealth) Reset() {
 	*x = TunnelHealth{}
-	mi := &file_types_proto_msgTypes[29]
+	mi := &file_types_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1962,7 +2090,7 @@ func (x *TunnelHealth) String() string {
 func (*TunnelHealth) ProtoMessage() {}
 
 func (x *TunnelHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_types_proto_msgTypes[29]
+	mi := &file_types_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1975,7 +2103,7 @@ func (x *TunnelHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelHealth.ProtoReflect.Descriptor instead.
 func (*TunnelHealth) Descriptor() ([]byte, []int) {
-	return file_types_proto_rawDescGZIP(), []int{29}
+	return file_types_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *TunnelHealth) GetName() string {
@@ -2088,7 +2216,18 @@ const file_types_proto_rawDesc = "" +
 	"\x13RemoveTunnelRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"0\n" +
 	"\x14RemoveTunnelResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"=\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"\x97\x01\n" +
+	"\x17UpdateTunnelPeerRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12&\n" +
+	"\x0fpeer_public_key\x18\x02 \x01(\fR\rpeerPublicKey\x12\x1f\n" +
+	"\vbalancer_ip\x18\x03 \x01(\tR\n" +
+	"balancerIp\x12\x1f\n" +
+	"\vallowed_ips\x18\x04 \x03(\tR\n" +
+	"allowedIps\"~\n" +
+	"\x18UpdateTunnelPeerResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
+	"\x11master_public_key\x18\x02 \x01(\fR\x0fmasterPublicKey\x12\x1c\n" +
+	"\tunchanged\x18\x03 \x01(\bR\tunchanged\"=\n" +
 	"\n" +
 	"TunnelList\x12/\n" +
 	"\atunnels\x18\x01 \x03(\v2\x15.awgmesh.TunnelStatusR\atunnels\"\x9f\x03\n" +
@@ -2195,51 +2334,53 @@ func file_types_proto_rawDescGZIP() []byte {
 	return file_types_proto_rawDescData
 }
 
-var file_types_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_types_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_types_proto_goTypes = []any{
-	(*Empty)(nil),                // 0: awgmesh.Empty
-	(*AwgParams)(nil),            // 1: awgmesh.AwgParams
-	(*NodeConfig)(nil),           // 2: awgmesh.NodeConfig
-	(*PeerSpec)(nil),             // 3: awgmesh.PeerSpec
-	(*InitRequest)(nil),          // 4: awgmesh.InitRequest
-	(*InitResponse)(nil),         // 5: awgmesh.InitResponse
-	(*RotateTokenRequest)(nil),   // 6: awgmesh.RotateTokenRequest
-	(*RotateTokenResponse)(nil),  // 7: awgmesh.RotateTokenResponse
-	(*AddTunnelRequest)(nil),     // 8: awgmesh.AddTunnelRequest
-	(*AddTunnelResponse)(nil),    // 9: awgmesh.AddTunnelResponse
-	(*RemoveTunnelRequest)(nil),  // 10: awgmesh.RemoveTunnelRequest
-	(*RemoveTunnelResponse)(nil), // 11: awgmesh.RemoveTunnelResponse
-	(*TunnelList)(nil),           // 12: awgmesh.TunnelList
-	(*AddPeerRequest)(nil),       // 13: awgmesh.AddPeerRequest
-	(*AddPeerResponse)(nil),      // 14: awgmesh.AddPeerResponse
-	(*RemovePeerRequest)(nil),    // 15: awgmesh.RemovePeerRequest
-	(*RemovePeerResponse)(nil),   // 16: awgmesh.RemovePeerResponse
-	(*PeerList)(nil),             // 17: awgmesh.PeerList
-	(*PeerStatus)(nil),           // 18: awgmesh.PeerStatus
-	(*RotateParamsRequest)(nil),  // 19: awgmesh.RotateParamsRequest
-	(*RotateParamsResponse)(nil), // 20: awgmesh.RotateParamsResponse
-	(*GetParamsRequest)(nil),     // 21: awgmesh.GetParamsRequest
-	(*CaptureRequest)(nil),       // 22: awgmesh.CaptureRequest
-	(*CaptureResponse)(nil),      // 23: awgmesh.CaptureResponse
-	(*NodeStatus)(nil),           // 24: awgmesh.NodeStatus
-	(*TunnelStatus)(nil),         // 25: awgmesh.TunnelStatus
-	(*RouteTable)(nil),           // 26: awgmesh.RouteTable
-	(*RouteEntry)(nil),           // 27: awgmesh.RouteEntry
-	(*HealthResponse)(nil),       // 28: awgmesh.HealthResponse
-	(*TunnelHealth)(nil),         // 29: awgmesh.TunnelHealth
+	(*Empty)(nil),                    // 0: awgmesh.Empty
+	(*AwgParams)(nil),                // 1: awgmesh.AwgParams
+	(*NodeConfig)(nil),               // 2: awgmesh.NodeConfig
+	(*PeerSpec)(nil),                 // 3: awgmesh.PeerSpec
+	(*InitRequest)(nil),              // 4: awgmesh.InitRequest
+	(*InitResponse)(nil),             // 5: awgmesh.InitResponse
+	(*RotateTokenRequest)(nil),       // 6: awgmesh.RotateTokenRequest
+	(*RotateTokenResponse)(nil),      // 7: awgmesh.RotateTokenResponse
+	(*AddTunnelRequest)(nil),         // 8: awgmesh.AddTunnelRequest
+	(*AddTunnelResponse)(nil),        // 9: awgmesh.AddTunnelResponse
+	(*RemoveTunnelRequest)(nil),      // 10: awgmesh.RemoveTunnelRequest
+	(*RemoveTunnelResponse)(nil),     // 11: awgmesh.RemoveTunnelResponse
+	(*UpdateTunnelPeerRequest)(nil),  // 12: awgmesh.UpdateTunnelPeerRequest
+	(*UpdateTunnelPeerResponse)(nil), // 13: awgmesh.UpdateTunnelPeerResponse
+	(*TunnelList)(nil),               // 14: awgmesh.TunnelList
+	(*AddPeerRequest)(nil),           // 15: awgmesh.AddPeerRequest
+	(*AddPeerResponse)(nil),          // 16: awgmesh.AddPeerResponse
+	(*RemovePeerRequest)(nil),        // 17: awgmesh.RemovePeerRequest
+	(*RemovePeerResponse)(nil),       // 18: awgmesh.RemovePeerResponse
+	(*PeerList)(nil),                 // 19: awgmesh.PeerList
+	(*PeerStatus)(nil),               // 20: awgmesh.PeerStatus
+	(*RotateParamsRequest)(nil),      // 21: awgmesh.RotateParamsRequest
+	(*RotateParamsResponse)(nil),     // 22: awgmesh.RotateParamsResponse
+	(*GetParamsRequest)(nil),         // 23: awgmesh.GetParamsRequest
+	(*CaptureRequest)(nil),           // 24: awgmesh.CaptureRequest
+	(*CaptureResponse)(nil),          // 25: awgmesh.CaptureResponse
+	(*NodeStatus)(nil),               // 26: awgmesh.NodeStatus
+	(*TunnelStatus)(nil),             // 27: awgmesh.TunnelStatus
+	(*RouteTable)(nil),               // 28: awgmesh.RouteTable
+	(*RouteEntry)(nil),               // 29: awgmesh.RouteEntry
+	(*HealthResponse)(nil),           // 30: awgmesh.HealthResponse
+	(*TunnelHealth)(nil),             // 31: awgmesh.TunnelHealth
 }
 var file_types_proto_depIdxs = []int32{
 	3,  // 0: awgmesh.NodeConfig.peers:type_name -> awgmesh.PeerSpec
 	1,  // 1: awgmesh.PeerSpec.params:type_name -> awgmesh.AwgParams
 	2,  // 2: awgmesh.InitRequest.config:type_name -> awgmesh.NodeConfig
 	1,  // 3: awgmesh.AddTunnelRequest.params:type_name -> awgmesh.AwgParams
-	25, // 4: awgmesh.TunnelList.tunnels:type_name -> awgmesh.TunnelStatus
+	27, // 4: awgmesh.TunnelList.tunnels:type_name -> awgmesh.TunnelStatus
 	1,  // 5: awgmesh.AddPeerRequest.params:type_name -> awgmesh.AwgParams
-	18, // 6: awgmesh.PeerList.peers:type_name -> awgmesh.PeerStatus
+	20, // 6: awgmesh.PeerList.peers:type_name -> awgmesh.PeerStatus
 	1,  // 7: awgmesh.RotateParamsRequest.new_params:type_name -> awgmesh.AwgParams
-	25, // 8: awgmesh.NodeStatus.tunnels:type_name -> awgmesh.TunnelStatus
-	27, // 9: awgmesh.RouteTable.routes:type_name -> awgmesh.RouteEntry
-	29, // 10: awgmesh.HealthResponse.tunnel_health:type_name -> awgmesh.TunnelHealth
+	27, // 8: awgmesh.NodeStatus.tunnels:type_name -> awgmesh.TunnelStatus
+	29, // 9: awgmesh.RouteTable.routes:type_name -> awgmesh.RouteEntry
+	31, // 10: awgmesh.HealthResponse.tunnel_health:type_name -> awgmesh.TunnelHealth
 	11, // [11:11] is the sub-list for method output_type
 	11, // [11:11] is the sub-list for method input_type
 	11, // [11:11] is the sub-list for extension type_name
@@ -2258,7 +2399,7 @@ func file_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_types_proto_rawDesc), len(file_types_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

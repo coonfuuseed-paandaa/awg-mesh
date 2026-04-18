@@ -44,6 +44,10 @@ func (m *mockAwgAgentClient) ListTunnels(_ context.Context, _ *proto.Empty, _ ..
 	return &proto.TunnelList{}, nil
 }
 
+func (m *mockAwgAgentClient) UpdateTunnelPeer(_ context.Context, _ *proto.UpdateTunnelPeerRequest, _ ...grpc.CallOption) (*proto.UpdateTunnelPeerResponse, error) {
+	return &proto.UpdateTunnelPeerResponse{Success: true}, nil
+}
+
 func (m *mockAwgAgentClient) AddPeer(_ context.Context, _ *proto.AddPeerRequest, _ ...grpc.CallOption) (*proto.AddPeerResponse, error) {
 	return &proto.AddPeerResponse{Success: true}, nil
 }
