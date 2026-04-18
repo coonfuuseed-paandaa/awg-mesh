@@ -299,10 +299,23 @@ func newMasterInitCommand() *cobra.Command {
 					continue
 				}
 
+				allowedIPs, aipErr := topology.BuildAllowedIPsForEndpoint(topo, master.OverlayIP, allocation.Subnet.String())
+				if aipErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: build allowed_ips for endpoint %q / master %q: %v\n", ep.Name, master.Name, aipErr)
+					// Safe fallback: at minimum transport subnet + overlay ranges.
+					allowedIPs = []string{allocation.Subnet.String()}
+					for _, nr := range topo.Overlay.Ranges {
+						if nr.CIDR != "" {
+							allowedIPs = append(allowedIPs, nr.CIDR)
+						}
+					}
+				}
+				fmt.Printf("master init: AddPeer to endpoint %q with allowed_ips=%v\n", ep.Name, allowedIPs)
+
 				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				peerResp, peerErr := peerClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
 					PublicKey:           resp.NodePublicKey,
-					AllowedIps:          []string{allocation.Subnet.String()},
+					AllowedIps:          allowedIPs,
 					EndpointHost:        master.PeerAddr(),
 					PersistentKeepalive: 25,
 					TransportSubnet:     allocation.Subnet.String(),

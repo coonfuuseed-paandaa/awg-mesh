@@ -101,13 +101,42 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 		Int("mtu", mtu).
 		Msg("master tunnel interface created")
 
-	if endpointTransportIP != "" && strings.TrimSpace(tunnel.OverlayIP) != "" {
+	if strings.TrimSpace(tunnel.OverlayIP) != "" {
 		overlayCIDR := normalizeTransportOverlayRoute(tunnel.OverlayIP)
 		if _, destNet, parseErr := net.ParseCIDR(overlayCIDR); parseErr == nil {
 			router := routing.NewNetlinkRouter()
-			if err := router.RouteAdd(destNet, net.ParseIP(endpointTransportIP), tunnel.InterfaceName); err != nil {
-				_ = iface.Close()
-				return fmt.Errorf("add overlay route for tunnel %q: %w", tunnel.Name, err)
+			if endpointTransportIP != "" {
+				// Install overlay /32 via endpointTransportIP (routed route, preferred when
+				// the endpoint transport IP is known). Use RouteReplace for idempotency so
+				// that re-running master init does not fail with EEXIST.
+				if err := router.RouteReplace(destNet, net.ParseIP(endpointTransportIP), tunnel.InterfaceName); err != nil {
+					_ = iface.Close()
+					return fmt.Errorf("add overlay route for tunnel %q: %w", tunnel.Name, err)
+				}
+				m.node.logger.Info().
+					Str("tunnel", tunnel.Name).
+					Str("overlay_ip", tunnel.OverlayIP).
+					Str("via", endpointTransportIP).
+					Str("dev", tunnel.InterfaceName).
+					Msg("overlay /32 route installed for peer")
+			} else {
+				// FR-2: install overlay /32 as a link-scope route when the endpoint
+				// transport IP is not yet known (e.g. fresh AddTunnel without allocation,
+				// or topology-only bring-up). Traffic will be delivered directly via the
+				// WireGuard interface; the kernel resolves the next-hop from AllowedIPs.
+				if err := router.RouteReplaceLink(destNet, tunnel.InterfaceName); err != nil {
+					m.node.logger.Error().
+						Err(err).
+						Str("tunnel", tunnel.Name).
+						Str("overlay_ip", tunnel.OverlayIP).
+						Msg("failed to install per-peer overlay link-scope route")
+				} else {
+					m.node.logger.Info().
+						Str("tunnel", tunnel.Name).
+						Str("overlay_ip", tunnel.OverlayIP).
+						Str("dev", tunnel.InterfaceName).
+						Msg("overlay /32 link-scope route installed for peer")
+				}
 			}
 		}
 	}

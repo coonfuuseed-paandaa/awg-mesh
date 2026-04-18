@@ -296,12 +296,20 @@ func newEndpointInitCommand() *cobra.Command {
 
 				statusLine := ""
 				needAddPeer := false
-				allowedIPs := []string{allocation.Subnet.String()}
-				for _, nr := range topo.Overlay.Ranges {
-					if nr.CIDR != "" {
-						allowedIPs = append(allowedIPs, nr.CIDR)
+				// FR-1: build the full allowed_ips list via the shared helper:
+				// transport /30 + master overlay /32 + all overlay range CIDRs.
+				allowedIPs, aipErr := topology.BuildAllowedIPsForEndpoint(topo, master.OverlayIP, allocation.Subnet.String())
+				if aipErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: build allowed_ips for master %q / endpoint %q: %v\n", master.Name, ep.Name, aipErr)
+					// Safe fallback: at minimum transport subnet + overlay ranges.
+					allowedIPs = []string{allocation.Subnet.String()}
+					for _, nr := range topo.Overlay.Ranges {
+						if nr.CIDR != "" {
+							allowedIPs = append(allowedIPs, nr.CIDR)
+						}
 					}
 				}
+				fmt.Printf("endpoint init: AddPeer to endpoint %q (master %q) with allowed_ips=%v\n", ep.Name, master.Name, allowedIPs)
 
 				if addErr != nil {
 					errLower := strings.ToLower(addErr.Error())
