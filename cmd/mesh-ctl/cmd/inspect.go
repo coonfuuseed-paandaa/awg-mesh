@@ -149,7 +149,7 @@ Pre-v1.10.1 nodes (returning codes.Unimplemented) are reported gracefully.`,
 					if ap.pubkeyHex != "" && np.PublicKeyHex != ap.pubkeyHex {
 						row.driftReasons = append(row.driftReasons, "key_mismatch")
 					}
-					if ap.allowedIPs != nil && len(ap.allowedIPs) > 0 {
+					if len(ap.allowedIPs) > 0 {
 						if !ipsMatch(ap.allowedIPs, np.AllowedIps) {
 							row.driftReasons = append(row.driftReasons, "stale_allowed_ips")
 						}
