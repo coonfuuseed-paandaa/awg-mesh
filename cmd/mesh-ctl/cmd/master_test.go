@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -194,11 +196,11 @@ func TestMasterReloadStatusLine(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name       string
-		resp       *proto.UpdateTunnelPeerResponse
-		rpcErr     error
-		wantLine   string
-		wantOk     bool
+		name     string
+		resp     *proto.UpdateTunnelPeerResponse
+		rpcErr   error
+		wantLine string
+		wantOk   bool
 	}{
 		{
 			name:     "unchanged response → already up to date",
@@ -276,10 +278,10 @@ func TestMasterReloadCounterLogic(t *testing.T) {
 	}
 
 	cases := []struct {
-		name           string
-		results        []epResult
-		wantTotal      int
-		wantOk         int
+		name            string
+		results         []epResult
+		wantTotal       int
+		wantOk          int
 		wantNonZeroExit bool
 	}{
 		{
@@ -349,4 +351,54 @@ func TestMasterReloadCounterLogic(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReadEndpointPublicKey verifies strict 32-byte parsing for admin-state
+// pubkeys used by `master reload`. Wrong sizes must be rejected with a clear
+// error to aid operator troubleshooting.
+func TestReadEndpointPublicKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid length reads key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "pubkey")
+
+		key := make([]byte, endpointPublicKeyLen)
+		for i := range key {
+			key[i] = byte(i)
+		}
+		if err := os.WriteFile(path, key, 0o600); err != nil {
+			t.Fatalf("write pubkey: %v", err)
+		}
+
+		got, err := readEndpointPublicKey(path)
+		if err != nil {
+			t.Fatalf("readEndpointPublicKey = %v, want nil", err)
+		}
+		if len(got) != endpointPublicKeyLen {
+			t.Fatalf("got %d bytes, want %d", len(got), endpointPublicKeyLen)
+		}
+		for i, b := range got {
+			if b != byte(i) {
+				t.Fatalf("byte %d mismatch: got %d, want %d", i, b, byte(i))
+			}
+		}
+	})
+
+	t.Run("short key is rejected", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "pubkey")
+
+		if err := os.WriteFile(path, []byte{1, 2, 3}, 0o600); err != nil {
+			t.Fatalf("write pubkey: %v", err)
+		}
+
+		_, err := readEndpointPublicKey(path)
+		if err == nil {
+			t.Fatal("expected error for short key, got nil")
+		}
+		if !strings.Contains(err.Error(), "want 32") {
+			t.Errorf("error %q does not mention expected size", err)
+		}
+	})
 }

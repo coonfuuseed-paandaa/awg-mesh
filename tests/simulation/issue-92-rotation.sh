@@ -356,17 +356,17 @@ echo "[prep] Preparing masters and endpoint..."
 ${MESHCTL_BIN} \
     --topology "${TOPO_FILE}" \
     --config-dir "${CTL_CONFIG_DIR}" \
-    master prepare "${MASTER_RU_01}" > /dev/null 2>&1 || true
+    master prepare "${MASTER_RU_01}" > /dev/null 2>&1
 
 ${MESHCTL_BIN} \
     --topology "${TOPO_FILE}" \
     --config-dir "${CTL_CONFIG_DIR}" \
-    master prepare "${MASTER_RU_02}" > /dev/null 2>&1 || true
+    master prepare "${MASTER_RU_02}" > /dev/null 2>&1
 
 ${MESHCTL_BIN} \
     --topology "${TOPO_FILE}" \
     --config-dir "${CTL_CONFIG_DIR}" \
-    endpoint prepare "${ENDPOINT_US_01}" > /dev/null 2>&1 || true
+    endpoint prepare "${ENDPOINT_US_01}" > /dev/null 2>&1
 
 info "Initialising masters..."
 INIT_OUT_A=$(${MESHCTL_BIN} \
@@ -443,11 +443,11 @@ if ${MESHCTL_BIN} endpoint prepare --help 2>&1 | grep -q -- '--rotate'; then
         --config-dir "${CTL_CONFIG_DIR}" \
         endpoint prepare --rotate "${ENDPOINT_US_01}" 2>&1) || ROTATE_RC=$?
 else
-    info "Flag --rotate absent; using: mesh-ctl rotate --tier 3 --node ${ENDPOINT_US_01}"
+    info "Flag --rotate absent; using: mesh-ctl rotate --tier 3 --endpoint ${ENDPOINT_US_01}"
     ROTATE_OUT=$(${MESHCTL_BIN} \
         --topology "${TOPO_FILE}" \
         --config-dir "${CTL_CONFIG_DIR}" \
-        rotate --tier 3 --node "${ENDPOINT_US_01}" 2>&1) || ROTATE_RC=$?
+        rotate --tier 3 --endpoint "${ENDPOINT_US_01}" 2>&1) || ROTATE_RC=$?
 fi
 
 if [[ "${ROTATE_RC}" -ne 0 ]]; then

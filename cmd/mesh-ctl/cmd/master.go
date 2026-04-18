@@ -30,6 +30,8 @@ func newMasterCommand() *cobra.Command {
 	return cmd
 }
 
+const endpointPublicKeyLen = 32
+
 func newMasterPrepareCommand() *cobra.Command {
 	var useTraefik bool
 	var showToken bool
@@ -478,7 +480,7 @@ Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
 				// Read admin-state pubkey (raw 32-byte WireGuard public key written
 				// by 'mesh-ctl endpoint init' via resp.NodePublicKey from Init RPC).
 				pubkeyPath := filepath.Join(nodeDir(configDir, ep.Name), "pubkey")
-				pubkeyBytes, err := os.ReadFile(pubkeyPath)
+				pubkeyBytes, err := readEndpointPublicKey(pubkeyPath)
 				if err != nil {
 					fmt.Printf("Endpoint %s: FAILED: read pubkey: %v\n", ep.Name, err)
 					continue
@@ -533,4 +535,15 @@ Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
 			return nil
 		},
 	}
+}
+
+func readEndpointPublicKey(path string) ([]byte, error) {
+	pubkeyBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", path, err)
+	}
+	if len(pubkeyBytes) != endpointPublicKeyLen {
+		return nil, fmt.Errorf("got %d bytes, want %d", len(pubkeyBytes), endpointPublicKeyLen)
+	}
+	return pubkeyBytes, nil
 }

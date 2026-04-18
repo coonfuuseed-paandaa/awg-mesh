@@ -475,6 +475,7 @@ func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key
 	var existingAllowedIPs []net.IPNet
 	var existingEndpoint *net.UDPAddr
 	var existingPresharedKey *wg.Key
+	var existingKeepalive *time.Duration
 	foundExistingPeer := false
 	for _, peer := range dev.Peers {
 		if peer.PublicKey == tunnel.PeerPublicKey {
@@ -484,6 +485,10 @@ func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key
 			if peer.PresharedKey != (wg.Key{}) {
 				k := peer.PresharedKey
 				existingPresharedKey = &k
+			}
+			if peer.PersistentKeepaliveInterval != 0 {
+				ka := peer.PersistentKeepaliveInterval
+				existingKeepalive = &ka
 			}
 			break
 		}
@@ -517,12 +522,13 @@ func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key
 
 	addCfg := wg.Config{
 		Peers: []wg.PeerConfig{{
-			PublicKey:         newPubkey,
-			ReplaceAllowedIPs: false,
-			UpdateOnly:        false,
-			AllowedIPs:        peerAllowedIPs,
-			Endpoint:          existingEndpoint,
-			PresharedKey:      existingPresharedKey,
+			PublicKey:                   newPubkey,
+			ReplaceAllowedIPs:           false,
+			UpdateOnly:                  false,
+			AllowedIPs:                  peerAllowedIPs,
+			Endpoint:                    existingEndpoint,
+			PresharedKey:                existingPresharedKey,
+			PersistentKeepaliveInterval: existingKeepalive,
 		}},
 	}
 	if addErr := tunnel.platformState.iface.Configure(addCfg); addErr != nil {
@@ -530,12 +536,13 @@ func (m *MasterRunner) applyPeerKeyUpdate(tunnel *MasterTunnel, newPubkey wg.Key
 		// dataplane/memory divergence. Include any restore error in the returned error.
 		restoreCfg := wg.Config{
 			Peers: []wg.PeerConfig{{
-				PublicKey:         tunnel.PeerPublicKey,
-				ReplaceAllowedIPs: false,
-				UpdateOnly:        false,
-				AllowedIPs:        existingAllowedIPs,
-				Endpoint:          existingEndpoint,
-				PresharedKey:      existingPresharedKey,
+				PublicKey:                   tunnel.PeerPublicKey,
+				ReplaceAllowedIPs:           false,
+				UpdateOnly:                  false,
+				AllowedIPs:                  existingAllowedIPs,
+				Endpoint:                    existingEndpoint,
+				PresharedKey:                existingPresharedKey,
+				PersistentKeepaliveInterval: existingKeepalive,
 			}},
 		}
 		if restoreErr := tunnel.platformState.iface.Configure(restoreCfg); restoreErr != nil {
