@@ -265,19 +265,24 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 	return nil
 }
 
+// masterGRPCTarget returns the host:port gRPC dial target for a master node,
+// applying the default port when master.GRPCPort is zero.
+func masterGRPCTarget(master topology.MasterNode) string {
+	port := master.GRPCPort
+	if port == 0 {
+		port = defaultRotateAgentPort
+	}
+	return net.JoinHostPort(master.Host, strconv.Itoa(port))
+}
+
 func connectMasterAgent(master topology.MasterNode) (*grpcclient.Client, error) {
 	token, err := loadToken(nodeDir(configDir, master.Name))
 	if err != nil {
 		return nil, fmt.Errorf("load token for %q: %w", master.Name, err)
 	}
 
-	port := master.GRPCPort
-	if port == 0 {
-		port = defaultRotateAgentPort
-	}
-
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-		Target:     net.JoinHostPort(master.Host, strconv.Itoa(port)),
+		Target:     masterGRPCTarget(master),
 		CACertPath: caPath(configDir),
 		Token:      token,
 	})

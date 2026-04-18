@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -77,7 +78,7 @@ func TestConnectMasterAgent_DefaultPort_IsNotHardcoded9090String(t *testing.T) {
 // the early-return path before the gRPC dial, confirming the function checks
 // topology port without needing a live connection.
 func TestConnectMasterAgent_RejectsEmptyToken(t *testing.T) {
-	t.Parallel()
+	// This test mutates package-global configDir, so it must run serially.
 
 	// Override configDir to a temp dir with no token files.
 	originalConfigDir := configDir
@@ -94,24 +95,12 @@ func TestConnectMasterAgent_RejectsEmptyToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing token, got nil")
 	}
-	// Error must mention the token / load failure, not a dial / connection error.
+	// Error must come from loadToken, not from a gRPC dial.
 	errStr := err.Error()
-	if errStr == fmt.Sprintf("connect to master %q: ...", master.Name) {
-		t.Errorf("unexpected error format: %v", err)
+	if !strings.Contains(errStr, fmt.Sprintf("load token for %q", master.Name)) {
+		t.Errorf("expected token-load error, got: %v", err)
 	}
-	// Error should come from loadToken, not from a gRPC dial.
-	if errStr == "" {
-		t.Error("error message must not be empty")
+	if strings.Contains(errStr, fmt.Sprintf("connect to master %q", master.Name)) {
+		t.Errorf("unexpected dial-stage error, got: %v", err)
 	}
-}
-
-// masterGRPCTarget is a test-only helper that mirrors the address-construction
-// logic inside connectMasterAgent without requiring a token file or live network.
-// It is the pure-function subset we can unit-test cheaply.
-func masterGRPCTarget(master topology.MasterNode) string {
-	port := master.GRPCPort
-	if port == 0 {
-		port = defaultRotateAgentPort
-	}
-	return net.JoinHostPort(master.Host, strconv.Itoa(port))
 }

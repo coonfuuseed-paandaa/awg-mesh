@@ -60,14 +60,14 @@ func newStatusCommand() *cobra.Command {
 
 			transportStatePath := filepath.Join(configDir, "transport.yml")
 			transportByTunnel := make(map[string]string)
-			transportTotalAllocations := 0
+			transportAllocByEndpointIP := make(map[string]int)
 			if transportData, err := os.ReadFile(transportStatePath); err == nil {
 				var transportState localTransportState
 				if yaml.Unmarshal(transportData, &transportState) == nil {
 					for _, allocation := range transportState.Allocations {
 						transportByTunnel[allocation.Tunnel] = allocation.MasterIP + "->" + allocation.EndpointIP
+						transportAllocByEndpointIP[allocation.EndpointIP]++
 					}
-					transportTotalAllocations = len(transportState.Allocations)
 				}
 			}
 
@@ -116,7 +116,11 @@ func newStatusCommand() *cobra.Command {
 					transportDisplay = strings.Join(transportPairs, ",")
 				}
 
-				tunnelCount := tunnelDisplayCount(n.mode, len(resp.Tunnels), transportTotalAllocations)
+				endpointAllocations := 0
+				if n.mode == "endpoint" {
+					endpointAllocations = transportAllocByEndpointIP[resp.OverlayIp]
+				}
+				tunnelCount := tunnelDisplayCount(n.mode, len(resp.Tunnels), endpointAllocations)
 
 				fmt.Printf("%-20s %-10s %-20s %-10s %-15s %-25s %s\n",
 					resp.Name, resp.Mode, n.host, "ONLINE", resp.OverlayIp, transportDisplay, fmt.Sprintf("%d", tunnelCount))

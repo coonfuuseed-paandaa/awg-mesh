@@ -584,7 +584,7 @@ mid-transfer:
 
 ```bash
 docker compose -f <compose> down
-docker image rm <image-ref>   # force fresh pull; exit 1 is OK if image was never cached
+docker image rm <image-ref> 2>/dev/null || true   # force fresh pull; image may be absent
 docker pull <image-ref>       # verify new digest appears in output
 docker compose -f <compose> up -d
 ```

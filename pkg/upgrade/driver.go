@@ -266,7 +266,7 @@ func (d *Driver) phaseDeploy(_ context.Context, step *NodeUpgradeStep, composePa
 // The image ref is validated before constructing the remote command.
 func (d *Driver) sshDeploy(step *NodeUpgradeStep, composePath string) error {
 	if d.cfg.SSHDeploy == nil && d.cfg.SSHUpload == nil {
-		return fmt.Errorf("SSH deploy: SSHDeploy function is not configured")
+		return fmt.Errorf("SSH deploy: neither SSHDeploy nor SSHUpload is configured")
 	}
 
 	// Validate the image ref to prevent shell injection.
