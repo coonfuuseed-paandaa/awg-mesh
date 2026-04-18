@@ -25,9 +25,12 @@ func newMasterCommand() *cobra.Command {
 	cmd.AddCommand(newMasterPrepareCommand())
 	cmd.AddCommand(newMasterInitCommand())
 	cmd.AddCommand(newMasterRemoveCommand())
+	cmd.AddCommand(newMasterReloadCommand())
 
 	return cmd
 }
+
+const endpointPublicKeyLen = 32
 
 func newMasterPrepareCommand() *cobra.Command {
 	var useTraefik bool
@@ -399,4 +402,148 @@ func newMasterRemoveCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// newMasterReloadCommand implements T012+T013 (local tracker #92).
+//
+// Walk every endpoint bound to master <name>, read admin-state pubkey, and
+// force-push via UpdateTunnelPeer RPC. Recovery primitive for admin-master
+// state divergence (e.g. after master restart with corrupted transport.yml).
+//
+// The command is strictly read-only from the admin-state perspective: it never
+// modifies ~/.mesh-ctl/nodes/<ep>/pubkey or topology.yml. The UAPI update on
+// the master side is the only write that occurs.
+func newMasterReloadCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reload <name>",
+		Short: "Force-push all endpoint keys to a master (recovery primitive)",
+		Long: `Walk every endpoint bound to master <name>, read admin-state pubkey,
+force-push via UpdateTunnelPeer RPC. Recovery primitive for admin-master
+state divergence (e.g. after master restart with a corrupted transport.yml).
+
+Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+
+			topo, err := topology.LoadTopology(topologyPath)
+			if err != nil {
+				return fmt.Errorf("load topology %q: %w", topologyPath, err)
+			}
+
+			master := topo.FindMaster(name)
+			if master == nil {
+				return fmt.Errorf("master %q not in topology — run 'mesh-ctl master reload <name>' with a valid master name", name)
+			}
+
+			nd := nodeDir(configDir, name)
+			token, err := loadToken(nd)
+			if err != nil {
+				return fmt.Errorf("load token for master %q: %w", name, err)
+			}
+
+			client, err := grpcclient.NewClient(grpcclient.ClientConfig{
+				Target:   master.GRPCAddr(),
+				Token:    token,
+				Insecure: true,
+			})
+			if err != nil {
+				return fmt.Errorf("create gRPC client for master %q: %w", name, err)
+			}
+			defer func() {
+				if closeErr := client.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: close grpc client: %v\n", closeErr)
+				}
+			}()
+
+			// Pre-compute balancer IP lookup table from overlay ranges once.
+			parsedRanges := make([]topology.Range, 0, len(topo.Overlay.Ranges))
+			for _, nr := range topo.Overlay.Ranges {
+				if r, rErr := topology.ParseRange(nr); rErr == nil {
+					parsedRanges = append(parsedRanges, r)
+				}
+			}
+
+			endpointsTotal := 0
+			endpointsOk := 0
+
+			for _, epName := range master.Endpoints {
+				ep := topo.FindEndpoint(epName)
+				if ep == nil {
+					fmt.Fprintf(os.Stderr, "warning: endpoint %q referenced by master %q not found in topology — skipping\n", epName, name)
+					endpointsTotal++
+					continue
+				}
+
+				endpointsTotal++
+
+				// Read admin-state pubkey (raw 32-byte WireGuard public key written
+				// by 'mesh-ctl endpoint init' via resp.NodePublicKey from Init RPC).
+				pubkeyPath := filepath.Join(nodeDir(configDir, ep.Name), "pubkey")
+				pubkeyBytes, err := readEndpointPublicKey(pubkeyPath)
+				if err != nil {
+					fmt.Printf("Endpoint %s: FAILED: read pubkey: %v\n", ep.Name, err)
+					continue
+				}
+
+				// Compute balancer IP from the endpoint overlay IP and overlay ranges.
+				var balancerIP string
+				if epAddr, parseErr := netip.ParseAddr(ep.OverlayIP); parseErr == nil {
+					if bip := topology.BalancerIPForAddr(parsedRanges, epAddr); bip.IsValid() {
+						balancerIP = bip.String()
+					}
+				}
+
+				// AllowedIps is left empty: the proto spec says "if non-empty, replace;
+				// else keep". Preserving the master's existing allowed-IPs avoids
+				// disrupting transport subnet routing that was set up by 'endpoint init'.
+				reloadCtx, reloadCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				updateResp, updateErr := client.Agent().UpdateTunnelPeer(reloadCtx, &proto.UpdateTunnelPeerRequest{
+					Name:          ep.Name,
+					PeerPublicKey: pubkeyBytes,
+					BalancerIp:    balancerIP,
+				})
+				reloadCancel()
+
+				if updateErr != nil {
+					statusLine, isPreV110 := updateTunnelPeerFailureStatus(updateErr)
+					if isPreV110 {
+						fmt.Fprintf(os.Stderr, "master %s running pre-v1.10.0 — upgrade master before using 'master reload'\n", name)
+					}
+					fmt.Printf("Endpoint %s: %s\n", ep.Name, statusLine)
+					continue
+				}
+
+				if updateResp == nil || !updateResp.Success {
+					fmt.Printf("Endpoint %s: FAILED: update tunnel peer RPC returned unsuccessful response\n", ep.Name)
+					continue
+				}
+
+				endpointsOk++
+				if updateResp.Unchanged {
+					fmt.Printf("Endpoint %s: already up to date\n", ep.Name)
+				} else {
+					fmt.Printf("Endpoint %s: updated (new key applied)\n", ep.Name)
+				}
+			}
+
+			if endpointsOk < endpointsTotal {
+				return fmt.Errorf("master reload %q: %d of %d endpoint(s) failed — see above for details",
+					name, endpointsTotal-endpointsOk, endpointsTotal)
+			}
+
+			return nil
+		},
+	}
+}
+
+func readEndpointPublicKey(path string) ([]byte, error) {
+	pubkeyBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", path, err)
+	}
+	if len(pubkeyBytes) != endpointPublicKeyLen {
+		return nil, fmt.Errorf("got %d bytes, want %d", len(pubkeyBytes), endpointPublicKeyLen)
+	}
+	return pubkeyBytes, nil
 }

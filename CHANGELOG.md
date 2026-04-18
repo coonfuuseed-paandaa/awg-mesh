@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`UpdateTunnelPeer` gRPC RPC** on `AgentService` (`proto/agent.proto`, `proto/types.proto`).
+  Masters can now update an existing tunnel's peer public key in-place without a container
+  restart. Request: `name`, `peer_public_key` (32 bytes), optional `balancer_ip`, optional
+  `allowed_ips`. Response: `success`, `master_public_key` (echoed), `unchanged` (idempotent
+  no-op flag). Closes the propagation gap documented in `.agent/investigations/issue-92-endpoint-init-propagation.md`:
+  previously, rotating an endpoint keypair left masters with the stale peer key until a
+  container restart — data plane 100 % packet loss while `mesh-ctl status` reported ONLINE.
+  Local tracker issue #92.
+- **`MasterRunner.UpdateTunnelPeer`** implements strict C3 rollback ordering: lookup →
+  same-key idempotency → capture old key → UAPI peer-replace via wgctrl → on UAPI error
+  restore in-memory old key (no disk write) → on success update state → persist warn-on-failure
+  (UAPI is authoritative). Kernel-level restore: if the new peer's `Configure()` fails after
+  the old peer is removed, the master re-adds the old peer with its original allowed-IPs /
+  endpoint / preshared key (best-effort — if restore also fails, the error surfaces with
+  the full failure chain).
+- **`mesh-ctl endpoint init` propagates rotated pubkeys.** When `AddTunnel` returns
+  `codes.AlreadyExists` (or falls through to a string-match fallback for older servers),
+  the CLI now invokes `UpdateTunnelPeer` automatically. Per-master status line printed
+  for each iteration: `created`, `updated (new key: <8-hex>)`, `unchanged (key matches)`,
+  or `FAILED: <error>`. Exit code non-zero if any master fails, with stderr failure
+  summary and `"To recover: mesh-ctl master reload <name>"` remediation hint.
+- **`mesh-ctl master reload <name>` recovery subcommand.** Walks every endpoint bound
+  to the named master, reads the admin-state pubkey from `~/.mesh-ctl/nodes/<endpoint>/pubkey`,
+  and force-pushes via `UpdateTunnelPeer` RPC. Idempotent; per-endpoint status line;
+  non-zero exit if any RPC fails. Inherits existing mTLS + token auth — no new auth logic.
+- **Pre-v1.10.0 master detection:** CLI maps `codes.Unimplemented` from older masters
+  (which lack `UpdateTunnelPeer`) to a dedicated stderr message: `"master <name> running
+  pre-v1.10.0 — upgrade master before rotating endpoint keys"`. Typed-code match (not
+  string-based); guarded by unit test `TestUpdateTunnelPeerFailureStatus_NoStringMatch`.
+- **`applyPeerKeyUpdate` platform-split** — Linux build tag uses wgctrl remove+add
+  pattern matching Tier-3 rotation; `master_notlinux.go` provides the non-Linux stub.
+
+### Changed
+
+- `TunnelManager` interface (`pkg/grpc/interfaces.go`) gains `UpdateTunnelPeer(name,
+  newPubkey [32]byte, balancerIP, allowedIPs) (unchanged bool, err error)`. Doc comment
+  documents the idempotent semantics and rollback contract.
+
+## [1.9.2] — 2026-04-18
+
+### Fixed
+
+- **Endpoint route-skip filter dead code** — `shouldSkipEndpointLinkRoute` had an
+  unreachable self-/32 IP-equality check because the preceding `ones >= 30` guard
+  swallowed all /32 prefixes. Behavior was correct for current /24-class overlay
+  topologies but would silently drop legitimate /32 host routes from peers in
+  future deployments. Filter now skips transport subnets `/30` and `/31` only;
+  /32 self-IP check now actually reachable. Regression test
+  `TestEndpointConfigureTransportInstallsNonSelfHostRoute` covers the gap.
+  Discovered by post-release multi-model code review (CONSOLIDATED.md).
+- **TransportConfigurator interface contract** — `allowedIPs []string` parameter
+  semantics now documented as mode-dependent (endpoint installs link routes;
+  client uses ECMP). Prevents future implementors from assuming uniform routing
+  contract. No behavior change.
+- **Endpoint reconcile log clarity** — split `peers_added` and `routes_configured`
+  counters so partial failures (peer added but route install failed) are visible.
+- **Endpoint package cleanup** — removed unused `endpointRouter` package-level
+  singleton; function-var test seam preserved.
+- Various clarifying comments around endpoint reconcile loop and route filter logic.
+
+## [1.9.1] — 2026-04-18
+
 ### Fixed
 
 - **Endpoint `transport.yml` peer_public_key decode** — endpoint reconcile loop previously
@@ -27,23 +91,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ConfigureTransport` with persisted `tt.AllowedIPs`. Route-install errors now log at
   Warn (previously Debug — silent failure hid the bug). Regression tests in
   `pkg/node/endpoint_routes_linux_test.go`. Local tracker issue #95.
-- **Endpoint route-skip filter dead code** — `shouldSkipEndpointLinkRoute` had an
-  unreachable self-/32 IP-equality check because the preceding `ones >= 30` guard
-  swallowed all /32 prefixes. Behavior was correct for current /24-class overlay
-  topologies but would silently drop legitimate /32 host routes from peers in
-  future deployments. Filter now skips transport subnets `/30` and `/31` only;
-  /32 self-IP check now actually reachable. Regression test
-  `TestEndpointConfigureTransportInstallsNonSelfHostRoute` covers the gap.
-  Discovered by post-release multi-model code review (CONSOLIDATED.md).
-- **TransportConfigurator interface contract** — `allowedIPs []string` parameter
-  semantics now documented as mode-dependent (endpoint installs link routes;
-  client uses ECMP). Prevents future implementors from assuming uniform routing
-  contract. No behavior change.
-- **Endpoint reconcile log clarity** — split `peers_added` and `routes_configured`
-  counters so partial failures (peer added but route install failed) are visible.
-- **Endpoint package cleanup** — removed unused `endpointRouter` package-level
-  singleton; function-var test seam preserved.
-- Various clarifying comments around endpoint reconcile loop and route filter logic.
 
 ## [1.9.0] — 2026-04-17
 
@@ -644,7 +691,9 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.2...HEAD
+[1.9.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.1...v1.9.2
+[1.9.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.7.0...v1.8.0

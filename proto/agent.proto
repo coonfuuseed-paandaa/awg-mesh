@@ -15,6 +15,7 @@ service AwgAgent {
   rpc AddTunnel(AddTunnelRequest) returns (AddTunnelResponse);
   rpc RemoveTunnel(RemoveTunnelRequest) returns (RemoveTunnelResponse);
   rpc ListTunnels(Empty) returns (TunnelList);
+  rpc UpdateTunnelPeer(UpdateTunnelPeerRequest) returns (UpdateTunnelPeerResponse);
 
   // Peer management (endpoint mode)
   rpc AddPeer(AddPeerRequest) returns (AddPeerResponse);

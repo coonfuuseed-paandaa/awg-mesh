@@ -839,6 +839,43 @@ mesh-ctl token rotate --node master-01 -t mesh-topology.yml
 mesh-ctl capture refresh -t mesh-topology.yml
 ```
 
+**Propagate a rotated endpoint key to masters (v1.10+):**
+
+When an endpoint's keypair rotates (e.g. after `endpoint prepare --rotate`), re-run
+`endpoint init` — it now automatically invokes the `UpdateTunnelPeer` RPC on every
+bound master, replacing the stale peer public key in-place without a container
+restart. Per-master status lines are printed to stdout:
+
+```bash
+mesh-ctl endpoint init node-asia-01 -t mesh-topology.yml
+# Tunnel "node-asia-01" on master "master-01": updated (new key: a1b2c3d4)
+# Tunnel "node-asia-01" on master "master-02": updated (new key: a1b2c3d4)
+```
+
+If any master fails, the command exits non-zero with a remediation hint directing
+you to `mesh-ctl master reload <name>`. A master running a version older than v1.10
+will return `codes.Unimplemented` — the CLI surfaces a clear upgrade instruction.
+
+**Recover master state — `mesh-ctl master reload` (v1.10+):**
+
+When a master's runtime state has diverged from the admin-state (e.g. after a
+crash recovery that restored stale `/config/transport.yml`, or manual editing),
+force-reconcile every endpoint's key on that master:
+
+```bash
+mesh-ctl master reload master-01 -t mesh-topology.yml
+# Endpoint "node-asia-01": already up to date
+# Endpoint "node-asia-02": updated (new key applied)
+# Endpoint "node-us-01": already up to date
+```
+
+Idempotent — safe to re-run. Exits non-zero if any endpoint RPC fails. Read-only
+from topology + `~/.mesh-ctl/nodes/<endpoint>/pubkey` admin state; does not modify
+local config. Inherits existing mTLS + token auth.
+
+This command implements the recovery primitive described in
+[`.agent/investigations/issue-92-endpoint-init-propagation.md`](./.agent/investigations/issue-92-endpoint-init-propagation.md).
+
 ## Node Modes
 
 All three modes run from the same binary (`awg-mesh-node`). The mode is selected with `--mode`.

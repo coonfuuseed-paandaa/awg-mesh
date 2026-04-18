@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,7 +16,10 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -25,9 +29,12 @@ type testTunnelManager struct {
 	removeCalls    []string
 	getParamsCalls []string
 	getParamsCfg   wg.Config
+	updatePeerCalls     []updateTunnelPeerCall
 	addErr         error
 	removeErr      error
 	getParamsErr   error
+	updatePeerErr       error
+	updatePeerUnchanged bool
 	listenPort     int
 }
 
@@ -45,6 +52,13 @@ type addTunnelCall struct {
 	endpointTransportIP string
 	weight              int
 	peerKey             wg.Key
+}
+
+type updateTunnelPeerCall struct {
+	name       string
+	newPubkey  [32]byte
+	balancerIP string
+	allowedIPs []string
 }
 
 func (m *testTunnelManager) AddTunnel(
@@ -86,6 +100,16 @@ func (m *testTunnelManager) GetParams(tunnelName string) (wg.Config, error) {
 func (m *testTunnelManager) RemoveTunnel(name string) error {
 	m.removeCalls = append(m.removeCalls, name)
 	return m.removeErr
+}
+
+func (m *testTunnelManager) UpdateTunnelPeer(name string, newPubkey [32]byte, balancerIP string, allowedIPs []string) (unchanged bool, err error) {
+	m.updatePeerCalls = append(m.updatePeerCalls, updateTunnelPeerCall{
+		name:       name,
+		newPubkey:  newPubkey,
+		balancerIP: balancerIP,
+		allowedIPs: append([]string(nil), allowedIPs...),
+	})
+	return m.updatePeerUnchanged, m.updatePeerErr
 }
 
 type testParamApplier struct {
@@ -406,6 +430,103 @@ func TestAddTunnelReturnsMasterPublicKey(t *testing.T) {
 	if gotKey != pubKey {
 		t.Fatalf("master public key mismatch: got %s, want %s", gotKey, pubKey)
 	}
+}
+
+func TestAgentHandler_UpdateTunnelPeer_Validation(t *testing.T) {
+	logger := zerolog.Nop()
+	h := &AgentHandler{
+		logger:    logger,
+		tunnelMgr: &testTunnelManager{},
+	}
+
+	t.Run("empty name returns InvalidArgument", func(t *testing.T) {
+		_, err := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("expected InvalidArgument, got %v", st.Code())
+		}
+	})
+
+	t.Run("wrong pubkey length returns InvalidArgument", func(t *testing.T) {
+		_, err := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 31),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("expected InvalidArgument, got %v", st.Code())
+		}
+	})
+
+	t.Run("invalid allowed_ips returns InvalidArgument", func(t *testing.T) {
+		_, err := h.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+			AllowedIps:    []string{"not-a-cidr"},
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("expected InvalidArgument, got %v", st.Code())
+		}
+	})
+
+	t.Run("nil tunnelMgr returns Unimplemented", func(t *testing.T) {
+		h2 := &AgentHandler{logger: logger}
+		_, err := h2.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.Unimplemented {
+			t.Errorf("expected Unimplemented, got %v", st.Code())
+		}
+	})
+
+	t.Run("tunnel not found returns NotFound", func(t *testing.T) {
+		mgr := &testTunnelManager{updatePeerErr: errors.New("tunnel not found")}
+		h3 := &AgentHandler{logger: logger, tunnelMgr: mgr}
+		_, err := h3.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.NotFound {
+			t.Errorf("expected NotFound, got %v", st.Code())
+		}
+	})
+
+	t.Run("unchanged=true returns success with Unchanged", func(t *testing.T) {
+		mgr := &testTunnelManager{updatePeerUnchanged: true}
+		h4 := &AgentHandler{logger: logger, tunnelMgr: mgr}
+		resp, err := h4.UpdateTunnelPeer(context.Background(), &proto.UpdateTunnelPeerRequest{
+			Name:          "tun1",
+			PeerPublicKey: make([]byte, 32),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !resp.Unchanged {
+			t.Error("expected Unchanged=true")
+		}
+	})
 }
 
 func TestRotateParamsMapsProtoValuesToConfig(t *testing.T) {
@@ -1378,6 +1499,120 @@ func requireStringField(t *testing.T, actual *string, expected string) {
 	if actual == nil || *actual != expected {
 		t.Fatalf("expected string pointer %q, got %#v", expected, actual)
 	}
+}
+
+// TestAgentHandler_UpdateTunnelPeer_Unauthenticated verifies that the token-auth
+// interceptor (makeUnaryAuthInterceptor) rejects UpdateTunnelPeer calls that
+// carry an empty or wrong bearer token with codes.Unauthenticated, and allows
+// calls carrying the correct token to pass auth (the call may then fail with a
+// different code due to missing tunnel — that is acceptable per T016 AC).
+//
+// Design: spins up an in-process gRPC server (no TLS transport, just the auth
+// interceptor) and connects with grpc.WithTransportCredentials(insecure).
+// This exercises the real makeUnaryAuthInterceptor code path without needing
+// TLS certificate fixtures.
+func TestAgentHandler_UpdateTunnelPeer_Unauthenticated(t *testing.T) {
+	t.Parallel()
+
+	// Generate a real token and its bcrypt hash so the interceptor has a
+	// verifiable credential on disk. Use a temp dir as the token hash dir.
+	token, err := pkgtls.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	hash, err := pkgtls.HashToken(token)
+	if err != nil {
+		t.Fatalf("hash token: %v", err)
+	}
+	tokenDir := t.TempDir()
+	if err := pkgtls.SaveTokenHash(tokenDir, hash); err != nil {
+		t.Fatalf("save token hash: %v", err)
+	}
+
+	// Build a handler backed by a testTunnelManager so valid-auth calls reach
+	// the RPC body (tunnel will not be found — NotFound, not Unauthenticated).
+	mgr := &testTunnelManager{updatePeerErr: errors.New("tunnel not found")}
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), mgr, nil, nil, nil, nil, nil, nil)
+
+	// Spin up in-process gRPC server with only the token-auth interceptor.
+	// No TLS transport: the interceptor's mTLS branch is skipped (no
+	// credentials.TLSInfo in peer context) so it falls through to bearer-token.
+	gs := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			makeUnaryAuthInterceptor(newTokenHashProvider(tokenDir), zerolog.Nop()),
+		),
+	)
+	proto.RegisterAwgAgentServer(gs, handler)
+
+	ln, listenErr := net.Listen("tcp", "127.0.0.1:0")
+	if listenErr != nil {
+		t.Fatalf("listen: %v", listenErr)
+	}
+	go func() { _ = gs.Serve(ln) }()
+	t.Cleanup(func() { gs.GracefulStop() })
+
+	conn, dialErr := grpc.NewClient(
+		ln.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if dialErr != nil {
+		t.Fatalf("dial: %v", dialErr)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	client := proto.NewAwgAgentClient(conn)
+
+	validKey := make([]byte, 32)
+	for i := range validKey {
+		validKey[i] = byte(i + 1)
+	}
+	req := &proto.UpdateTunnelPeerRequest{
+		Name:          "tun1",
+		PeerPublicKey: validKey,
+	}
+
+	t.Run("no token returns Unauthenticated", func(t *testing.T) {
+		t.Parallel()
+
+		_, callErr := client.UpdateTunnelPeer(context.Background(), req)
+		if callErr == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if code := status.Code(callErr); code != codes.Unauthenticated {
+			t.Fatalf("expected Unauthenticated, got %v (err=%v)", code, callErr)
+		}
+	})
+
+	t.Run("wrong token returns Unauthenticated", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := metadata.AppendToOutgoingContext(
+			context.Background(),
+			"authorization", "Bearer wrong-token-value",
+		)
+		_, callErr := client.UpdateTunnelPeer(ctx, req)
+		if callErr == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if code := status.Code(callErr); code != codes.Unauthenticated {
+			t.Fatalf("expected Unauthenticated, got %v (err=%v)", code, callErr)
+		}
+	})
+
+	t.Run("valid token passes auth (may fail with NotFound for missing tunnel)", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := metadata.AppendToOutgoingContext(
+			context.Background(),
+			"authorization", "Bearer "+token,
+		)
+		_, callErr := client.UpdateTunnelPeer(ctx, req)
+		// Auth passed — the RPC reached the handler and returned NotFound for the
+		// missing tunnel. Any code other than Unauthenticated confirms auth was accepted.
+		if callErr != nil && status.Code(callErr) == codes.Unauthenticated {
+			t.Fatalf("valid token was rejected with Unauthenticated — auth interceptor is broken")
+		}
+	})
 }
 
 func assertCode(t *testing.T, err error, expected codes.Code) {

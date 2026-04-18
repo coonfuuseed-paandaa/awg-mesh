@@ -99,6 +99,19 @@ message RemoveTunnelResponse {
   bool success = 1;
 }
 
+message UpdateTunnelPeerRequest {
+  string name = 1;              // existing tunnel name (e.g. endpoint name "us-01")
+  bytes peer_public_key = 2;    // new pubkey (required, 32 bytes)
+  string balancer_ip = 3;       // optional — refresh ECMP mapping
+  repeated string allowed_ips = 4;  // optional — if non-empty, replace; else keep
+}
+
+message UpdateTunnelPeerResponse {
+  bool success = 1;
+  bytes master_public_key = 2;  // echo back for caller verification
+  bool unchanged = 3;           // true when the new key matches existing (idempotent no-op)
+}
+
 message TunnelList {
   repeated TunnelStatus tunnels = 1;
 }

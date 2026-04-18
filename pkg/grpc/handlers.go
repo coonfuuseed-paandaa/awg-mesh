@@ -336,6 +336,63 @@ func (h *AgentHandler) ListTunnels(_ context.Context, _ *proto.Empty) (*proto.Tu
 	return &proto.TunnelList{Tunnels: protoTunnels}, nil
 }
 
+// UpdateTunnelPeer updates the peer public key on a named tunnel idempotently.
+func (h *AgentHandler) UpdateTunnelPeer(_ context.Context, req *proto.UpdateTunnelPeerRequest) (*proto.UpdateTunnelPeerResponse, error) {
+	if h.tunnelMgr == nil {
+		return nil, status.Error(codes.Unimplemented, "tunnel management not available in this mode")
+	}
+
+	name := strings.TrimSpace(req.GetName())
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "tunnel name required")
+	}
+	rawKey := req.GetPeerPublicKey()
+	if len(rawKey) != 32 {
+		return nil, status.Error(codes.InvalidArgument, "peer_public_key must be exactly 32 bytes")
+	}
+
+	var newKey [32]byte
+	copy(newKey[:], rawKey)
+
+	// Validate allowed_ips at the RPC boundary so malformed input returns
+	// InvalidArgument rather than bubbling up as Internal from the manager.
+	normalizedAllowedIPs := make([]string, 0, len(req.GetAllowedIps()))
+	for _, cidr := range req.GetAllowedIps() {
+		trimmedCIDR := strings.TrimSpace(cidr)
+		if trimmedCIDR == "" {
+			return nil, status.Error(codes.InvalidArgument, "allowed_ips entries must be non-empty CIDRs")
+		}
+		if _, _, parseErr := net.ParseCIDR(trimmedCIDR); parseErr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "allowed_ips contains invalid CIDR %q", cidr)
+		}
+		normalizedAllowedIPs = append(normalizedAllowedIPs, trimmedCIDR)
+	}
+
+	unchanged, err := h.tunnelMgr.UpdateTunnelPeer(name, newKey, strings.TrimSpace(req.GetBalancerIp()), normalizedAllowedIPs)
+	if err != nil {
+		if strings.Contains(err.Error(), "tunnel not found") {
+			return nil, status.Errorf(codes.NotFound, "tunnel not found: %s", name)
+		}
+		h.logger.Error().Err(err).Str("tunnel", name).Msg("update tunnel peer failed")
+		return nil, status.Errorf(codes.Internal, "update tunnel peer: %v", err)
+	}
+
+	resp := &proto.UpdateTunnelPeerResponse{
+		Success:   true,
+		Unchanged: unchanged,
+	}
+	if h.keyProvider != nil {
+		pubKey, kErr := h.keyProvider.GetPublicKey()
+		if kErr != nil {
+			h.logger.Warn().Err(kErr).Msg("update tunnel peer: failed to read master public key")
+		} else {
+			resp.MasterPublicKey = pubKey[:]
+		}
+	}
+
+	return resp, nil
+}
+
 func (h *AgentHandler) ListPeers(_ context.Context, _ *proto.Empty) (*proto.PeerList, error) {
 	if h.peerMgr == nil {
 		return nil, status.Error(codes.Unimplemented, "peer management not available in this mode")

@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -12,6 +13,10 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
+
+// ErrTunnelNotFound is returned by UpdateTunnelPeer when the named tunnel
+// does not exist in the master's live tunnel map.
+var ErrTunnelNotFound = errors.New("tunnel not found")
 
 // MasterTunnel represents a single tunnel managed by master mode.
 type MasterTunnel struct {
@@ -47,6 +52,12 @@ type MasterRunner struct {
 	mu        sync.RWMutex
 	startTime time.Time
 	forwarder PacketForwarder // nil if eBPF unavailable (graceful degradation)
+
+	// applyPeerKeyUpdateFn is a test seam: when non-nil it replaces the
+	// platform-specific applyPeerKeyUpdate method. Tests inject a stub here to
+	// exercise the DifferentKey and ApplyFails paths without wgctrl.
+	// Production code never sets this field.
+	applyPeerKeyUpdateFn func(tunnel *MasterTunnel, newPubkey wg.Key, allowedIPs []string) error
 }
 
 // NewMasterRunner creates a master mode runner.
@@ -246,14 +257,14 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, tran
 		return fmt.Errorf("create tunnel interface for %q: %w", name, err)
 	}
 
-	// Interface created successfully — mark healthy so ECMP includes this tunnel.
+	// Interface created successfully - mark healthy so ECMP includes this tunnel.
 	m.mu.Lock()
 	if currentTunnel, exists := m.tunnels[name]; exists && currentTunnel == t {
 		t.Healthy = true
 	}
 	m.mu.Unlock()
 
-	// Wire eBPF forwarding: add overlay IP → interface index mapping.
+	// Wire eBPF forwarding: add overlay IP -> interface index mapping.
 	if m.forwarder != nil && overlayIP != "" {
 		if overlayAddr := net.ParseIP(overlayIP); overlayAddr != nil {
 			ifindex, _ := routing.NewNetlinkRouter().LinkGetIndex(t.InterfaceName)
@@ -292,6 +303,66 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, tran
 		Msg("tunnel added")
 
 	return nil
+}
+
+// UpdateTunnelPeer replaces the peer public key on a named tunnel. Implements TunnelManager.
+// C3 strict rollback ordering (NON-NEGOTIABLE):
+// 1. Lookup tunnel - not found -> (false, ErrTunnelNotFound)
+// 2. Same-key check -> (true, nil) no UAPI call, no persist
+// 3. Capture old key for rollback
+// 4. Apply new key via UAPI (applyPeerKeyUpdate - platform-specific)
+// 5. UAPI fail -> restore old key in-memory, no persist, return error
+// 6. UAPI success -> update in-memory state
+// 7. Persist - fail -> log Warn with attempt count, return (false, nil) (UAPI authoritative)
+func (m *MasterRunner) UpdateTunnelPeer(name string, newPubkeyBytes [32]byte, balancerIP string, allowedIPs []string) (unchanged bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Step 1: lookup tunnel by name
+	tunnel, exists := m.tunnels[name]
+	if !exists {
+		return false, ErrTunnelNotFound
+	}
+
+	var newPubkey wg.Key
+	copy(newPubkey[:], newPubkeyBytes[:])
+
+	// Step 2: same-key idempotency check - NO UAPI call, NO persist
+	if tunnel.PeerPublicKey == newPubkey {
+		return true, nil
+	}
+
+	// Step 3: capture old key for rollback
+	oldPubkey := tunnel.PeerPublicKey
+
+	// Step 4: apply new key via UAPI (platform-specific implementation in master_linux.go).
+	// applyPeerKeyUpdateFn is a test seam: when non-nil it overrides the method.
+	applyFn := m.applyPeerKeyUpdate
+	if m.applyPeerKeyUpdateFn != nil {
+		applyFn = m.applyPeerKeyUpdateFn
+	}
+	if applyErr := applyFn(tunnel, newPubkey, allowedIPs); applyErr != nil {
+		// Step 5: UAPI error -> restore in-memory old key, NO disk write
+		tunnel.PeerPublicKey = oldPubkey
+		return false, fmt.Errorf("wgctrl peer-replace: %w", applyErr)
+	}
+
+	// Step 6: UAPI success -> update in-memory state
+	tunnel.PeerPublicKey = newPubkey
+	if balancerIP != "" {
+		tunnel.BalancerIP = balancerIP
+	}
+
+	// Step 7: persist - failure is non-fatal (UAPI is authoritative)
+	if persistErr := m.saveTransportState(tunnel); persistErr != nil {
+		m.node.logger.Warn().
+			Err(persistErr).
+			Str("tunnel", name).
+			Int("attempt", 1).
+			Msg("UpdateTunnelPeer: persist transport state failed (UAPI applied, data plane is correct)")
+	}
+
+	return false, nil
 }
 
 // RemoveTunnel removes a tunnel by name.
