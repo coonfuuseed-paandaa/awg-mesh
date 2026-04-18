@@ -25,7 +25,9 @@ FAIL=0
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
-die() { echo "FATAL: $*" >&2; exit 1; }
+# Invocations in this script use `… 2>&1 || true` to capture output without
+# letting `set -e` abort before the assertion block that follows each call.
+# Outcomes are verified by assert_* helpers below, not by exit code.
 
 pass() { echo "  PASS: $*"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $*" >&2; FAIL=$((FAIL + 1)); }

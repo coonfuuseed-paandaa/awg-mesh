@@ -436,7 +436,7 @@ func renderCurrentSchema(f *extractedFields, fromSchema SchemaVersion) []byte {
 
 	// Note the migration source for operator awareness.
 	if fromSchema != SchemaCurrent {
-		b.WriteString("    # Migrated from schema " + fromSchema.String() + " by mesh-ctl upgrade-compose\n")
+		b.WriteString("    # Migrated from schema " + fromSchema.String() + " by mesh-ctl upgrade compose\n")
 	}
 
 	return []byte(b.String())
