@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/internal/adminstate"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -182,10 +183,10 @@ func newEndpointInitCommand() *cobra.Command {
 				}
 			}()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
+			initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer initCancel()
 
-			resp, err := client.Agent().Init(ctx, &proto.InitRequest{
+			resp, err := client.Agent().Init(initCtx, &proto.InitRequest{
 				CaCert:   caCertPEM,
 				NodeCert: certPEM,
 				NodeKey:  keyPEM,
@@ -203,10 +204,9 @@ func newEndpointInitCommand() *cobra.Command {
 				return fmt.Errorf("init failed: %s", resp.Message)
 			}
 
-			pubkeyPath := filepath.Join(nd, "pubkey")
-			if err := os.WriteFile(pubkeyPath, resp.NodePublicKey, 0644); err != nil {
-				return fmt.Errorf("write pubkey file %q: %w", pubkeyPath, err)
-			}
+			// newPubKeyHex is the hex-encoded 32-byte WireGuard public key returned by Init.
+			// We hold it in the outer scope so it is available after the adminstate transaction.
+			newPubKeyHex := hex.EncodeToString(resp.NodePublicKey)
 
 			alloc, err := loadOrCreateAllocator(configDir, topo)
 			if err != nil {
@@ -240,189 +240,231 @@ func newEndpointInitCommand() *cobra.Command {
 				}
 			}
 
-			// T010: track per-master outcome counters for exit-code determination.
-			mastersTotal := 0
-			mastersOk := 0
-			var failedMasters []string
+			// needAddPeerForMaster tracks which masters require AddPeer on the endpoint
+			// side after the adminstate transaction completes.
+			type addPeerWork struct {
+				masterName  string
+				masterToken string
+				masterAddr  string
+				masterKey   []byte
+				allowedIPs  []string
+				subnet      string
+				epTransIP   string
+				masterIP    string
+			}
+			var pendingAddPeers []addPeerWork
 
-			for _, master := range topo.Masters {
-				if !containsName(master.Endpoints, ep.Name) {
-					continue
-				}
+			// FR-2: adminstate.SetPubkey issues all master RPCs inside the callback.
+			// The pubkey file is written ONLY after every master acknowledges the new key.
+			// If any master fails, the callback returns an error and the file is untouched.
+			store := adminstate.NewStore(configDir)
+			_, txnErr := store.SetPubkey(ep.Name, func(oldKeyHex string) (string, error) {
+				// T010: track per-master outcome counters inside the transaction.
+				mastersTotal := 0
+				mastersOk := 0
+				var failedMasters []string
 
-				mastersTotal++
-
-				allocation, err := alloc.Allocate(master.Name, ep.Name)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: allocate transport for master %q and endpoint %q failed: %v\n", master.Name, ep.Name, err)
-					failedMasters = append(failedMasters, master.Name)
-					continue
-				}
-
-				masterToken, err := loadToken(nodeDir(configDir, master.Name))
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: cannot load token for master %q: %v\n", master.Name, err)
-					failedMasters = append(failedMasters, master.Name)
-					continue
-				}
-
-				masterClient, err := grpcclient.NewClient(grpcclient.ClientConfig{
-					Target:   master.GRPCAddr(),
-					Token:    masterToken,
-					Insecure: true,
-				})
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, err)
-					failedMasters = append(failedMasters, master.Name)
-					continue
-				}
-
-				masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
-					Name:                ep.Name,
-					EndpointHost:        ep.PeerAddr(),
-					OverlayIp:           ep.OverlayIP,
-					BalancerIp:          balancerIP,
-					PeerPublicKey:       resp.NodePublicKey,
-					Weight:              1,
-					TransportSubnet:     allocation.Subnet.String(),
-					MasterTransportIp:   allocation.MasterIP.String(),
-					EndpointTransportIp: allocation.EndpointIP.String(),
-				})
-				masterCancel()
-				if closeErr := masterClient.Close(); closeErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
-				}
-
-				statusLine := ""
-				needAddPeer := false
-				// FR-1: build the full allowed_ips list via the shared helper:
-				// transport /30 + master overlay /32 + all overlay range CIDRs.
-				allowedIPs, aipErr := topology.BuildAllowedIPsForEndpoint(topo, master.OverlayIP, allocation.Subnet.String())
-				if aipErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: build allowed_ips for master %q / endpoint %q: %v\n", master.Name, ep.Name, aipErr)
-					// Safe fallback: at minimum transport subnet + overlay ranges.
-					allowedIPs = []string{allocation.Subnet.String()}
-					for _, nr := range topo.Overlay.Ranges {
-						if nr.CIDR != "" {
-							allowedIPs = append(allowedIPs, nr.CIDR)
-						}
+				for _, master := range topo.Masters {
+					if !containsName(master.Endpoints, ep.Name) {
+						continue
 					}
-				}
-				fmt.Printf("endpoint init: AddPeer to endpoint %q (master %q) with allowed_ips=%v\n", ep.Name, master.Name, allowedIPs)
 
-				if addErr != nil {
-					errLower := strings.ToLower(addErr.Error())
-					isAlreadyExists := status.Code(addErr) == codes.AlreadyExists || strings.Contains(errLower, "already exists")
-					if !isAlreadyExists {
-						statusLine = fmt.Sprintf("FAILED: %v", addErr)
-						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+					mastersTotal++
+
+					allocation, allocErr := alloc.Allocate(master.Name, ep.Name)
+					if allocErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: allocate transport for master %q and endpoint %q failed: %v\n", master.Name, ep.Name, allocErr)
 						failedMasters = append(failedMasters, master.Name)
 						continue
 					}
 
-					masterClient, err = grpcclient.NewClient(grpcclient.ClientConfig{
+					masterToken, tokenErr := loadToken(nodeDir(configDir, master.Name))
+					if tokenErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: cannot load token for master %q: %v\n", master.Name, tokenErr)
+						failedMasters = append(failedMasters, master.Name)
+						continue
+					}
+
+					masterClient, connErr := grpcclient.NewClient(grpcclient.ClientConfig{
 						Target:   master.GRPCAddr(),
 						Token:    masterToken,
 						Insecure: true,
 					})
-					if err != nil {
-						statusLine = fmt.Sprintf("FAILED: cannot connect to master %q for tunnel update: %v", master.Name, err)
-						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+					if connErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: cannot connect to master %q: %v\n", master.Name, connErr)
 						failedMasters = append(failedMasters, master.Name)
 						continue
 					}
 
-					masterCtx, masterCancel = context.WithTimeout(context.Background(), 30*time.Second)
-					updateResp, updateErr := masterClient.Agent().UpdateTunnelPeer(masterCtx, &proto.UpdateTunnelPeerRequest{
-						Name:          ep.Name,
-						PeerPublicKey: resp.NodePublicKey,
-						BalancerIp:    balancerIP,
-						AllowedIps:    allowedIPs,
+					masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
+						Name:                ep.Name,
+						EndpointHost:        ep.PeerAddr(),
+						OverlayIp:           ep.OverlayIP,
+						BalancerIp:          balancerIP,
+						PeerPublicKey:       resp.NodePublicKey,
+						Weight:              1,
+						TransportSubnet:     allocation.Subnet.String(),
+						MasterTransportIp:   allocation.MasterIP.String(),
+						EndpointTransportIp: allocation.EndpointIP.String(),
 					})
 					masterCancel()
 					if closeErr := masterClient.Close(); closeErr != nil {
 						fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
 					}
-					if updateErr != nil {
-						// T011: detect pre-v1.10.0 masters that lack UpdateTunnelPeer RPC.
-						var isPreV110 bool
-						statusLine, isPreV110 = updateTunnelPeerFailureStatus(updateErr)
-						if isPreV110 {
-							fmt.Fprintf(os.Stderr, "master %s running pre-v1.10.0 — upgrade master before rotating endpoint keys\n", master.Name)
+
+					statusLine := ""
+					needAddPeer := false
+
+					// FR-1: build the full allowed_ips list via the shared helper.
+					allowedIPs, aipErr := topology.BuildAllowedIPsForEndpoint(topo, master.OverlayIP, allocation.Subnet.String())
+					if aipErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: build allowed_ips for master %q / endpoint %q: %v\n", master.Name, ep.Name, aipErr)
+						allowedIPs = []string{allocation.Subnet.String()}
+						for _, nr := range topo.Overlay.Ranges {
+							if nr.CIDR != "" {
+								allowedIPs = append(allowedIPs, nr.CIDR)
+							}
 						}
-						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
-						failedMasters = append(failedMasters, master.Name)
-						continue
 					}
+					fmt.Printf("endpoint init: AddPeer to endpoint %q (master %q) with allowed_ips=%v\n", ep.Name, master.Name, allowedIPs)
 
-					if updateResp == nil || !updateResp.Success {
-						statusLine = "FAILED: update tunnel peer RPC returned unsuccessful response"
-						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
-						failedMasters = append(failedMasters, master.Name)
-						continue
-					}
+					if addErr != nil {
+						errLower := strings.ToLower(addErr.Error())
+						isAlreadyExists := status.Code(addErr) == codes.AlreadyExists || strings.Contains(errLower, "already exists")
+						if !isAlreadyExists {
+							statusLine = fmt.Sprintf("FAILED: %v", addErr)
+							fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+							failedMasters = append(failedMasters, master.Name)
+							continue
+						}
 
-					needAddPeer = false
-					if updateResp.Unchanged {
-						statusLine = "unchanged (key matches)"
+						// Tunnel already exists on master — update the peer key.
+						masterClient2, conn2Err := grpcclient.NewClient(grpcclient.ClientConfig{
+							Target:   master.GRPCAddr(),
+							Token:    masterToken,
+							Insecure: true,
+						})
+						if conn2Err != nil {
+							statusLine = fmt.Sprintf("FAILED: cannot connect to master %q for tunnel update: %v", master.Name, conn2Err)
+							fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+							failedMasters = append(failedMasters, master.Name)
+							continue
+						}
+
+						masterCtx2, masterCancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+						updateResp, updateErr := masterClient2.Agent().UpdateTunnelPeer(masterCtx2, &proto.UpdateTunnelPeerRequest{
+							Name:          ep.Name,
+							PeerPublicKey: resp.NodePublicKey,
+							BalancerIp:    balancerIP,
+							AllowedIps:    allowedIPs,
+						})
+						masterCancel2()
+						if closeErr := masterClient2.Close(); closeErr != nil {
+							fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
+						}
+
+						if updateErr != nil {
+							// T011: detect pre-v1.10.0 masters that lack UpdateTunnelPeer RPC.
+							var isPreV110 bool
+							statusLine, isPreV110 = updateTunnelPeerFailureStatus(updateErr)
+							if isPreV110 {
+								fmt.Fprintf(os.Stderr, "master %s running pre-v1.10.0 — upgrade master before rotating endpoint keys\n", master.Name)
+							}
+							fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+							failedMasters = append(failedMasters, master.Name)
+							continue
+						}
+
+						if updateResp == nil || !updateResp.Success {
+							statusLine = "FAILED: update tunnel peer RPC returned unsuccessful response"
+							fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+							failedMasters = append(failedMasters, master.Name)
+							continue
+						}
+
+						needAddPeer = false
+						if updateResp.Unchanged {
+							statusLine = "unchanged (key matches)"
+						} else {
+							statusLine = fmt.Sprintf("updated (new key: %s)", newPubKeyHex[:min(8, len(newPubKeyHex))])
+						}
 					} else {
-						newPubKeyHex := hex.EncodeToString(resp.NodePublicKey)
-						if len(newPubKeyHex) > 8 {
-							newPubKeyHex = newPubKeyHex[:8]
+						if addResp == nil || !addResp.Success {
+							statusLine = "FAILED: add tunnel RPC returned unsuccessful response"
+							fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+							failedMasters = append(failedMasters, master.Name)
+							continue
 						}
-						statusLine = fmt.Sprintf("updated (new key: %s)", newPubKeyHex)
+						needAddPeer = true
+						statusLine = "created"
 					}
-				} else {
-					if addResp == nil || !addResp.Success {
-						statusLine = "FAILED: add tunnel RPC returned unsuccessful response"
-						fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
-						failedMasters = append(failedMasters, master.Name)
-						continue
+
+					mastersOk++
+					fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
+
+					if needAddPeer {
+						// Collect master public key for the post-transaction AddPeer call.
+						var masterPubKey []byte
+						if addResp != nil {
+							masterPubKey = addResp.MasterPublicKey
+						}
+						if len(masterPubKey) == 0 {
+							// Fallback: read from admin-state disk (raw bytes or hex).
+							masterPubKey, _ = readAdminPubkeyRaw(configDir, master.Name)
+						}
+						if len(masterPubKey) > 0 {
+							pendingAddPeers = append(pendingAddPeers, addPeerWork{
+								masterName:  master.Name,
+								masterToken: masterToken,
+								masterAddr:  master.PeerAddr(),
+								masterKey:   masterPubKey,
+								allowedIPs:  allowedIPs,
+								subnet:      allocation.Subnet.String(),
+								epTransIP:   allocation.EndpointIP.String(),
+								masterIP:    allocation.MasterIP.String(),
+							})
+						} else {
+							fmt.Fprintf(os.Stderr, "warning: master %q public key not available, skipping peer setup\n", master.Name)
+						}
 					}
-					needAddPeer = true
-					statusLine = "created"
 				}
 
-				mastersOk++
-				fmt.Printf("Tunnel %q on master %q: %s\n", ep.Name, master.Name, statusLine)
-
-				if !needAddPeer {
-					continue
+				// FR-2: only return success if ALL masters acknowledged.
+				if mastersOk < mastersTotal {
+					return "", fmt.Errorf(
+						"partial update: %d of %d master(s) failed %v — admin state unchanged, run 'mesh-ctl reconcile' once all masters are reachable",
+						mastersTotal-mastersOk, mastersTotal, failedMasters,
+					)
 				}
 
-				// Get master's public key — from response or from disk.
-				var masterPubKey []byte
-				if addResp != nil {
-					masterPubKey = addResp.MasterPublicKey
-				}
-				if len(masterPubKey) == 0 {
-					pubkeyPath := filepath.Join(nodeDir(configDir, master.Name), "pubkey")
-					masterPubKey, _ = os.ReadFile(pubkeyPath)
-				}
-				if len(masterPubKey) == 0 {
-					fmt.Fprintf(os.Stderr, "warning: master %q public key not available, skipping peer setup\n", master.Name)
-					continue
-				}
+				return newPubKeyHex, nil
+			})
 
+			if txnErr != nil {
+				return fmt.Errorf("endpoint init: %w", txnErr)
+			}
+
+			// FR-2 complete: all masters acknowledged the new key and admin state is written.
+			// Now set up AddPeer on the endpoint side for each master that created a new tunnel.
+			for _, work := range pendingAddPeers {
 				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				peerResp, peerErr := selfClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
-					PublicKey:           masterPubKey,
-					AllowedIps:          allowedIPs,
-					EndpointHost:        master.PeerAddr(),
+					PublicKey:           work.masterKey,
+					AllowedIps:          work.allowedIPs,
+					EndpointHost:        work.masterAddr,
 					PersistentKeepalive: 25,
-					TransportSubnet:     allocation.Subnet.String(),
-					LocalTransportIp:    allocation.EndpointIP.String(),
-					PeerTransportIp:     allocation.MasterIP.String(),
+					TransportSubnet:     work.subnet,
+					LocalTransportIp:    work.epTransIP,
+					PeerTransportIp:     work.masterIP,
 				})
 				peerCancel()
 				if peerErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %v\n", master.Name, peerErr)
+					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %v\n", work.masterName, peerErr)
 					continue
 				}
 				if peerResp == nil || !peerResp.Success {
-					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %s\n", master.Name, "[RPC failure]")
-					continue
+					fmt.Fprintf(os.Stderr, "warning: add peer on endpoint for master %q failed: %s\n", work.masterName, "[RPC failure]")
 				}
 			}
 
@@ -430,22 +472,38 @@ func newEndpointInitCommand() *cobra.Command {
 				return fmt.Errorf("save transport state: %w", err)
 			}
 
-			// T010: if any master failed, emit a failure summary to stderr and
-			// return a non-zero exit code so operator CI scripts can detect the
-			// partial failure.
-			if mastersOk < mastersTotal {
-				fmt.Fprintf(os.Stderr, "\nFailed to update %d of %d master(s):\n", mastersTotal-mastersOk, mastersTotal)
-				for _, m := range failedMasters {
-					fmt.Fprintf(os.Stderr, "  - %s\n", m)
-					fmt.Fprintf(os.Stderr, "    To recover: mesh-ctl master reload %s\n", m)
-				}
-				return fmt.Errorf("endpoint init: %d master(s) failed — see above for details", mastersTotal-mastersOk)
-			}
-
-			fmt.Printf("Endpoint %q initialized successfully.\nPublic key: %s\n", name, hex.EncodeToString(resp.NodePublicKey))
+			fmt.Printf("Endpoint %q initialized successfully.\nPublic key: %s\n", name, newPubKeyHex)
 			return nil
 		},
 	}
+}
+
+// readAdminPubkeyRaw reads the admin-state pubkey file for <name> and returns
+// the raw 32-byte WireGuard public key.  Supports both storage formats:
+//   - 32 raw bytes (legacy — written by pre-v1.11.2 endpoint/master init)
+//   - 64 hex chars + optional newline (current — written by adminstate.SetPubkey)
+//
+// Returns nil if the file is missing, unreadable, or contains an unrecognised format.
+func readAdminPubkeyRaw(cfgDir, name string) ([]byte, error) {
+	path := filepath.Join(nodeDir(cfgDir, name), "pubkey")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// Raw 32-byte format (legacy).
+	if len(data) == 32 {
+		return data, nil
+	}
+	// Hex format: 64 chars (+ optional "\n").
+	trimmed := strings.TrimSpace(string(data))
+	if len(trimmed) == 64 {
+		b, hexErr := hex.DecodeString(trimmed)
+		if hexErr != nil {
+			return nil, fmt.Errorf("decode hex pubkey for %q: %w", name, hexErr)
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("pubkey for %q has unexpected length %d (want 32 bytes or 64 hex chars)", name, len(data))
 }
 
 // updateTunnelPeerFailureStatus returns the human-readable failure status line

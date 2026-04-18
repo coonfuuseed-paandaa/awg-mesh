@@ -7,8 +7,10 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/internal/adminstate"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -204,9 +206,16 @@ func newMasterInitCommand() *cobra.Command {
 				return fmt.Errorf("init failed: %s", resp.Message)
 			}
 
-			pubkeyPath := filepath.Join(nd, "pubkey")
-			if err := os.WriteFile(pubkeyPath, resp.NodePublicKey, 0644); err != nil {
-				return fmt.Errorf("write pubkey file %q: %w", pubkeyPath, err)
+			// FR-3: use adminstate.SetPubkey for the atomic write.
+			// Master init has no UpdateTunnelPeer RPC to issue (Init is the
+			// one-time bootstrap), so the callback simply returns the new key.
+			// The file is still written atomically and under the per-node lock.
+			masterPubKeyHex := hex.EncodeToString(resp.NodePublicKey)
+			store := adminstate.NewStore(configDir)
+			if _, storeErr := store.SetPubkey(name, func(_ string) (string, error) {
+				return masterPubKeyHex, nil
+			}); storeErr != nil {
+				return fmt.Errorf("write master pubkey: %w", storeErr)
 			}
 
 			alloc, err := loadOrCreateAllocator(configDir, topo)
@@ -550,13 +559,27 @@ Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
 	}
 }
 
+// readEndpointPublicKey reads a 32-byte WireGuard public key from path.
+// Supports two storage formats:
+//   - 32 raw bytes  (legacy — written by pre-v1.11.2 init commands)
+//   - 64 hex chars + optional newline (current — written by adminstate.SetPubkey)
 func readEndpointPublicKey(path string) ([]byte, error) {
-	pubkeyBytes, err := os.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read file %q: %w", path, err)
 	}
-	if len(pubkeyBytes) != endpointPublicKeyLen {
-		return nil, fmt.Errorf("got %d bytes, want %d", len(pubkeyBytes), endpointPublicKeyLen)
+	// Legacy: raw 32-byte binary.
+	if len(data) == endpointPublicKeyLen {
+		return data, nil
 	}
-	return pubkeyBytes, nil
+	// Current: 64 hex chars (+ optional newline).
+	trimmed := strings.TrimSpace(string(data))
+	if len(trimmed) == 64 {
+		b, hexErr := hex.DecodeString(trimmed)
+		if hexErr != nil {
+			return nil, fmt.Errorf("decode hex pubkey from %q: %w", path, hexErr)
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("pubkey at %q has unexpected length %d (want %d bytes or 64 hex chars)", path, len(data), endpointPublicKeyLen)
 }
