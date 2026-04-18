@@ -52,6 +52,12 @@ type MasterRunner struct {
 	mu        sync.RWMutex
 	startTime time.Time
 	forwarder PacketForwarder // nil if eBPF unavailable (graceful degradation)
+
+	// applyPeerKeyUpdateFn is a test seam: when non-nil it replaces the
+	// platform-specific applyPeerKeyUpdate method. Tests inject a stub here to
+	// exercise the DifferentKey and ApplyFails paths without wgctrl.
+	// Production code never sets this field.
+	applyPeerKeyUpdateFn func(tunnel *MasterTunnel, newPubkey wg.Key, allowedIPs []string) error
 }
 
 // NewMasterRunner creates a master mode runner.
@@ -329,8 +335,13 @@ func (m *MasterRunner) UpdateTunnelPeer(name string, newPubkeyBytes [32]byte, ba
 	// Step 3: capture old key for rollback
 	oldPubkey := tunnel.PeerPublicKey
 
-	// Step 4: apply new key via UAPI (platform-specific implementation in master_linux.go)
-	if applyErr := m.applyPeerKeyUpdate(tunnel, newPubkey, allowedIPs); applyErr != nil {
+	// Step 4: apply new key via UAPI (platform-specific implementation in master_linux.go).
+	// applyPeerKeyUpdateFn is a test seam: when non-nil it overrides the method.
+	applyFn := m.applyPeerKeyUpdate
+	if m.applyPeerKeyUpdateFn != nil {
+		applyFn = m.applyPeerKeyUpdateFn
+	}
+	if applyErr := applyFn(tunnel, newPubkey, allowedIPs); applyErr != nil {
 		// Step 5: UAPI error -> restore in-memory old key, NO disk write
 		tunnel.PeerPublicKey = oldPubkey
 		return false, fmt.Errorf("wgctrl peer-replace: %w", applyErr)
