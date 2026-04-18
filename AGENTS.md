@@ -77,7 +77,7 @@ Tag is created on GitHub, then fetched locally. No manual `git tag` needed.
 - Docker image tags: `latest` (master), `v0.X.Y` (release), `<commit-sha>` (CI)
 - `go install ./cmd/mesh-ctl` always shows the latest tag reachable from HEAD
 - After `gh release create`: always `git fetch --tags` to sync local tags
-- **Every release MUST have a corresponding GHCR image tag.** A release is not complete until `docker manifest inspect ghcr.io/coonfuuseed-paandaa/awg-mesh-node:vX.Y.Z` succeeds. If the pipeline failed to publish the semver tag (check `gh run list --workflow build.yml` for tag-triggered runs), dispatch the retag workflow manually: `gh workflow run build.yml -f retag_version=vX.Y.Z -f source_sha=<full-sha-from-main>`. This is NON-NEGOTIABLE — a git tag without a matching GHCR tag is a broken release.
+- **Every release MUST have a corresponding GHCR image tag.** A release is incomplete until `docker manifest inspect ghcr.io/coonfuuseed-paandaa/awg-mesh-node:vX.Y.Z` succeeds. If the pipeline failed to publish the semver tag (check `gh run list --workflow build.yml` for tag-triggered runs), dispatch the retag workflow manually: `gh workflow run build.yml -f retag_version=vX.Y.Z -f source_sha=<full-sha-from-main>`. This is NON-NEGOTIABLE — a git tag without a matching GHCR tag is a broken release.
 
 ## CONVENTIONS
 
