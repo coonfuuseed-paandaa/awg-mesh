@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -320,17 +321,18 @@ func newEndpointInitCommand() *cobra.Command {
 					// the AddTunnel path (tunnel was created, not updated).
 					var updateResp *proto.UpdateTunnelPeerResponse
 
-					// FR-1: build the full allowed_ips list via the shared helper.
-					allowedIPs, aipErr := topology.BuildAllowedIPsForEndpoint(topo, master.OverlayIP, allocation.Subnet.String())
+					// v1.12.2 Pattern X (per-master iface): each endpoint-side iface has
+					// exactly ONE peer, so AllowedIPs on this peer can safely include the
+					// overlay /32 of other endpoints reachable via this master — there's
+					// no dedup risk with a single peer. AllowedIPs = [transport_subnet,
+					// master_overlay/32, other_endpoint_overlay/32 ...]. The /32 entries
+					// also install kernel routes on the endpoint side via ConfigureTransport.
+					allowedIPs, aipErr := topology.BuildMinimalAllowedIPsForEndpointPeer(master.OverlayIP, allocation.Subnet.String())
 					if aipErr != nil {
 						fmt.Fprintf(os.Stderr, "warning: build allowed_ips for master %q / endpoint %q: %v\n", master.Name, ep.Name, aipErr)
-						allowedIPs = []string{allocation.Subnet.String()}
-						for _, nr := range topo.Overlay.Ranges {
-							if nr.CIDR != "" {
-								allowedIPs = append(allowedIPs, nr.CIDR)
-							}
-						}
+						allowedIPs = []string{allocation.Subnet.String(), master.OverlayIP + "/32"}
 					}
+					allowedIPs = append(allowedIPs, computeExtraOverlayRoutes(topo, ep.Name, master.Name)...)
 					fmt.Printf("endpoint init: AddPeer to endpoint %q (master %q) with allowed_ips=%v\n", ep.Name, master.Name, allowedIPs)
 
 					if addErr != nil {
@@ -423,6 +425,13 @@ func newEndpointInitCommand() *cobra.Command {
 							masterPubKey, _ = readAdminPubkeyRaw(configDir, master.Name)
 						}
 						if len(masterPubKey) > 0 {
+							// v1.12.2: compute extra kernel routes for other endpoints
+							// reachable via this master (first master alphabetically that
+							// v1.12.2: allowedIPs already includes other-endpoint /32s
+							// appended via computeExtraOverlayRoutes at AllowedIPs build time.
+							// The endpoint's ConfigureTransport handler installs kernel routes
+							// for each allowedIPs entry; single-peer per-master iface makes
+							// WG AllowedIPs dedup a non-issue.
 							pendingAddPeers = append(pendingAddPeers, addPeerWork{
 								masterName:  master.Name,
 								masterToken: masterToken,
@@ -466,6 +475,7 @@ func newEndpointInitCommand() *cobra.Command {
 					TransportSubnet:     work.subnet,
 					LocalTransportIp:    work.epTransIP,
 					PeerTransportIp:     work.masterIP,
+					PeerName:            work.masterName,
 				})
 				peerCancel()
 				if peerErr != nil {
@@ -485,6 +495,63 @@ func newEndpointInitCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// computeExtraOverlayRoutes returns the list of other endpoints' overlay IPs
+// (as /32 CIDR strings) reachable from selfEndpointName via masterName.
+// Only endpoints for which masterName is the first-alphabetically shared master
+// are included, to avoid installing duplicate routes on multiple ifaces (v1.12.2
+// endpoint-side Pattern X uses one master per peer, no ECMP). These routes are
+// installed as kernel `ip route` on the endpoint without bloating WG AllowedIPs.
+func computeExtraOverlayRoutes(topo *topology.Topology, selfEndpointName, masterName string) []string {
+	if topo == nil {
+		return nil
+	}
+	// Build map: endpoint name → sorted list of master names that bind it.
+	epMasters := make(map[string][]string, len(topo.Endpoints))
+	for _, m := range topo.Masters {
+		for _, epName := range m.Endpoints {
+			epMasters[epName] = append(epMasters[epName], m.Name)
+		}
+	}
+	for k := range epMasters {
+		sort.Strings(epMasters[k])
+	}
+	// Masters bound to self.
+	selfMastersSet := make(map[string]struct{}, len(epMasters[selfEndpointName]))
+	for _, m := range epMasters[selfEndpointName] {
+		selfMastersSet[m] = struct{}{}
+	}
+	if _, ok := selfMastersSet[masterName]; !ok {
+		return nil
+	}
+	var routes []string
+	for _, peer := range topo.Endpoints {
+		if peer.Name == selfEndpointName {
+			continue
+		}
+		// Find the first master alphabetically that binds BOTH self and peer.
+		var chosen string
+		for _, m := range epMasters[peer.Name] {
+			if _, shared := selfMastersSet[m]; shared {
+				chosen = m
+				break
+			}
+		}
+		if chosen != masterName {
+			continue
+		}
+		overlay := strings.TrimSpace(peer.OverlayIP)
+		if overlay == "" {
+			continue
+		}
+		if strings.Contains(overlay, "/") {
+			overlay = strings.SplitN(overlay, "/", 2)[0]
+		}
+		routes = append(routes, overlay+"/32")
+	}
+	sort.Strings(routes)
+	return routes
 }
 
 // readAdminPubkeyRaw reads the admin-state pubkey file for <name> and returns

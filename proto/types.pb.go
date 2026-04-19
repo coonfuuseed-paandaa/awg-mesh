@@ -1078,6 +1078,8 @@ type AddPeerRequest struct {
 	LocalTransportIp    string                 `protobuf:"bytes,8,opt,name=local_transport_ip,json=localTransportIp,proto3" json:"local_transport_ip,omitempty"`
 	PeerTransportIp     string                 `protobuf:"bytes,9,opt,name=peer_transport_ip,json=peerTransportIp,proto3" json:"peer_transport_ip,omitempty"`
 	BalancerIp          string                 `protobuf:"bytes,10,opt,name=balancer_ip,json=balancerIp,proto3" json:"balancer_ip,omitempty"`
+	PeerName            string                 `protobuf:"bytes,11,opt,name=peer_name,json=peerName,proto3" json:"peer_name,omitempty"`          // master name (on endpoint side) or endpoint name (on master side); used for per-iface routing
+	ExtraRoutes         []string               `protobuf:"bytes,12,rep,name=extra_routes,json=extraRoutes,proto3" json:"extra_routes,omitempty"` // extra kernel /32 routes to install via wg-<peer_name> (v1.12.2+: other endpoints reachable via this master)
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1180,6 +1182,20 @@ func (x *AddPeerRequest) GetBalancerIp() string {
 		return x.BalancerIp
 	}
 	return ""
+}
+
+func (x *AddPeerRequest) GetPeerName() string {
+	if x != nil {
+		return x.PeerName
+	}
+	return ""
+}
+
+func (x *AddPeerRequest) GetExtraRoutes() []string {
+	if x != nil {
+		return x.ExtraRoutes
+	}
+	return nil
 }
 
 type AddPeerResponse struct {
@@ -2478,7 +2494,7 @@ const file_types_proto_rawDesc = "" +
 	"\tunchanged\x18\x03 \x01(\bR\tunchanged\"=\n" +
 	"\n" +
 	"TunnelList\x12/\n" +
-	"\atunnels\x18\x01 \x03(\v2\x15.awgmesh.TunnelStatusR\atunnels\"\x9f\x03\n" +
+	"\atunnels\x18\x01 \x03(\v2\x15.awgmesh.TunnelStatusR\atunnels\"\xdf\x03\n" +
 	"\x0eAddPeerRequest\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12#\n" +
@@ -2493,7 +2509,9 @@ const file_types_proto_rawDesc = "" +
 	"\x11peer_transport_ip\x18\t \x01(\tR\x0fpeerTransportIp\x12\x1f\n" +
 	"\vbalancer_ip\x18\n" +
 	" \x01(\tR\n" +
-	"balancerIp\"+\n" +
+	"balancerIp\x12\x1b\n" +
+	"\tpeer_name\x18\v \x01(\tR\bpeerName\x12!\n" +
+	"\fextra_routes\x18\f \x03(\tR\vextraRoutes\"+\n" +
 	"\x0fAddPeerResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"2\n" +
 	"\x11RemovePeerRequest\x12\x1d\n" +

@@ -84,6 +84,16 @@ func TestValidateTopologyFindings(t *testing.T) {
 			wantMessagePart: "not contained",
 			wantSeverity:    "error",
 		},
+		{
+			name: "master name exceeds 12 characters — warning emitted",
+			mutate: func(t *Topology) {
+				// 14 characters — one over the limit.
+				t.Masters[0].Name = "thirteen-chars"
+			},
+			wantFieldPart:   "masters[0].name",
+			wantMessagePart: "truncated",
+			wantSeverity:    "warning",
+		},
 	}
 
 	for _, tt := range tests {

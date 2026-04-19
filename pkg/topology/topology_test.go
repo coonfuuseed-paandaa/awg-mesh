@@ -169,6 +169,100 @@ func TestSaveTopologyErrors(t *testing.T) {
 	}
 }
 
+func TestMastersForEndpoint(t *testing.T) {
+	t.Parallel()
+
+	top := &Topology{
+		Masters: []MasterNode{
+			{Name: "zeta", Endpoints: []string{"ep-a", "ep-b"}},
+			{Name: "alpha", Endpoints: []string{"ep-a"}},
+			{Name: "beta", Endpoints: []string{"ep-b"}},
+		},
+		Endpoints: []EndpointNode{
+			{Name: "ep-a"},
+			{Name: "ep-b"},
+		},
+	}
+
+	t.Run("two masters bind one endpoint — returned sorted", func(t *testing.T) {
+		t.Parallel()
+
+		got := top.MastersForEndpoint("ep-a")
+		if len(got) != 2 {
+			t.Fatalf("expected 2 masters, got %d: %#v", len(got), got)
+		}
+		if got[0].Name != "alpha" || got[1].Name != "zeta" {
+			t.Fatalf("expected [alpha, zeta], got [%s, %s]", got[0].Name, got[1].Name)
+		}
+	})
+
+	t.Run("two masters bind endpoint — two results", func(t *testing.T) {
+		t.Parallel()
+
+		got := top.MastersForEndpoint("ep-b")
+		if len(got) != 2 {
+			t.Fatalf("expected 2 masters, got %d: %#v", len(got), got)
+		}
+		if got[0].Name != "beta" || got[1].Name != "zeta" {
+			t.Fatalf("expected [beta, zeta], got [%s, %s]", got[0].Name, got[1].Name)
+		}
+	})
+
+	t.Run("no master binds endpoint — empty slice not nil", func(t *testing.T) {
+		t.Parallel()
+
+		got := top.MastersForEndpoint("ep-unknown")
+		if got == nil {
+			t.Fatal("expected empty slice, got nil")
+		}
+		if len(got) != 0 {
+			t.Fatalf("expected empty slice, got %d elements: %#v", len(got), got)
+		}
+	})
+
+	t.Run("invalid endpoint name — empty slice not nil", func(t *testing.T) {
+		t.Parallel()
+
+		got := top.MastersForEndpoint("")
+		if got == nil {
+			t.Fatal("expected empty slice, got nil")
+		}
+		if len(got) != 0 {
+			t.Fatalf("expected empty slice, got %d elements: %#v", len(got), got)
+		}
+	})
+
+	t.Run("topology with no masters — empty slice not nil", func(t *testing.T) {
+		t.Parallel()
+
+		emptyTop := &Topology{}
+		got := emptyTop.MastersForEndpoint("ep-a")
+		if got == nil {
+			t.Fatal("expected empty slice, got nil")
+		}
+		if len(got) != 0 {
+			t.Fatalf("expected empty slice, got %d elements: %#v", len(got), got)
+		}
+	})
+
+	t.Run("result is a copy — mutations do not affect topology", func(t *testing.T) {
+		t.Parallel()
+
+		got := top.MastersForEndpoint("ep-a")
+		if len(got) == 0 {
+			t.Fatal("expected non-empty result")
+		}
+		got[0].Name = "mutated"
+		// Verify the topology is unchanged.
+		got2 := top.MastersForEndpoint("ep-a")
+		for _, m := range got2 {
+			if m.Name == "mutated" {
+				t.Fatal("MastersForEndpoint result shares memory with topology — must return a copy")
+			}
+		}
+	})
+}
+
 // TestImageDefaultsUnmarshal verifies that the optional defaults.image fields
 // round-trip through YAML correctly and that existing topology files without
 // the field still parse with a zero-value ImageDefaults.

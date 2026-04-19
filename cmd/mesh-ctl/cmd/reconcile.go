@@ -338,13 +338,8 @@ func reconcileEndpointNode(
 ) reconcileNodeResult {
 	result := reconcileNodeResult{name: ep.Name, role: "endpoint"}
 
-	// Find all masters bound to this endpoint.
-	var boundMasters []topology.MasterNode
-	for _, m := range topo.Masters {
-		if containsName(m.Endpoints, ep.Name) {
-			boundMasters = append(boundMasters, m)
-		}
-	}
+	// Find all masters bound to this endpoint in deterministic order.
+	boundMasters := topo.MastersForEndpoint(ep.Name)
 
 	if len(boundMasters) == 0 {
 		return result
@@ -421,6 +416,7 @@ func reconcileEndpointNode(
 			TransportSubnet:     transportSubnet,
 			LocalTransportIp:    localTransportIP,
 			PeerTransportIp:     peerTransportIP,
+			PeerName:            m.Name,
 		})
 		cancel()
 

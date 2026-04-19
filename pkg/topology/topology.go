@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -222,6 +223,30 @@ func (t *Topology) FindClient(name string) *ClientNode {
 		}
 	}
 	return nil
+}
+
+// MastersForEndpoint returns MasterNode entries whose Endpoints list contains
+// endpointName, sorted by Name for deterministic iface creation order.
+// The sort order defines the listen-port offset (index 0 = ListenPort + 0, etc.).
+// Returns an empty (non-nil) slice when no master binds the endpoint.
+func (t *Topology) MastersForEndpoint(endpointName string) []MasterNode {
+	result := make([]MasterNode, 0)
+	for _, master := range t.Masters {
+		for _, ep := range master.Endpoints {
+			if ep == endpointName {
+				// Return a detached copy so callers cannot mutate topology state
+				// via result[i].Endpoints (shallow struct copy would alias the slice).
+				mCopy := master
+				mCopy.Endpoints = append([]string(nil), master.Endpoints...)
+				result = append(result, mCopy)
+				break
+			}
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+	return result
 }
 
 // SaveTopology marshals t to YAML and writes it to path atomically.

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -258,5 +259,199 @@ func TestPrintInspectReportWithDrift(t *testing.T) {
 	hasDrift := printInspectReport("master-1", state, rows)
 	if !hasDrift {
 		t.Error("expected hasDrift=true for row with key_mismatch, got false")
+	}
+}
+
+// TestBuildAdminViewEndpointIface verifies that buildAdminView sets ifaceName correctly
+// for endpoint nodes: "wg-" + masterName (truncated to 15 chars total per IFNAMSIZ).
+//
+// Anti-stub: replacing ifaceName assignment with "" makes all wantIface checks fail.
+func TestBuildAdminViewEndpointIface(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{
+			{Name: "master-a", Host: "10.0.0.1", OverlayIP: "10.1.0.1", ListenPort: 51820, Endpoints: []string{"ep-1"}},
+			{Name: "master-b", Host: "10.0.0.2", OverlayIP: "10.1.0.2", ListenPort: 51821, Endpoints: []string{"ep-1"}},
+		},
+		Endpoints: []topology.EndpointNode{
+			{Name: "ep-1", Host: "10.0.0.10", OverlayIP: "10.1.0.10", ListenPort: 51830},
+		},
+	}
+
+	cfgDir := t.TempDir() // no pubkey files needed — testing ifaceName only
+
+	ep1 := &topo.Endpoints[0]
+	peers := buildAdminView(topo, "ep-1", cfgDir, nil, ep1)
+
+	if len(peers) != 2 {
+		t.Fatalf("want 2 peers for ep-1 bound to 2 masters, got %d", len(peers))
+	}
+
+	wantIfaces := map[string]string{
+		"master-a": "wg-master-a",
+		"master-b": "wg-master-b",
+	}
+	for _, p := range peers {
+		want, ok := wantIfaces[p.name]
+		if !ok {
+			t.Errorf("unexpected peer name %q", p.name)
+			continue
+		}
+		if p.ifaceName != want {
+			t.Errorf("peer %q: ifaceName = %q, want %q", p.name, p.ifaceName, want)
+		}
+	}
+}
+
+// TestBuildAdminViewMasterIface verifies that buildAdminView sets ifaceName correctly
+// for master nodes: "wg-" + endpointName (no truncation on the master side).
+//
+// Anti-stub: replacing ifaceName assignment with "" makes all wantIface checks fail.
+func TestBuildAdminViewMasterIface(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{
+			{Name: "master-1", Host: "10.0.0.1", OverlayIP: "10.1.0.1", ListenPort: 51820, Endpoints: []string{"ep-a", "ep-b"}},
+		},
+		Endpoints: []topology.EndpointNode{
+			{Name: "ep-a", Host: "10.0.0.2", OverlayIP: "10.1.0.2", ListenPort: 51820},
+			{Name: "ep-b", Host: "10.0.0.3", OverlayIP: "10.1.0.3", ListenPort: 51821},
+		},
+	}
+
+	cfgDir := t.TempDir() // no pubkey files needed — testing ifaceName only
+
+	master := &topo.Masters[0]
+	peers := buildAdminView(topo, "master-1", cfgDir, master, nil)
+
+	if len(peers) != 2 {
+		t.Fatalf("want 2 peers for master with 2 endpoints, got %d", len(peers))
+	}
+
+	wantIfaces := map[string]string{
+		"ep-a": "wg-ep-a",
+		"ep-b": "wg-ep-b",
+	}
+	for _, p := range peers {
+		want, ok := wantIfaces[p.name]
+		if !ok {
+			t.Errorf("unexpected peer name %q", p.name)
+			continue
+		}
+		if p.ifaceName != want {
+			t.Errorf("peer %q: ifaceName = %q, want %q", p.name, p.ifaceName, want)
+		}
+	}
+}
+
+func TestReadAdminPubkey(t *testing.T) {
+	t.Parallel()
+
+	cfgDir := t.TempDir()
+
+	t.Run("raw 32-byte key is hex-encoded", func(t *testing.T) {
+		raw := make([]byte, 32)
+		for i := range raw {
+			raw[i] = byte(i + 1)
+		}
+		rawNode := "ep-raw"
+		rawDir := nodeDir(cfgDir, rawNode)
+		if err := os.MkdirAll(rawDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(rawDir, "pubkey"), raw, 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		got := readAdminPubkey(cfgDir, rawNode)
+		want := hex.EncodeToString(raw)
+		if got != want {
+			t.Fatalf("readAdminPubkey(raw) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("hex string with newline is parsed", func(t *testing.T) {
+		want := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		hexNode := "ep-hex"
+		hexDir := nodeDir(cfgDir, hexNode)
+		if err := os.MkdirAll(hexDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(hexDir, "pubkey"), []byte(want+"\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		got := readAdminPubkey(cfgDir, hexNode)
+		if got != strings.ToLower(want) {
+			t.Fatalf("readAdminPubkey(hex+newline) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("invalid pubkey content returns empty", func(t *testing.T) {
+		invalidNode := "ep-invalid"
+		invalidDir := nodeDir(cfgDir, invalidNode)
+		if err := os.MkdirAll(invalidDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(invalidDir, "pubkey"), []byte("not-a-pubkey"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if got := readAdminPubkey(cfgDir, invalidNode); got != "" {
+			t.Fatalf("readAdminPubkey(invalid) = %q, want empty string", got)
+		}
+	})
+
+	t.Run("missing key file returns empty", func(t *testing.T) {
+		t.Parallel()
+
+		if got := readAdminPubkey(cfgDir, "missing-node"); got != "" {
+			t.Fatalf("readAdminPubkey(missing) = %q, want empty string", got)
+		}
+	})
+}
+
+// TestPrintInspectReportHasIfaceColumn verifies that printInspectReport output
+// includes an "IFACE" column header between "PEER" and "ADMIN_KEY".
+//
+// Anti-stub: removing the IFACE header from printInspectReport makes this fail.
+func TestPrintInspectReportHasIfaceColumn(t *testing.T) {
+	// Do NOT t.Parallel() here: this test swaps os.Stdout which is a process-wide
+	// resource. Running in parallel with other tests that also mutate os.Stdout
+	// (or that call fmt.Println during printInspectReport) triggers -race warnings.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+
+	state := &proto.TransportStateResponse{
+		NodeName:  "ep-1",
+		Mode:      "endpoint",
+		OverlayIp: "10.1.0.10/32",
+	}
+	rows := []driftRow{
+		{peerName: "master-a", ifaceName: "wg-master-a",
+			adminKey: "aabb", diskKey: "aabb", runtimeKey: "aabb",
+			adminIPs: "10.1.0.1/32", diskIPs: "10.1.0.1/32", runtimeIPs: "10.1.0.1/32"},
+	}
+
+	printInspectReport("ep-1", state, rows)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	output := string(buf[:n])
+
+	if !strings.Contains(output, "IFACE") {
+		t.Errorf("expected output to contain IFACE header, got:\n%s", output)
+	}
+	if !strings.Contains(output, "wg-master-a") {
+		t.Errorf("expected output to contain iface name 'wg-master-a', got:\n%s", output)
 	}
 }

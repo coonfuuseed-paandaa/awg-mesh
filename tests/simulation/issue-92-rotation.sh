@@ -15,6 +15,12 @@
 #   R4  Post-rotation health: both masters still gRPC-reachable, tunnel
 #       interface `wg-<endpoint>` still up on every master.
 #   R5  Control plane still intact: a second `mesh-ctl endpoint init` exits 0.
+#   R6  `mesh-ctl reconcile` is idempotent after tier-3 rotation — exits 0.
+#   R7  Per-master WG ifaces exist on endpoint-a; endpoint-a pings endpoint-b
+#       overlay IP via kernel policy routing; legacy wg0 absent; AllowedIPs
+#       minimal (1 peer line per iface). (v1.12.2 — T009)
+#   R8  Kill one master: endpoint-a still reaches endpoint-b via surviving master;
+#       surviving iface still up; mesh heals after master restart. (v1.12.2 — T010)
 #
 # Introspection approach: amneziawg-go runs in userspace and exposes its UAPI
 # via /run/amneziawg/<iface>.sock. The kernel-targeted `wg` CLI cannot access
@@ -66,10 +72,17 @@ MASTER_RU_01="mst-ru-01"
 MASTER_RU_02="mst-ru-02"
 ENDPOINT_US_01="ep-us-01"
 
+# Endpoint pair for R7/R8 (endpoint-a and endpoint-b bound to both masters).
+# Both need per-master ifaces: wg-mst-ru-01 and wg-mst-ru-02 (12 chars each).
+ENDPOINT_ASIA_01="node-asia-01"
+ENDPOINT_ASIA_02="node-asia-02"
+
 # Container names (project prefix + service name).
 CTR_MASTER_RU_01="${COMPOSE_PROJECT}-${MASTER_RU_01}"
 CTR_MASTER_RU_02="${COMPOSE_PROJECT}-${MASTER_RU_02}"
 CTR_ENDPOINT_US_01="${COMPOSE_PROJECT}-${ENDPOINT_US_01}"
+CTR_ENDPOINT_ASIA_01="${COMPOSE_PROJECT}-${ENDPOINT_ASIA_01}"
+CTR_ENDPOINT_ASIA_02="${COMPOSE_PROJECT}-${ENDPOINT_ASIA_02}"
 
 # Master-side WireGuard interface name for the endpoint tunnel. Master mode
 # creates one userspace amneziawg-go interface per endpoint peer, named
@@ -93,10 +106,21 @@ COMPOSE_FILE=$(mktemp /tmp/issue92rot-compose-XXXXXX.yml)
 MASTER_RU_01_OVERLAY="172.21.92.2"
 MASTER_RU_02_OVERLAY="172.21.92.3"
 ENDPOINT_US_01_OVERLAY="172.21.92.34"
+ENDPOINT_ASIA_01_OVERLAY="172.21.92.35"
+ENDPOINT_ASIA_02_OVERLAY="172.21.92.36"
 
 MASTER_RU_01_BRIDGE="192.168.92.10"
 MASTER_RU_02_BRIDGE="192.168.92.11"
 ENDPOINT_US_01_BRIDGE="192.168.92.20"
+ENDPOINT_ASIA_01_BRIDGE="192.168.92.21"
+ENDPOINT_ASIA_02_BRIDGE="192.168.92.22"
+
+# Per-master WireGuard iface names on endpoints (v1.12.2 per-master-iface feature).
+# Convention: "wg-" + master.Name, truncated to 12 chars.
+# mst-ru-01 (9 chars) → wg-mst-ru-01 (12 chars — no truncation needed)
+# mst-ru-02 (9 chars) → wg-mst-ru-02 (12 chars — no truncation needed)
+EP_IFACE_MASTER_RU_01="wg-mst-ru-01"
+EP_IFACE_MASTER_RU_02="wg-mst-ru-02"
 
 # Docker image — override with IMAGE env var if needed.
 NODE_IMAGE="${IMAGE:-awg-mesh-node:local}"
@@ -205,7 +229,7 @@ inspect_node() {
 inspect_runtime_prefix_for() {
     local node="$1"
     local peer="$2"
-    inspect_node "${node}" | awk -v p="${peer}" '$1 == p { print $4 }' | head -1
+    inspect_node "${node}" | awk -v p="${peer}" '$1 == p { print $5 }' | head -1
 }
 
 # inspect_has_no_drift <node> — returns 0 when admin == runtime for every peer.
@@ -297,6 +321,8 @@ masters:
     grpc_port: 19290
     endpoints:
       - ${ENDPOINT_US_01}
+      - ${ENDPOINT_ASIA_01}
+      - ${ENDPOINT_ASIA_02}
 
   - name: ${MASTER_RU_02}
     host: 127.0.0.1
@@ -306,6 +332,8 @@ masters:
     grpc_port: 29290
     endpoints:
       - ${ENDPOINT_US_01}
+      - ${ENDPOINT_ASIA_01}
+      - ${ENDPOINT_ASIA_02}
 
 endpoints:
   - name: ${ENDPOINT_US_01}
@@ -314,6 +342,20 @@ endpoints:
     overlay_ip: ${ENDPOINT_US_01_OVERLAY}
     listen_port: 51820
     grpc_port: 39290
+
+  - name: ${ENDPOINT_ASIA_01}
+    host: 127.0.0.1
+    peer_host: ${ENDPOINT_ASIA_01_BRIDGE}
+    overlay_ip: ${ENDPOINT_ASIA_01_OVERLAY}
+    listen_port: 51820
+    grpc_port: 49290
+
+  - name: ${ENDPOINT_ASIA_02}
+    host: 127.0.0.1
+    peer_host: ${ENDPOINT_ASIA_02_BRIDGE}
+    overlay_ip: ${ENDPOINT_ASIA_02_OVERLAY}
+    listen_port: 51820
+    grpc_port: 59290
 
 transport:
   pool: 10.92.0.0/16
@@ -350,10 +392,26 @@ ${MESHCTL_BIN} \
     echo "ERROR: mesh-ctl endpoint prepare ${ENDPOINT_US_01} failed (see stderr above)" >&2
     exit 3
 }
+${MESHCTL_BIN} \
+    --topology "${TOPO_FILE}" \
+    --config-dir "${CTL_CONFIG_DIR}" \
+    endpoint prepare "${ENDPOINT_ASIA_01}" > /dev/null || {
+    echo "ERROR: mesh-ctl endpoint prepare ${ENDPOINT_ASIA_01} failed (see stderr above)" >&2
+    exit 3
+}
+${MESHCTL_BIN} \
+    --topology "${TOPO_FILE}" \
+    --config-dir "${CTL_CONFIG_DIR}" \
+    endpoint prepare "${ENDPOINT_ASIA_02}" > /dev/null || {
+    echo "ERROR: mesh-ctl endpoint prepare ${ENDPOINT_ASIA_02} failed (see stderr above)" >&2
+    exit 3
+}
 
 TOKEN_MASTER_RU_01=$(cat "${CTL_CONFIG_DIR}/nodes/${MASTER_RU_01}/mesh.token")
 TOKEN_MASTER_RU_02=$(cat "${CTL_CONFIG_DIR}/nodes/${MASTER_RU_02}/mesh.token")
 TOKEN_ENDPOINT_US_01=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_US_01}/mesh.token")
+TOKEN_ENDPOINT_ASIA_01=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_ASIA_01}/mesh.token")
+TOKEN_ENDPOINT_ASIA_02=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_ASIA_02}/mesh.token")
 
 # Escape $ -> $$ for docker-compose variable interpolation. bcrypt hashes
 # contain multiple $ characters ($2a$12$...) which compose would otherwise
@@ -361,7 +419,9 @@ TOKEN_ENDPOINT_US_01=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_US_01}/mesh.token
 TOKEN_MASTER_RU_01_ESC="${TOKEN_MASTER_RU_01//\$/\$\$}"
 TOKEN_MASTER_RU_02_ESC="${TOKEN_MASTER_RU_02//\$/\$\$}"
 TOKEN_ENDPOINT_US_01_ESC="${TOKEN_ENDPOINT_US_01//\$/\$\$}"
-info "Tokens resolved: ${MASTER_RU_01}/${MASTER_RU_02} + ${ENDPOINT_US_01}"
+TOKEN_ENDPOINT_ASIA_01_ESC="${TOKEN_ENDPOINT_ASIA_01//\$/\$\$}"
+TOKEN_ENDPOINT_ASIA_02_ESC="${TOKEN_ENDPOINT_ASIA_02//\$/\$\$}"
+info "Tokens resolved: ${MASTER_RU_01}/${MASTER_RU_02} + ${ENDPOINT_US_01} + ${ENDPOINT_ASIA_01} + ${ENDPOINT_ASIA_02}"
 
 # ---------------------------------------------------------------------------
 # Generate ephemeral compose file with pre-seeded MESH_TOKEN_HASH per node.
@@ -446,6 +506,59 @@ services:
           --overlay-ip ${ENDPOINT_US_01_OVERLAY} \\
           --listen-port 51820
 
+  ${ENDPOINT_ASIA_01}:
+    image: ${NODE_IMAGE}
+    container_name: ${CTR_ENDPOINT_ASIA_01}
+    hostname: ${ENDPOINT_ASIA_01}
+    restart: "no"
+    privileged: true
+    environment:
+      MESH_TOKEN_HASH: "${TOKEN_ENDPOINT_ASIA_01_ESC}"
+    networks:
+      issue92:
+        ipv4_address: ${ENDPOINT_ASIA_01_BRIDGE}
+    ports:
+      - "49290:9090"
+      # Multi-master endpoint needs a port range in production (one listen port per
+      # master iface). In sim all containers share the same Docker bridge network —
+      # WG traffic flows container-to-container via the bridge, so host port exposure
+      # is unnecessary and actively conflicts with other containers on the host.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        [ -f /config/mesh.token ] || printf '%s' "\$\$MESH_TOKEN_HASH" > /config/mesh.token
+        exec /usr/local/bin/awg-mesh-node \\
+          --mode endpoint \\
+          --name ${ENDPOINT_ASIA_01} \\
+          --overlay-ip ${ENDPOINT_ASIA_01_OVERLAY} \\
+          --listen-port 51820
+
+  ${ENDPOINT_ASIA_02}:
+    image: ${NODE_IMAGE}
+    container_name: ${CTR_ENDPOINT_ASIA_02}
+    hostname: ${ENDPOINT_ASIA_02}
+    restart: "no"
+    privileged: true
+    environment:
+      MESH_TOKEN_HASH: "${TOKEN_ENDPOINT_ASIA_02_ESC}"
+    networks:
+      issue92:
+        ipv4_address: ${ENDPOINT_ASIA_02_BRIDGE}
+    ports:
+      - "59290:9090"
+      # See node-asia-01 above — host UDP exposure not needed in sim (bridge network).
+    entrypoint:
+      - sh
+      - -c
+      - |
+        [ -f /config/mesh.token ] || printf '%s' "\$\$MESH_TOKEN_HASH" > /config/mesh.token
+        exec /usr/local/bin/awg-mesh-node \\
+          --mode endpoint \\
+          --name ${ENDPOINT_ASIA_02} \\
+          --overlay-ip ${ENDPOINT_ASIA_02_OVERLAY} \\
+          --listen-port 51820
+
 networks:
   issue92:
     driver: bridge
@@ -458,7 +571,7 @@ EOF
 # R1: Boot the mesh
 # ---------------------------------------------------------------------------
 echo ""
-echo "[R1] Booting 2-master + 1-endpoint mesh..."
+echo "[R1] Booting 2-master + 3-endpoint mesh (ep-us-01 + node-asia-01 + node-asia-02)..."
 
 compose_run up -d
 
@@ -523,6 +636,31 @@ if [[ "${INIT_EP_RC}" -ne 0 ]]; then
 fi
 info "Initial endpoint init output:"
 echo "${INIT_EP}" | sed 's/^/    /'
+
+info "Initialising R7/R8 endpoints (node-asia-01 + node-asia-02)..."
+INIT_A01=$(${MESHCTL_BIN} \
+    --topology "${TOPO_FILE}" \
+    --config-dir "${CTL_CONFIG_DIR}" \
+    endpoint init "${ENDPOINT_ASIA_01}" 2>&1) && INIT_A01_RC=0 || INIT_A01_RC=$?
+if [[ "${INIT_A01_RC}" -ne 0 ]]; then
+    fail "endpoint init ${ENDPOINT_ASIA_01} failed (rc=${INIT_A01_RC}): ${INIT_A01}"
+    echo "[abort] R7/R8 endpoint-a init failed."
+    exit "${FAILURES}"
+fi
+info "${ENDPOINT_ASIA_01} init output:"
+echo "${INIT_A01}" | sed 's/^/    /'
+
+INIT_A02=$(${MESHCTL_BIN} \
+    --topology "${TOPO_FILE}" \
+    --config-dir "${CTL_CONFIG_DIR}" \
+    endpoint init "${ENDPOINT_ASIA_02}" 2>&1) && INIT_A02_RC=0 || INIT_A02_RC=$?
+if [[ "${INIT_A02_RC}" -ne 0 ]]; then
+    fail "endpoint init ${ENDPOINT_ASIA_02} failed (rc=${INIT_A02_RC}): ${INIT_A02}"
+    echo "[abort] R7/R8 endpoint-b init failed."
+    exit "${FAILURES}"
+fi
+info "${ENDPOINT_ASIA_02} init output:"
+echo "${INIT_A02}" | sed 's/^/    /'
 
 sleep 2
 
@@ -686,9 +824,9 @@ meshctl inspect "${ENDPOINT_US_01}" > /tmp/inspect-drift.txt 2>&1 || true
 if grep -qE "^(mst-ru-01|mst-ru-02)[[:space:]]+" /tmp/inspect-drift.txt; then
     for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
         row=$(grep -E "^${m}[[:space:]]+" /tmp/inspect-drift.txt | head -1)
-        adm=$(echo "${row}" | awk '{print $2}')
-        nod=$(echo "${row}" | awk '{print $3}')
-        run=$(echo "${row}" | awk '{print $4}')
+        adm=$(echo "${row}" | awk '{print $3}')
+        nod=$(echo "${row}" | awk '{print $4}')
+        run=$(echo "${row}" | awk '{print $5}')
         # STATUS column spans from column 8 to end of row.
         status=$(echo "${row}" | awk '{for(i=8;i<=NF;i++) printf "%s ",$i}')
         if [[ "${adm}" == "${nod}" && "${nod}" == "${run}" ]]; then
@@ -759,8 +897,8 @@ for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
         sed 's/^/    /' "/tmp/inspect-master-${m}.txt"
         continue
     fi
-    disk_ips=$(echo "${row}" | awk '{print $6}')
-    runtime_ips=$(echo "${row}" | awk '{print $7}')
+    disk_ips=$(echo "${row}" | awk '{print $7}')
+    runtime_ips=$(echo "${row}" | awk '{print $8}')
     if [[ -z "${disk_ips}" || "${disk_ips}" == "-" ]]; then
         fail "R3i: ${m} DISK_IPS for ${ENDPOINT_US_01} empty — transport.yml missing allowed_ips (engram #132)"
     else
@@ -842,6 +980,161 @@ if [[ "${RECON_RC}" -eq 0 ]]; then
     pass "R6: mesh-ctl reconcile exited 0 after tier-3 rotation — idempotent happy path"
 else
     fail "R6: mesh-ctl reconcile exited ${RECON_RC} — cluster drift detected post-rotation"
+fi
+
+# ---------------------------------------------------------------------------
+# R7: Per-master WG ifaces on endpoints + endpoint-to-endpoint overlay ping.
+#     (v1.12.2 gate — T009: endpoint-per-master-iface feature)
+#
+#  R7.1  endpoint-a (node-asia-01) has exactly 2 per-master WG ifaces
+#         (wg-mst-ru-01 + wg-mst-ru-02) — one per bound master.
+#  R7.2  endpoint-a can ping endpoint-b (node-asia-02) overlay IP via
+#         kernel policy routing through one of the master tunnels.
+#  R7.3  Legacy wg0 does NOT exist on endpoint-a (migration complete).
+#  R7.4  Each per-master iface on endpoint-a has exactly 1 peer line in
+#         `ip link` / inspect output (minimal AllowedIPs: 1 peer per iface).
+#         NOTE: amneziawg-go userspace driver rejects kernel `wg show`, so
+#         we count peer rows via `mesh-ctl inspect` instead.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R7] Endpoint-to-endpoint overlay connectivity via per-master ifaces..."
+
+# Allow endpoint containers to finish tunnel bring-up after init.
+sleep 5
+
+# R7.1: Count per-master WG ifaces on endpoint-a. The endpoint-per-master-iface
+# feature (T003) creates one amneziawg-go interface per bound master, named
+# wg-<master-name> (truncated to 12 chars). Both mst-ru-01 and mst-ru-02 are
+# bound to node-asia-01, so we expect exactly 2 matching iface names.
+R7_1_COUNT=$(docker exec "${CTR_ENDPOINT_ASIA_01}" \
+    ip link show 2>/dev/null \
+    | grep -cE "wg-mst-ru-0[12]" || true)
+if [[ "${R7_1_COUNT}" -eq 2 ]]; then
+    pass "R7.1: ${ENDPOINT_ASIA_01} has 2 per-master WG ifaces (wg-mst-ru-01 + wg-mst-ru-02)"
+else
+    fail "R7.1: ${ENDPOINT_ASIA_01} has ${R7_1_COUNT} per-master iface(s), expected 2"
+    docker exec "${CTR_ENDPOINT_ASIA_01}" ip link show 2>&1 | sed 's/^/    /' || true
+fi
+
+# R7.2: Endpoint-a pings endpoint-b overlay IP via kernel policy routing.
+# The route goes through one of the per-master tunnels (wg-mst-ru-01 or
+# wg-mst-ru-02) — kernel selects based on policy routing table.
+PING_R72_RC=0
+docker exec "${CTR_ENDPOINT_ASIA_01}" \
+    ping -c 5 -W 2 "${ENDPOINT_ASIA_02_OVERLAY}" > /dev/null 2>&1 \
+    || PING_R72_RC=$?
+if [[ "${PING_R72_RC}" -eq 0 ]]; then
+    pass "R7.2: ${ENDPOINT_ASIA_01} can reach ${ENDPOINT_ASIA_02} overlay IP (${ENDPOINT_ASIA_02_OVERLAY})"
+else
+    fail "R7.2: ${ENDPOINT_ASIA_01} cannot reach ${ENDPOINT_ASIA_02} overlay IP (${ENDPOINT_ASIA_02_OVERLAY}) — policy routing not working"
+    docker exec "${CTR_ENDPOINT_ASIA_01}" ip route show 2>&1 | sed 's/^/    /' || true
+    docker exec "${CTR_ENDPOINT_ASIA_01}" ip rule show 2>&1 | sed 's/^/    /' || true
+fi
+
+# R7.3: Legacy wg0 must NOT exist on endpoint-a. The per-master-iface feature
+# replaces the single wg0 with per-master named interfaces.
+# NOTE: stderr is suppressed (2>/dev/null) so that the "Device does not exist"
+# error message (which contains "wg0") does not produce a false-positive count.
+WG0_COUNT=$(docker exec "${CTR_ENDPOINT_ASIA_01}" \
+    ip link show wg0 2>/dev/null | grep -c "wg0" || true)
+if [[ "${WG0_COUNT}" -eq 0 ]]; then
+    pass "R7.3: legacy wg0 does not exist on ${ENDPOINT_ASIA_01} — migration complete"
+else
+    fail "R7.3: wg0 still present on ${ENDPOINT_ASIA_01} — old single-iface mode active"
+fi
+
+# R7.4: Each per-master iface should have exactly 1 peer. We verify via
+# mesh-ctl inspect on endpoint-a: each master row must appear exactly once.
+# (amneziawg-go userspace: kernel `wg show` is not available — use gRPC path)
+INSPECT_A01=$(meshctl inspect "${ENDPOINT_ASIA_01}" 2>&1 || true)
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    peer_rows=$(echo "${INSPECT_A01}" | grep -cE "^${m}[[:space:]]+" || true)
+    if [[ "${peer_rows}" -eq 1 ]]; then
+        pass "R7.4: ${ENDPOINT_ASIA_01} iface for ${m} has exactly 1 peer row in inspect"
+    else
+        fail "R7.4: ${ENDPOINT_ASIA_01} inspect shows ${peer_rows} row(s) for ${m}, expected 1"
+        echo "${INSPECT_A01}" | sed 's/^/    /'
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R8: Kill-master failover — endpoint-to-endpoint routing survives.
+#     (v1.12.2 gate — T010: kill-master does not break endpoint↔endpoint)
+#
+#  R8.1  Baseline: endpoint-a still reaches endpoint-b (pre-kill sanity).
+#  R8.2  docker stop master-02 (kill one of the two masters).
+#  R8.3  After kill: endpoint-a still reaches endpoint-b via surviving master-01.
+#  R8.4  wg-mst-ru-01 iface is still up on endpoint-a after master-02 killed.
+#  R8.5  docker start master-02; mesh heals.
+#  R8.6  endpoint-a reaches endpoint-b after master-02 restart.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R8] Kill-master failover: endpoint-to-endpoint routing survives master loss..."
+
+# R8.1: Baseline ping before kill.
+PING_R81_RC=0
+docker exec "${CTR_ENDPOINT_ASIA_01}" \
+    ping -c 3 -W 2 "${ENDPOINT_ASIA_02_OVERLAY}" > /dev/null 2>&1 \
+    || PING_R81_RC=$?
+if [[ "${PING_R81_RC}" -eq 0 ]]; then
+    pass "R8.1: baseline — ${ENDPOINT_ASIA_01} reaches ${ENDPOINT_ASIA_02} before master kill"
+else
+    fail "R8.1: baseline ping failed before kill — R7.2 precondition not met"
+fi
+
+# R8.2: Kill master-02. WireGuard on endpoint-a keeps wg-mst-ru-01 up; the
+# surviving master-01 tunnel continues to route endpoint-a ↔ endpoint-b.
+info "R8.2: stopping ${CTR_MASTER_RU_02} to simulate master failure..."
+docker stop "${CTR_MASTER_RU_02}" > /dev/null 2>&1 || true
+info "R8.2: waiting 5s for health checks to detect master failure..."
+sleep 5
+
+# R8.3: Endpoint-a must still reach endpoint-b via surviving master-01.
+PING_R83_RC=0
+docker exec "${CTR_ENDPOINT_ASIA_01}" \
+    ping -c 5 -W 3 "${ENDPOINT_ASIA_02_OVERLAY}" > /dev/null 2>&1 \
+    || PING_R83_RC=$?
+if [[ "${PING_R83_RC}" -eq 0 ]]; then
+    pass "R8.3: ${ENDPOINT_ASIA_01} reaches ${ENDPOINT_ASIA_02} after ${MASTER_RU_02} killed (via ${MASTER_RU_01})"
+else
+    fail "R8.3: ${ENDPOINT_ASIA_01} cannot reach ${ENDPOINT_ASIA_02} after ${MASTER_RU_02} killed — failover broken"
+    docker exec "${CTR_ENDPOINT_ASIA_01}" ip route show 2>&1 | sed 's/^/    /' || true
+    docker exec "${CTR_ENDPOINT_ASIA_01}" ip rule show 2>&1 | sed 's/^/    /' || true
+fi
+
+# R8.4: Surviving iface wg-mst-ru-01 must still be UP on endpoint-a.
+if iface_is_up "${CTR_ENDPOINT_ASIA_01}" "${EP_IFACE_MASTER_RU_01}"; then
+    pass "R8.4: ${EP_IFACE_MASTER_RU_01} still operational on ${ENDPOINT_ASIA_01} after ${MASTER_RU_02} killed"
+else
+    fail "R8.4: ${EP_IFACE_MASTER_RU_01} is DOWN on ${ENDPOINT_ASIA_01} — surviving iface lost"
+    docker exec "${CTR_ENDPOINT_ASIA_01}" ip link show "${EP_IFACE_MASTER_RU_01}" 2>&1 | sed 's/^/    /' || true
+fi
+
+# R8.4b: The killed master's iface (wg-mst-ru-02) should still exist on endpoint-a
+# (per-master-iface design: iface persists even when master is down — kernel handles failover).
+if iface_is_up "${CTR_ENDPOINT_ASIA_01}" "${EP_IFACE_MASTER_RU_02}"; then
+    pass "R8.4b: ${EP_IFACE_MASTER_RU_02} still exists on ${ENDPOINT_ASIA_01} (idle, master down)"
+else
+    info "R8.4b: ${EP_IFACE_MASTER_RU_02} DOWN on ${ENDPOINT_ASIA_01} after ${MASTER_RU_02} killed (expected if WG drops iface)"
+fi
+
+# R8.5: Restore master-02. WireGuard on endpoint-a auto-reconnects wg-mst-ru-02
+# when the master comes back; no container restart needed on endpoint side.
+info "R8.5: restarting ${CTR_MASTER_RU_02} to restore mesh..."
+docker start "${CTR_MASTER_RU_02}" > /dev/null 2>&1 || true
+info "R8.5: waiting 10s for master-02 to rejoin and handshake to re-establish..."
+sleep 10
+
+# R8.6: After master-02 restart, endpoint-a must reach endpoint-b again.
+PING_R86_RC=0
+docker exec "${CTR_ENDPOINT_ASIA_01}" \
+    ping -c 3 -W 2 "${ENDPOINT_ASIA_02_OVERLAY}" > /dev/null 2>&1 \
+    || PING_R86_RC=$?
+if [[ "${PING_R86_RC}" -eq 0 ]]; then
+    pass "R8.6: ${ENDPOINT_ASIA_01} reaches ${ENDPOINT_ASIA_02} after ${MASTER_RU_02} restarted — mesh healed"
+else
+    fail "R8.6: ${ENDPOINT_ASIA_01} cannot reach ${ENDPOINT_ASIA_02} after ${MASTER_RU_02} restart — mesh did not heal"
+    docker logs "${CTR_MASTER_RU_02}" 2>&1 | tail -20 | sed 's/^/    /' || true
 fi
 
 # ---------------------------------------------------------------------------

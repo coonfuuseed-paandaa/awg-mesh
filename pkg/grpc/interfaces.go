@@ -29,7 +29,10 @@ type ParamApplier interface {
 // PeerManager handles peer operations for endpoint mode.
 type PeerManager interface {
 	ListPeers() []PeerInfo
-	AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error
+	// AddPeer adds a peer to the endpoint. peerName carries the master name (on endpoint side)
+	// or endpoint name (on master side) and is used for per-iface routing (v1.12.2+).
+	// Empty peerName falls back to the first available interface for backwards compatibility.
+	AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32, peerName string) error
 	RemovePeer(publicKey []byte) error
 }
 
@@ -42,10 +45,15 @@ type PeerManager interface {
 //   - In client mode (ClientRunner): allowedIPs is ignored - overlay routing
 //     is handled separately via ECMP in rebuildClientECMP.
 //
+// peerName carries the master name (on endpoint side) used to route the
+// transport IP assignment and overlay routes to the correct per-master
+// WireGuard interface (v1.12.2+). Empty peerName falls back to the legacy
+// single-interface behaviour.
+//
 // Implementations MUST be safe to call concurrently with each other but
 // SHOULD serialize multiple calls to the same tunnel via internal locking.
 type TransportConfigurator interface {
-	ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error
+	ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error
 }
 
 // BalancerIPSetter is an optional extension for setting balancer IP on a peer

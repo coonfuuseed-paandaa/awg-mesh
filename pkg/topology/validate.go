@@ -88,6 +88,19 @@ func ValidateTopology(t *Topology) []ValidationError {
 	validateUniqueNames(t.Endpoints, "endpoints", addError, func(e EndpointNode) string { return e.Name })
 	validateUniqueNames(t.Clients, "clients", addError, func(c ClientNode) string { return c.Name })
 
+	// Warn when a master name exceeds 12 characters: Linux iface names are limited to 15
+	// characters total, and the "wg-" prefix leaves only 12 characters for the master name.
+	const maxMasterNameLen = 12
+	for i, master := range t.Masters {
+		if len(master.Name) > maxMasterNameLen {
+			addError(
+				fmt.Sprintf("masters[%d].name", i),
+				fmt.Sprintf("master name %q has %d characters; names longer than %d may be truncated in WireGuard interface names (Linux limit: 15, prefix \"wg-\" uses 3)", master.Name, len(master.Name), maxMasterNameLen),
+				"warning",
+			)
+		}
+	}
+
 	validateUniqueOverlayIPs(t, addError)
 	validateReferences(t, addError)
 	validateClientDSCPPolicies(t, addError)

@@ -180,7 +180,7 @@ func (m *testPeerManager) ListPeers() []PeerInfo {
 	return result
 }
 
-func (m *testPeerManager) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
+func (m *testPeerManager) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32, peerName string) error {
 	m.addCalls = append(m.addCalls, addPeerCall{
 		publicKey:           append([]byte(nil), publicKey...),
 		presharedKey:        append([]byte(nil), presharedKey...),
@@ -196,7 +196,7 @@ func (m *testPeerManager) RemovePeer(publicKey []byte) error {
 	return m.removeErr
 }
 
-func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error {
+func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error {
 	m.configureCalls = append(m.configureCalls, configureTransportCall{
 		pubkeyHex:  pubkeyHex,
 		localIP:    localIP,
