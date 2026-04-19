@@ -249,7 +249,6 @@ func newEndpointInitCommand() *cobra.Command {
 				masterAddr  string
 				masterKey   []byte
 				allowedIPs  []string
-				extraRoutes []string
 				subnet      string
 				epTransIP   string
 				masterIP    string
@@ -322,13 +321,18 @@ func newEndpointInitCommand() *cobra.Command {
 					// the AddTunnel path (tunnel was created, not updated).
 					var updateResp *proto.UpdateTunnelPeerResponse
 
-					// FR-1: build the minimal allowed_ips for the endpoint-side peer
-					// (per-master-iface model, Pattern X): [transport_subnet, master_overlay/32].
+					// v1.12.2 Pattern X (per-master iface): each endpoint-side iface has
+					// exactly ONE peer, so AllowedIPs on this peer can safely include the
+					// overlay /32 of other endpoints reachable via this master — there's
+					// no dedup risk with a single peer. AllowedIPs = [transport_subnet,
+					// master_overlay/32, other_endpoint_overlay/32 ...]. The /32 entries
+					// also install kernel routes on the endpoint side via ConfigureTransport.
 					allowedIPs, aipErr := topology.BuildMinimalAllowedIPsForEndpointPeer(master.OverlayIP, allocation.Subnet.String())
 					if aipErr != nil {
 						fmt.Fprintf(os.Stderr, "warning: build allowed_ips for master %q / endpoint %q: %v\n", master.Name, ep.Name, aipErr)
 						allowedIPs = []string{allocation.Subnet.String(), master.OverlayIP + "/32"}
 					}
+					allowedIPs = append(allowedIPs, computeExtraOverlayRoutes(topo, ep.Name, master.Name)...)
 					fmt.Printf("endpoint init: AddPeer to endpoint %q (master %q) with allowed_ips=%v\n", ep.Name, master.Name, allowedIPs)
 
 					if addErr != nil {
@@ -423,18 +427,17 @@ func newEndpointInitCommand() *cobra.Command {
 						if len(masterPubKey) > 0 {
 							// v1.12.2: compute extra kernel routes for other endpoints
 							// reachable via this master (first master alphabetically that
-							// binds both self and the peer endpoint). These are installed
-							// as kernel `ip route <peer>/32 dev wg-<master>` on self side
-							// to enable endpoint↔endpoint traffic without bloating WG
-							// AllowedIPs (which must stay minimal per #134).
-							extraRoutes := computeExtraOverlayRoutes(topo, ep.Name, master.Name)
+							// v1.12.2: allowedIPs already includes other-endpoint /32s
+							// appended via computeExtraOverlayRoutes at AllowedIPs build time.
+							// The endpoint's ConfigureTransport handler installs kernel routes
+							// for each allowedIPs entry; single-peer per-master iface makes
+							// WG AllowedIPs dedup a non-issue.
 							pendingAddPeers = append(pendingAddPeers, addPeerWork{
 								masterName:  master.Name,
 								masterToken: masterToken,
 								masterAddr:  master.PeerAddr(),
 								masterKey:   masterPubKey,
 								allowedIPs:  allowedIPs,
-								extraRoutes: extraRoutes,
 								subnet:      allocation.Subnet.String(),
 								epTransIP:   allocation.EndpointIP.String(),
 								masterIP:    allocation.MasterIP.String(),
@@ -473,7 +476,6 @@ func newEndpointInitCommand() *cobra.Command {
 					LocalTransportIp:    work.epTransIP,
 					PeerTransportIp:     work.masterIP,
 					PeerName:            work.masterName,
-					ExtraRoutes:         work.extraRoutes,
 				})
 				peerCancel()
 				if peerErr != nil {
