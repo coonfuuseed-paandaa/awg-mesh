@@ -931,9 +931,9 @@ mesh-ctl status --node master-01 -t mesh-topology.yml
 **Rotate AWG parameters:**
 
 ```bash
-mesh-ctl rotate --tier 1 -t mesh-topology.yml   # junk params (no tunnel restart)
-mesh-ctl rotate --tier 2 -t mesh-topology.yml   # S/H headers (brief re-handshake)
-mesh-ctl rotate --tier 3 -t mesh-topology.yml   # full keypair rotation (v1.12+: 4-party coordinated, see Security section)
+mesh-ctl rotate --tier 1 --endpoint <name> -t mesh-topology.yml   # junk params (no tunnel restart)
+mesh-ctl rotate --tier 2 --endpoint <name> -t mesh-topology.yml   # S/H headers (brief re-handshake)
+mesh-ctl rotate --tier 3 --endpoint <name> -t mesh-topology.yml   # full keypair rotation (v1.12+: 4-party coordinated, see Security section)
 ```
 
 **Rotate bearer tokens:**

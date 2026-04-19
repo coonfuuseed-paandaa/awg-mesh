@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -170,6 +171,9 @@ func TestIntegration_writeConfig_S3S4NeverSent(t *testing.T) {
 func TestUAPI_RotatePrivateKey_PreservesPeers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping integration test on Windows (CGO/kernel-interface constraints)")
 	}
 
 	// Step 1: Create a real in-process amneziawg-go device.

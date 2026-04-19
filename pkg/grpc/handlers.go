@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -954,6 +955,17 @@ func (h *AgentHandler) RotateKeypair(ctx context.Context, req *proto.RotateKeypa
 	defer unlock()
 	h.logger.Info().Str("tunnel", tunnelName).Msg("rotate keypair: lock acquired")
 
+	// Snapshot the existing private key before any mutation so we can roll back
+	// the persisted state if UAPI apply fails. An os.ErrNotExist here means
+	// there was no prior state — nothing to roll back to, which is acceptable
+	// on first-time rotation.
+	oldPrivKey, loadErr := h.statePersister.LoadKeypair(tunnelName)
+	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+		h.logger.Error().Err(loadErr).Str("tunnel", tunnelName).
+			Msg("rotate keypair: load existing keypair failed")
+		return nil, status.Errorf(codes.Internal, "load existing keypair: %v", loadErr)
+	}
+
 	// Persist the new private key atomically before touching the data plane.
 	if persistErr := h.statePersister.PersistKeypair(tunnelName, req.PrivateKey); persistErr != nil {
 		h.logger.Error().Err(persistErr).Str("tunnel", tunnelName).
@@ -974,6 +986,19 @@ func (h *AgentHandler) RotateKeypair(ctx context.Context, req *proto.RotateKeypa
 		if applyErr := h.paramApplier.ApplyParams(tunnelName, cfg); applyErr != nil {
 			h.logger.Error().Err(applyErr).Str("tunnel", tunnelName).
 				Msg("rotate keypair: uapi apply failed")
+			// Best-effort rollback: restore the persisted state so disk does not
+			// diverge from runtime (which is still on the old key after ApplyParams
+			// failed). If there was no prior state (first-time rotation), skip.
+			if len(oldPrivKey) == 32 {
+				if rbErr := h.statePersister.PersistKeypair(tunnelName, oldPrivKey); rbErr != nil {
+					h.logger.Error().Err(rbErr).Str("tunnel", tunnelName).
+						Msg("rotate keypair: rollback of persisted key FAILED — disk/runtime divergence")
+					return nil, status.Errorf(codes.Internal,
+						"apply keypair to uapi: %v (rollback also failed: %v — run 'mesh-ctl reconcile')", applyErr, rbErr)
+				}
+				h.logger.Warn().Str("tunnel", tunnelName).
+					Msg("rotate keypair: rolled back persisted key after uapi apply failure")
+			}
 			return nil, status.Errorf(codes.Internal, "apply keypair to uapi: %v", applyErr)
 		}
 		h.logger.Info().Str("tunnel", tunnelName).Msg("rotate keypair: uapi applied")
