@@ -519,8 +519,10 @@ services:
         ipv4_address: ${ENDPOINT_ASIA_01_BRIDGE}
     ports:
       - "49290:9090"
-      # Multi-master endpoint needs a port range: one listen port per master iface.
-      - "51820-51829:51820-51829/udp"
+      # Multi-master endpoint needs a port range in production (one listen port per
+      # master iface). In sim all containers share the same Docker bridge network —
+      # WG traffic flows container-to-container via the bridge, so host port exposure
+      # is unnecessary and actively conflicts with other containers on the host.
     entrypoint:
       - sh
       - -c
@@ -545,8 +547,7 @@ services:
         ipv4_address: ${ENDPOINT_ASIA_02_BRIDGE}
     ports:
       - "59290:9090"
-      # Multi-master endpoint needs a port range: one listen port per master iface.
-      - "51830-51839:51820-51829/udp"
+      # See node-asia-01 above — host UDP exposure not needed in sim (bridge network).
     entrypoint:
       - sh
       - -c

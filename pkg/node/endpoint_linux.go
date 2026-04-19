@@ -238,12 +238,22 @@ func (e *EndpointRunner) closeIface(masterName string) error {
 	return iface.Close()
 }
 
-// cleanupStaleIfaces closes any interface whose master name is NOT present in
-// activeTunnels. Called during Run() startup after createInterface() to evict
-// masters that were removed from topology between restarts.
+// cleanupStaleIfaces closes any per-master interface whose master name is NOT
+// present in activeTunnels. Called during Run() startup after createInterface()
+// to evict masters that were removed from topology between restarts.
+//
+// The legacy wg0 interface (endpointLegacyIfaceName) is explicitly skipped — it
+// belongs to the pre-v1.12.2 single-iface mode, not to the per-master scheme, so
+// it would always be treated as "stale" (activeTunnels is keyed by master name,
+// never by "wg0") and incorrectly closed on first-boot of endpoints without any
+// transport state yet.
+//
 // Errors are logged per-master and do not abort the cleanup loop.
 func (e *EndpointRunner) cleanupStaleIfaces(activeTunnels map[string]bool) {
 	for _, masterName := range e.listIfaces() {
+		if masterName == endpointLegacyIfaceName {
+			continue
+		}
 		if activeTunnels[masterName] {
 			continue
 		}
