@@ -762,6 +762,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# R6: `mesh-ctl reconcile` after tier-3 rotation is idempotent — cluster
+#     already in consistent state post-rotation, so reconcile must exit 0
+#     without reporting drift. Exercises the operator recovery path that is
+#     documented as the escape hatch for partial-failure rollback scenarios.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R6] Verifying mesh-ctl reconcile is idempotent after tier-3 rotation..."
+
+RECON_OUT=$(meshctl reconcile 2>&1) \
+    && RECON_RC=0 || RECON_RC=$?
+info "reconcile output:"
+echo "${RECON_OUT}" | sed 's/^/    /'
+
+if [[ "${RECON_RC}" -eq 0 ]]; then
+    pass "R6: mesh-ctl reconcile exited 0 after tier-3 rotation — idempotent happy path"
+else
+    fail "R6: mesh-ctl reconcile exited ${RECON_RC} — cluster drift detected post-rotation"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
