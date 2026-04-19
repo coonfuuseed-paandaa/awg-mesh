@@ -59,6 +59,15 @@ func (r *NetlinkRouter) RouteReplace(dest *net.IPNet, via net.IP, dev string) er
 // RouteReplaceLink adds or replaces a scope=link route (no gateway) to dest via dev.
 // Use when destination selection should be delegated to the interface driver.
 func (r *NetlinkRouter) RouteReplaceLink(dest *net.IPNet, dev string) error {
+	return r.RouteReplaceLinkWithSrc(dest, dev, nil)
+}
+
+// RouteReplaceLinkWithSrc is like RouteReplaceLink but also hints the preferred
+// source IP for the kernel route. Pass nil src to fall back to default behaviour.
+// Required when the preferred src is an overlay IP bound to lo (not the dev's
+// primary IP), so kernel picks the overlay IP for outgoing packets instead of
+// the transport IP on dev.
+func (r *NetlinkRouter) RouteReplaceLinkWithSrc(dest *net.IPNet, dev string, src net.IP) error {
 	link, err := netlink.LinkByName(dev)
 	if err != nil {
 		return fmt.Errorf("link %q: %w", dev, err)
@@ -68,6 +77,9 @@ func (r *NetlinkRouter) RouteReplaceLink(dest *net.IPNet, dev string) error {
 		Dst:       dest,
 		LinkIndex: link.Attrs().Index,
 		Scope:     netlink.SCOPE_LINK,
+	}
+	if src != nil {
+		route.Src = src
 	}
 	if err := netlink.RouteReplace(route); err != nil {
 		return fmt.Errorf("route replace %s dev %s scope link: %w", dest, dev, err)

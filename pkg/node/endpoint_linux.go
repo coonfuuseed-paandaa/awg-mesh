@@ -623,30 +623,39 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 		}
 	}
 
-	// v1.12.2+: install extra kernel routes (other endpoint overlay /32s reachable via this master).
-	// These go through the same per-master iface as AllowedIPs but are NOT part of the WG peer
-	// AllowedIPs set — they are pure kernel routes for endpoint↔endpoint traffic.
-	for _, routeCIDR := range extraRoutes {
-		trimmedRoute := strings.TrimSpace(routeCIDR)
-		if trimmedRoute == "" {
-			continue
-		}
-		_, routeNet, parseErr := net.ParseCIDR(trimmedRoute)
-		if parseErr != nil {
-			e.node.logger.Warn().Err(parseErr).Str("cidr", trimmedRoute).Msg("skip invalid extra_route")
-			continue
-		}
-		if shouldSkipEndpointLinkRoute(routeNet, overlayIP) {
-			continue
-		}
-		if err := endpointRouteReplaceLink(routeNet, ifaceName); err != nil {
-			e.node.logger.Warn().Err(err).Str("cidr", routeNet.String()).Str("interface", ifaceName).
-				Msg("failed to install extra kernel route")
-		} else {
-			e.node.logger.Debug().Str("cidr", routeNet.String()).Str("interface", ifaceName).
-				Msg("extra kernel route installed")
+	// v1.12.2+: re-install endpoint-side overlay /32 routes with src=overlay IP hint.
+	// Kernel by default uses the iface's primary (transport) IP as src for outgoing
+	// packets, which makes echo-reply unroutable on the far endpoint (it has no
+	// route back to the transport IP). Setting `src` to this node's overlay IP
+	// makes outgoing pings use the overlay IP as src, which the far endpoint can
+	// reach via its symmetric overlay /32 route.
+	if overlayIP != nil {
+		for _, allowedCIDR := range allowedIPs {
+			trimmedCIDR := strings.TrimSpace(allowedCIDR)
+			if trimmedCIDR == "" {
+				continue
+			}
+			_, cidrNet, parseErr := net.ParseCIDR(trimmedCIDR)
+			if parseErr != nil {
+				continue
+			}
+			// Only re-install /32 host routes (endpoint-to-endpoint destinations).
+			ones, bits := cidrNet.Mask.Size()
+			if bits != 32 || ones != 32 {
+				continue
+			}
+			if shouldSkipEndpointLinkRoute(cidrNet, overlayIP) {
+				continue
+			}
+			router := routing.NewNetlinkRouter()
+			if err := router.RouteReplaceLinkWithSrc(cidrNet, ifaceName, overlayIP); err != nil {
+				e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Str("src", overlayIP.String()).
+					Msg("failed to install overlay route with src hint")
+			}
 		}
 	}
+	// Legacy extra_routes parameter retained for proto compatibility; same behaviour.
+	_ = extraRoutes
 
 	e.node.logger.Info().
 		Str("interface", ifaceName).
