@@ -22,13 +22,6 @@
 # uses the control-plane path instead — `mesh-ctl inspect <node>` fetches
 # runtime peer state via gRPC GetTransportState.
 #
-# Scope note — this harness does NOT validate that the tier-3 operation
-# actually rotated the peer's cryptographic keypair. That concern is tracked
-# separately as local tracker #125 (tier-3 second-layer ApplyParams silently
-# no-ops — master runtime peer key never changes, endpoint never receives
-# the new private key). Restoring keypair-rotation assertions here is
-# contingent on #125 landing in a future release (target v1.12).
-#
 # Usage (Linux host with Docker):
 #   cd <repo-root>
 #   bash tests/simulation/issue-92-rotation.sh
@@ -600,12 +593,122 @@ fi
 
 # Each bound master must report "tier 3 rotation succeeded" on stdout.
 for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
-    if echo "${ROTATE_OUT}" | grep -qF "${m}: tier 3 rotation succeeded"; then
-        pass "R3b: ${m} reported tier 3 rotation succeeded"
+    # v1.12 output format: structured NAME/STATUS/DETAIL table with STATUS=ROTATED.
+    # Backward-compatible with v1.11 "tier 3 rotation succeeded" form (tier-1/2 still emit it).
+    if echo "${ROTATE_OUT}" | grep -qE "^${m}[[:space:]]+ROTATED|${m}: tier 3 rotation succeeded"; then
+        pass "R3b: ${m} reported tier 3 rotation ROTATED"
     else
-        fail "R3b: ${m} did NOT report tier 3 rotation succeeded"
+        fail "R3b: ${m} did NOT report tier 3 rotation ROTATED"
     fi
 done
+
+# ---------------------------------------------------------------------------
+# R3c: Admin-state pubkey CHANGED from baseline after rotation.
+#      SetPubkey must have committed the new key to the admin-state file.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3c] Verifying admin-state pubkey changed after rotation..."
+POST_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
+if [[ -z "${POST_ADMIN}" || "${#POST_ADMIN}" -lt 32 ]]; then
+    fail "R3c: post-rotation admin pubkey missing or malformed (len=${#POST_ADMIN})"
+elif [[ "${POST_ADMIN}" == "${BASELINE_ADMIN}" ]]; then
+    fail "R3c: admin-state pubkey unchanged after rotation — key wasn't committed (was: ${BASELINE_ADMIN:0:8}..., now: ${POST_ADMIN:0:8}...)"
+else
+    pass "R3c: admin-state pubkey rotated (${BASELINE_ADMIN:0:8}... → ${POST_ADMIN:0:8}...)"
+fi
+
+# ---------------------------------------------------------------------------
+# R3d: Per-master runtime pubkey CHANGED from baseline.
+#      UpdateTunnelPeer must have replaced the old peer entry on each master.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3d] Verifying per-master runtime pubkey changed..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    POST_RT=$(inspect_runtime_prefix_for "${m}" "${ENDPOINT_US_01}")
+    case "${m}" in
+        "${MASTER_RU_01}") BASELINE_RT="${BASELINE_RT_RU_01}" ;;
+        "${MASTER_RU_02}") BASELINE_RT="${BASELINE_RT_RU_02}" ;;
+    esac
+    if [[ -z "${POST_RT}" ]]; then
+        fail "R3d: ${m} runtime pubkey missing after rotation"
+    elif [[ "${POST_RT}" == "${BASELINE_RT}" ]]; then
+        fail "R3d: ${m} runtime pubkey unchanged (${BASELINE_RT:0:8}...) — UpdateTunnelPeer no-op"
+    else
+        pass "R3d: ${m} runtime pubkey rotated (${BASELINE_RT:0:8}... → ${POST_RT:0:8}...)"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R3e: Per-master runtime pubkey CONVERGED with admin-state.
+#      After successful rotation, admin-state and each master's runtime peer
+#      entry must reflect the same new public key.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3e] Verifying per-master runtime converged with admin-state..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    POST_RT=$(inspect_runtime_prefix_for "${m}" "${ENDPOINT_US_01}")
+    if admin_prefix_matches_runtime "${POST_ADMIN}" "${POST_RT}"; then
+        pass "R3e: ${m} runtime pubkey matches admin-state (${POST_ADMIN:0:8}...)"
+    else
+        fail "R3e: ${m} runtime (${POST_RT:0:8}...) differs from admin-state (${POST_ADMIN:0:8}...)"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R3f: OLD baseline pubkey NOT present on any master (no phantom peer).
+#      Remove(oldPubKey) must have run — the old peer entry must be gone.
+#      We use `mesh-ctl inspect <master>` and check that the baseline admin
+#      pubkey prefix does not appear anywhere in the output (which would
+#      indicate the old peer is still registered as an extra_peer or key_mismatch).
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3f] Verifying old pubkey is gone from master peer tables..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    peers=$(meshctl inspect "${m}" 2>&1 || true)
+    if echo "${peers}" | grep -qi "${BASELINE_ADMIN:0:16}"; then
+        fail "R3f: ${m} still has old pubkey ${BASELINE_ADMIN:0:8}... in peer table — Remove(old) didn't run"
+    else
+        pass "R3f: ${m} no longer has old pubkey ${BASELINE_ADMIN:0:8}... — phantom absent"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R3g: `mesh-ctl inspect <endpoint>` — verify ADMIN_KEY/NODE_KEY/RUNTIME_KEY
+#      columns converge for each master peer (rotation-specific assertion).
+#      Note: inspect may also surface pre-existing orthogonal drift such as
+#      stale_allowed_ips on master peer entries (admin-state tracks only
+#      overlay /32 while runtime has full transport_subnet). That drift
+#      exists both pre- and post-rotation and is tracked separately — R3g
+#      checks ONLY the pubkey-column convergence that tier-3 rotation must
+#      deliver.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3g] Verifying pubkey column convergence after rotation..."
+meshctl inspect "${ENDPOINT_US_01}" > /tmp/inspect-drift.txt 2>&1 || true
+if grep -qE "^(mst-ru-01|mst-ru-02)[[:space:]]+" /tmp/inspect-drift.txt; then
+    # Extract the three key-prefix columns per master row; assert they match.
+    all_pass=1
+    for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+        row=$(grep -E "^${m}[[:space:]]+" /tmp/inspect-drift.txt | head -1)
+        # Columns 2,3,4 are ADMIN_KEY, NODE_KEY, RUNTIME_KEY (prefixes).
+        adm=$(echo "${row}" | awk '{print $2}')
+        nod=$(echo "${row}" | awk '{print $3}')
+        run=$(echo "${row}" | awk '{print $4}')
+        if [[ "${adm}" == "${nod}" && "${nod}" == "${run}" ]]; then
+            pass "R3g: ${m} admin/node/runtime pubkeys converged (${adm})"
+        else
+            fail "R3g: ${m} pubkey columns diverge (admin=${adm} node=${nod} run=${run})"
+            all_pass=0
+        fi
+    done
+    if [[ "${all_pass}" -eq 1 ]]; then
+        info "R3g note: any 'stale_allowed_ips' rows are pre-existing and orthogonal"
+        info "           to tier-3 keypair rotation (tracked separately)."
+    fi
+else
+    fail "R3g: mesh-ctl inspect produced no master peer rows — unexpected"
+    sed 's/^/    /' /tmp/inspect-drift.txt
+fi
 
 # ---------------------------------------------------------------------------
 # R4: Post-rotation control-plane + data-plane liveness. Masters must remain
@@ -657,15 +760,6 @@ if [[ "${POST_RC}" -eq 0 ]]; then
 else
     fail "R5: post-rotation endpoint init exited ${POST_RC} — control plane broken"
 fi
-
-# Scope note — this harness does NOT verify that the tier-3 operation actually
-# rotated the cryptographic keypair. local tracker #125 tracks that separate
-# bug (ApplyParams second call is a silent no-op; CLI never delivers the new
-# private key to the endpoint). Restoring keypair-rotation assertions is
-# contingent on #125 landing.
-info "R5 note: keypair-rotation assertions are intentionally absent — see"
-info "  local tracker #125 for the second-layer ApplyParams silent-no-op bug."
-info "  This harness covers only the #117 fix scope (no uapi errno=-22)."
 
 # ---------------------------------------------------------------------------
 # Summary

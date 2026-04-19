@@ -931,9 +931,9 @@ mesh-ctl status --node master-01 -t mesh-topology.yml
 **Rotate AWG parameters:**
 
 ```bash
-mesh-ctl rotate --tier 1 -t mesh-topology.yml   # junk params (no tunnel restart)
-mesh-ctl rotate --tier 2 -t mesh-topology.yml   # S/H headers (brief re-handshake)
-mesh-ctl rotate --tier 3 -t mesh-topology.yml   # full keypair (tunnel re-establishment)
+mesh-ctl rotate --tier 1 --endpoint <name> -t mesh-topology.yml   # junk params (no tunnel restart)
+mesh-ctl rotate --tier 2 --endpoint <name> -t mesh-topology.yml   # S/H headers (brief re-handshake)
+mesh-ctl rotate --tier 3 --endpoint <name> -t mesh-topology.yml   # full keypair rotation (v1.12+: 4-party coordinated, see Security section)
 ```
 
 **Rotate bearer tokens:**
@@ -1098,8 +1098,7 @@ mesh-ctl reconcile
 ```bash
 mesh-ctl rotate --tier 1                    # rotate junk packet count/sizes
 mesh-ctl rotate --tier 2                    # rotate S1/H1/S2/H2 obfuscation headers
-mesh-ctl rotate --tier 3                    # full keypair rotation
-mesh-ctl rotate --tier 3 --node <name>     # keypair rotation on one node
+mesh-ctl rotate --tier 3 --endpoint <endpoint>  # full keypair rotation (v1.12+: 4-party coordinated, masters updated automatically)
 ```
 
 ### Token management
@@ -1224,9 +1223,32 @@ AmneziaWG extends WireGuard with obfuscation fields that make tunnel traffic uni
 |------|-------------|---------------|
 | 1 | Junk packet count and sizes | None — live update |
 | 2 | S1/H1/S2/H2 header bytes | Brief re-handshake |
-| 3 | AWG keypair | Full tunnel re-establishment |
+| 3 | AWG keypair (v1.12+: full 4-party coordinated) | Full tunnel re-establishment |
 
 Schedule rotation via `mesh-ctl rotate` or configure automatic intervals in `mesh-topology.yml` under `rotation.defaults`.
+
+#### Tier 3 — full keypair rotation (v1.12+)
+
+`mesh-ctl rotate --tier 3 --endpoint <endpoint-name>` atomically rotates the endpoint's
+WireGuard keypair across the entire cluster:
+
+1. CLI generates fresh Curve25519 keypair.
+2. Endpoint persists new private key (atomic, mode 0600) and rebinds amneziawg-go.
+3. Every master that has the endpoint as a peer atomically replaces the old peer
+   with the new keypair via `UpdateTunnelPeer`.
+4. CLI commits new public key to local admin-state.
+
+**Requirements:**
+- CLI + endpoint container: v1.12+
+- Master containers: v1.10+ (`UpdateTunnelPeer` RPC)
+
+**Idempotency:** Every invocation issues a fresh rotation; there is no
+"already converged" short-circuit (added then removed in v1.12 to prevent
+permanent-no-op bug).
+
+**Partial failure:** If one master's RPC fails, CLI surfaces a NAME/STATUS/DETAIL
+table and attempts best-effort rollback to the previous keypair. If rollback
+also fails, run `mesh-ctl reconcile` to force-sync admin state to every node.
 
 ### Security hardening
 

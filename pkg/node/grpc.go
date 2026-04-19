@@ -30,6 +30,7 @@ func startGRPCServer(
 	stateProvider grpcserver.NodeStateProvider,
 	scheduler grpcserver.CaptureScheduler,
 	keyProvider grpcserver.KeyProvider,
+	statePersister grpcserver.NodeStatePersister,
 ) error {
 	if ctx == nil {
 		return fmt.Errorf("context is required")
@@ -51,6 +52,7 @@ func startGRPCServer(
 		stateProvider,
 		scheduler,
 		keyProvider,
+		statePersister,
 	)
 	serverConfig := grpcserver.ServerConfig{
 		ListenAddr:    defaultGRPCListenAddr,

@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -150,6 +151,154 @@ func TestIntegration_writeConfig_S3S4NeverSent(t *testing.T) {
 	if err := dev.IpcSet(badPayload); err == nil {
 		t.Error("expected IpcSet to reject 's3' key, but it accepted it — driver may have been updated; review writeConfig suppression")
 	}
+}
+
+// TestUAPI_RotatePrivateKey_PreservesPeers proves that rotating the device
+// PrivateKey via IpcSet (i.e. wg.Config{PrivateKey: &newKey}) does NOT wipe
+// the existing peer table. This is the fundamental correctness property required
+// by tier-3 keypair rotation: the endpoint swaps its own private key while all
+// masters' peer entries (identified by the old public key) remain intact on the
+// endpoint side until the master updates them.
+//
+// This test is the proof-of-concept for the T003 handler flow:
+//   cfg := wg.Config{PrivateKey: &newPrivKey}  // no peer changes
+//   h.paramApplier.ApplyParams(tunnelName, cfg)
+//
+// If this property did not hold, ApplyParams would silently clear all peers,
+// breaking every active tunnel session. See local tracker #125.
+//
+// Skipped on Windows (CGO/kernel-interface constraints) and in -short mode.
+func TestUAPI_RotatePrivateKey_PreservesPeers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping integration test on Windows (CGO/kernel-interface constraints)")
+	}
+
+	// Step 1: Create a real in-process amneziawg-go device.
+	dev := newTestDevice(t)
+
+	// Step 2: Generate an initial private key and a peer keypair.
+	initialPrivKey, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey (initial): %v", err)
+	}
+
+	peerPrivKey, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey (peer): %v", err)
+	}
+	peerPubKey := peerPrivKey.PublicKey()
+
+	// Step 3: Apply initial config — private key + one peer with AllowedIPs.
+	_, peerNet, err := net.ParseCIDR("10.99.99.0/24")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	endpoint, err := net.ResolveUDPAddr("udp", "127.0.0.1:51820")
+	if err != nil {
+		t.Fatalf("ResolveUDPAddr: %v", err)
+	}
+
+	initialCfg := Config{
+		PrivateKey: &initialPrivKey,
+		Peers: []PeerConfig{
+			{
+				PublicKey:  peerPubKey,
+				AllowedIPs: []net.IPNet{*peerNet},
+				Endpoint:   endpoint,
+			},
+		},
+	}
+	if err := ipcSetFromWriteConfig(dev, initialCfg); err != nil {
+		t.Fatalf("IpcSet (initial config): %v", err)
+	}
+
+	// Confirm peer is visible after initial config.
+	state0, err := ipcGetParsed(t, dev)
+	if err != nil {
+		t.Fatalf("IpcGet (post-initial): %v", err)
+	}
+	if len(state0.Peers) != 1 {
+		t.Fatalf("post-initial: expected 1 peer, got %d", len(state0.Peers))
+	}
+
+	// Step 4: Rotate the device private key — only PrivateKey, no peer changes.
+	newPrivKey, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey (new): %v", err)
+	}
+	// Ensure the new key is genuinely different.
+	if newPrivKey == initialPrivKey {
+		t.Fatalf("new private key is identical to initial — test invalid")
+	}
+
+	rotateCfg := Config{
+		PrivateKey: &newPrivKey,
+	}
+	if err := ipcSetFromWriteConfig(dev, rotateCfg); err != nil {
+		t.Fatalf("IpcSet (rotate keypair): %v", err)
+	}
+
+	// Step 5: Read back device state and assert correctness.
+	state1, err := ipcGetParsed(t, dev)
+	if err != nil {
+		t.Fatalf("IpcGet (post-rotation): %v", err)
+	}
+
+	// 5a: device private key must be the new one.
+	if state1.PrivateKey != newPrivKey {
+		t.Errorf("device PrivateKey: got %x, want %x", state1.PrivateKey, newPrivKey)
+	}
+
+	// 5b: device public key must be derived from the new private key.
+	expectedPubKey := newPrivKey.PublicKey()
+	if state1.PublicKey != expectedPubKey {
+		t.Errorf("device PublicKey: got %x, want %x (derived from new PrivateKey)",
+			state1.PublicKey, expectedPubKey)
+	}
+
+	// 5c: peer table must still contain exactly one peer.
+	if len(state1.Peers) != 1 {
+		t.Fatalf("peer count after rotation: got %d, want 1 — private key rotation must not wipe peers",
+			len(state1.Peers))
+	}
+
+	// 5d: the peer's public key must match the original peerPubKey.
+	if state1.Peers[0].PublicKey != peerPubKey {
+		t.Errorf("peer[0] PublicKey: got %x, want %x", state1.Peers[0].PublicKey, peerPubKey)
+	}
+
+	// 5e: peer AllowedIPs must still contain 10.99.99.0/24.
+	if len(state1.Peers[0].AllowedIPs) == 0 {
+		t.Errorf("peer[0] AllowedIPs: empty after rotation, want 10.99.99.0/24")
+	} else if state1.Peers[0].AllowedIPs[0].String() != "10.99.99.0/24" {
+		t.Errorf("peer[0] AllowedIPs[0]: got %q, want 10.99.99.0/24",
+			state1.Peers[0].AllowedIPs[0].String())
+	}
+}
+
+// ipcGetParsed reads the current device state via IpcGet and parses it with
+// parseDevice. IpcGet returns the raw UAPI fields without a terminating
+// errno=0 line (that is added by IpcHandle for socket clients); parseDevice
+// requires it, so we append it here.
+func ipcGetParsed(t *testing.T, dev interface {
+	IpcGet() (string, error)
+}) (*Device, error) {
+	t.Helper()
+	raw, err := dev.IpcGet()
+	if err != nil {
+		return nil, fmt.Errorf("IpcGet: %w", err)
+	}
+	// Append the errno terminator that the UAPI socket framing normally adds.
+	// Guard against IpcGet returning output without a trailing newline so we
+	// never produce a merged line (e.g. "key=val\errno=0\n" instead of two
+	// separate lines).
+	if !strings.HasSuffix(raw, "\n") {
+		raw += "\n"
+	}
+	return parseDevice(strings.NewReader(raw + "errno=0\n"))
 }
 
 // TestIntegration_writeConfig_FullPeerRoundTrip verifies that a peer config

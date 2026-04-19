@@ -106,6 +106,10 @@ func (m *mockAwgAgentClient) GetTransportState(_ context.Context, _ *proto.Empty
 	return &proto.TransportStateResponse{}, nil
 }
 
+func (m *mockAwgAgentClient) RotateKeypair(_ context.Context, _ *proto.RotateKeypairRequest, _ ...grpc.CallOption) (*proto.RotateKeypairResponse, error) {
+	return &proto.RotateKeypairResponse{}, nil
+}
+
 func TestTier1ExecuteValidation(t *testing.T) {
 	t.Parallel()
 

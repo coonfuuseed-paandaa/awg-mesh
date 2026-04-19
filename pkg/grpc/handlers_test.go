@@ -1,7 +1,9 @@
 package grpcserver
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -260,7 +263,7 @@ func TestNewAgentHandlerConstructors(t *testing.T) {
 
 		tunnelMgr := &testTunnelManager{}
 		paramApplier := &testParamApplier{}
-		handler := NewAgentHandlerFull(configDir, logger, tunnelMgr, paramApplier, nil, nil, nil, nil, nil)
+		handler := NewAgentHandlerFull(configDir, logger, tunnelMgr, paramApplier, nil, nil, nil, nil, nil, nil)
 
 		peerKey := make([]byte, 32)
 		for i := range peerKey {
@@ -372,7 +375,7 @@ func TestInitReturnsPublicKeyFromKeyProvider(t *testing.T) {
 	caCertPEM, nodeCertPEM, nodeKeyPEM := generateTestCerts(t)
 
 	kp := &testKeyProvider{key: pubKey}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, nil, nil, kp)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, nil, nil, kp, nil)
 	resp, initErr := handler.Init(context.Background(), &proto.InitRequest{
 		CaCert:   caCertPEM,
 		NodeCert: nodeCertPEM,
@@ -405,7 +408,7 @@ func TestAddTunnelReturnsMasterPublicKey(t *testing.T) {
 
 	mgr := &testTunnelManager{}
 	kp := &testKeyProvider{key: pubKey}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), mgr, nil, nil, nil, nil, nil, kp)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), mgr, nil, nil, nil, nil, nil, kp, nil)
 
 	peerKey := make([]byte, 32)
 	for i := range peerKey {
@@ -534,7 +537,7 @@ func TestRotateParamsMapsProtoValuesToConfig(t *testing.T) {
 	t.Parallel()
 
 	paramApplier := &testParamApplier{}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil, nil, nil)
 	resp, err := handler.RotateParams(context.Background(), &proto.RotateParamsRequest{
 		TunnelName: "rotate-tunnel",
 		Tier:       1,
@@ -576,7 +579,7 @@ func TestRotateParamsRejectsEmptyNewParams(t *testing.T) {
 	t.Parallel()
 
 	paramApplier := &testParamApplier{}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil, nil, nil)
 	_, err := handler.RotateParams(context.Background(), &proto.RotateParamsRequest{
 		TunnelName: "rotate-tunnel",
 		NewParams:  &proto.AwgParams{},
@@ -596,7 +599,7 @@ func TestRotateParamsAppliesNewPublicKey(t *testing.T) {
 	t.Parallel()
 
 	paramApplier := &testParamApplier{}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, paramApplier, nil, nil, nil, nil, nil, nil)
 
 	newKey := make([]byte, 32)
 	for i := range newKey {
@@ -684,7 +687,7 @@ func TestRemoveTunnel(t *testing.T) {
 			if tt.manager != nil {
 				tunnelMgr = tt.manager
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil, nil)
 			resp, err := handler.RemoveTunnel(context.Background(), tt.req)
 			if tt.wantCode == codes.OK {
 				if err != nil {
@@ -740,7 +743,7 @@ func TestListTunnels(t *testing.T) {
 			if tt.manager != nil {
 				tunnelMgr = tt.manager
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil, nil)
 			resp, err := handler.ListTunnels(context.Background(), &proto.Empty{})
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -819,7 +822,7 @@ func TestGetStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, tt.provider, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, tt.provider, nil, nil, nil)
 			resp, err := handler.GetStatus(context.Background(), &proto.Empty{})
 			if err != nil {
 				t.Fatalf("GetStatus returned error: %v", err)
@@ -932,7 +935,7 @@ func TestAddTunnelRejectsInvalidNames(t *testing.T) {
 	tm := &testTunnelManager{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tm, nil, nil, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tm, nil, nil, nil, nil, nil, nil, nil)
 			_, err := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
 				Name:         tt.tunnelName,
 				EndpointHost: "host:51820",
@@ -997,7 +1000,7 @@ func TestCaptureRefresh(t *testing.T) {
 				}
 			}
 
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, captureFunc, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, captureFunc, nil, nil, nil, nil, nil)
 			resp, err := handler.CaptureRefresh(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -1069,7 +1072,7 @@ func TestListPeers(t *testing.T) {
 			if tt.peerMgr != nil {
 				peerMgr = tt.peerMgr
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
 			resp, err := handler.ListPeers(context.Background(), &proto.Empty{})
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -1141,7 +1144,7 @@ func TestAddPeer(t *testing.T) {
 			if tt.peerMgr != nil {
 				peerMgr = tt.peerMgr
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
 			resp, err := handler.AddPeer(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -1177,7 +1180,7 @@ func TestAddTunnelAllowsEmptyEndpointHost(t *testing.T) {
 	t.Parallel()
 
 	tunnelMgr := &testTunnelManager{}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil, nil)
 
 	peerKey := make([]byte, 32)
 	for idx := range peerKey {
@@ -1213,7 +1216,7 @@ func TestAddPeerConfiguresTransportAfterStatePersisted(t *testing.T) {
 
 	configDir := t.TempDir()
 	peerMgr := &testTransportPeerManager{configDir: configDir}
-	handler := NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil)
+	handler := NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
 
 	pubkey := []byte{1, 2, 3, 4}
 	resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
@@ -1253,7 +1256,7 @@ func TestAddPeerSkipsTransportConfiguratorWhenIPsMissing(t *testing.T) {
 	t.Parallel()
 
 	peerMgr := &testTransportPeerManager{}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
 
 	resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
 		PublicKey:       []byte{9, 8, 7, 6},
@@ -1276,7 +1279,7 @@ func TestAddPeerStoresMasterNameFromEndpointMetadata(t *testing.T) {
 
 	configDir := t.TempDir()
 	peerMgr := &testPeerManager{}
-	handler := NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil)
+	handler := NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
 
 	resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
 		PublicKey:        []byte{1, 2, 3, 4},
@@ -1349,7 +1352,7 @@ func TestRemovePeer(t *testing.T) {
 			if tt.peerMgr != nil {
 				peerMgr = tt.peerMgr
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
 			resp, err := handler.RemovePeer(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -1432,7 +1435,7 @@ func TestGetParams(t *testing.T) {
 			if tt.manager != nil {
 				tunnelMgr = tt.manager
 			}
-			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil)
+			handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil, nil)
 			resp, err := handler.GetParams(context.Background(), tt.req)
 			if tt.wantCode != codes.OK {
 				assertCode(t, err, tt.wantCode)
@@ -1533,7 +1536,7 @@ func TestAgentHandler_UpdateTunnelPeer_Unauthenticated(t *testing.T) {
 	// Build a handler backed by a testTunnelManager so valid-auth calls reach
 	// the RPC body (tunnel will not be found — NotFound, not Unauthenticated).
 	mgr := &testTunnelManager{updatePeerErr: errors.New("tunnel not found")}
-	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), mgr, nil, nil, nil, nil, nil, nil)
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), mgr, nil, nil, nil, nil, nil, nil, nil)
 
 	// Spin up in-process gRPC server with only the token-auth interceptor.
 	// No TLS transport: the interceptor's mTLS branch is skipped (no
@@ -1678,7 +1681,7 @@ func TestGetTransportState(t *testing.T) {
 				sp := &testNodeStateProvider{state: NodeState{
 					Name: "master-1", Mode: "master", OverlayIP: "10.0.0.1/32",
 				}}
-				return NewAgentHandlerFull(configDir, zerolog.Nop(), mgr, nil, nil, nil, sp, nil, nil)
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), mgr, nil, nil, nil, sp, nil, nil, nil)
 			},
 			wantMode:    "master",
 			wantOverlay: "10.0.0.1/32",
@@ -1720,7 +1723,7 @@ func TestGetTransportState(t *testing.T) {
 				sp := &testNodeStateProvider{state: NodeState{
 					Name: "ep-1", Mode: "endpoint", OverlayIP: "10.0.0.2/32",
 				}}
-				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, pm, sp, nil, nil)
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, pm, sp, nil, nil, nil)
 			},
 			wantMode:    "endpoint",
 			wantOverlay: "10.0.0.2/32",
@@ -1750,7 +1753,7 @@ func TestGetTransportState(t *testing.T) {
 						{Name: "fallback-peer", PeerPublicKey: pubKey1Hex, AllowedIPs: []string{"0.0.0.0/0"}},
 					},
 				})
-				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, nil, nil, nil, nil)
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, nil, nil, nil, nil, nil)
 			},
 			wantMode:    "",
 			wantOverlay: "10.0.0.3/32",
@@ -1774,7 +1777,7 @@ func TestGetTransportState(t *testing.T) {
 			setupHandler: func(t *testing.T, configDir string) *AgentHandler {
 				t.Helper()
 				// No transport.yml written; no managers injected.
-				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, nil, nil, nil, nil)
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, nil, nil, nil, nil, nil)
 			},
 			wantMode:    "",
 			wantOverlay: "",
@@ -1791,7 +1794,7 @@ func TestGetTransportState(t *testing.T) {
 						{PublicKey: pubKey1, AllowedIPs: []string{"10.0.0.0/8"}, LastHandshake: 0},
 					},
 				}
-				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, pm, nil, nil, nil)
+				return NewAgentHandlerFull(configDir, zerolog.Nop(), nil, nil, nil, pm, nil, nil, nil, nil)
 			},
 			wantMode:    "",
 			wantOverlay: "",
@@ -1877,6 +1880,363 @@ func TestUpdateTunnelPeer_Idempotent_AlreadyApplied(t *testing.T) {
 	}
 	if !resp.GetSuccess() {
 		t.Error("expected Success=true on idempotent update")
+	}
+}
+
+// --- T004: RotateKeypair handler unit tests (9 cases) ---
+
+// testNodeStatePersister is a test-double for NodeStatePersister.
+// It records calls and allows fault injection per test case.
+type testNodeStatePersister struct {
+	mu sync.Mutex // guards fields below
+
+	loadCalls    []string // tunnelNames passed to LoadKeypair
+	loadResult   []byte
+	loadErr      error
+
+	persistCalls  []persistKeypairCall
+	persistErr    error
+
+	lockCalls []string // tunnelNames passed to LockRotation
+	lockErr   error    // if non-nil, LockRotation returns this error
+
+	// realMu is used by TestRotateKeypair_ConcurrentLock to exercise real serialization.
+	realMu    sync.Mutex
+	useRealMu bool
+}
+
+type persistKeypairCall struct {
+	tunnelName string
+	privateKey []byte
+}
+
+func (m *testNodeStatePersister) LoadKeypair(tunnelName string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.loadCalls = append(m.loadCalls, tunnelName)
+	if m.loadErr != nil {
+		return nil, m.loadErr
+	}
+	if m.loadResult == nil {
+		return nil, os.ErrNotExist
+	}
+	return append([]byte(nil), m.loadResult...), nil
+}
+
+func (m *testNodeStatePersister) PersistKeypair(tunnelName string, privateKey []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.persistCalls = append(m.persistCalls, persistKeypairCall{
+		tunnelName: tunnelName,
+		privateKey: append([]byte(nil), privateKey...),
+	})
+	return m.persistErr
+}
+
+func (m *testNodeStatePersister) LockRotation(tunnelName string) (func(), error) {
+	m.mu.Lock()
+	m.lockCalls = append(m.lockCalls, tunnelName)
+	lockErr := m.lockErr
+	useReal := m.useRealMu
+	m.mu.Unlock()
+
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	if useReal {
+		m.realMu.Lock()
+		return m.realMu.Unlock, nil
+	}
+	return func() {}, nil
+}
+
+// makeRotateHandler is a helper that builds a handler with the given persister and param applier.
+func makeRotateHandler(persister NodeStatePersister, applier ParamApplier) *AgentHandler {
+	return &AgentHandler{
+		logger:         zerolog.New(nil), // discard all output
+		statePersister: persister,
+		paramApplier:   applier,
+	}
+}
+
+// TestRotateKeypair_Happy: valid 32-byte key, valid tunnel name, persister OK,
+// UAPI OK — response carries the curve25519 public key derived from the request's
+// private key.
+func TestRotateKeypair_Happy(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	expectedPubKey := privKey.PublicKey()
+
+	persister := &testNodeStatePersister{}
+	applier := &testParamApplier{}
+	h := makeRotateHandler(persister, applier)
+
+	resp, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "ep-01",
+	})
+	if rpcErr != nil {
+		t.Fatalf("unexpected error: %v", rpcErr)
+	}
+	if resp == nil {
+		t.Fatal("nil response")
+	}
+	if !bytes.Equal(resp.NewPublicKey, expectedPubKey[:]) {
+		t.Errorf("public key mismatch:\n  want %s\n  got  %s",
+			hex.EncodeToString(expectedPubKey[:]),
+			hex.EncodeToString(resp.NewPublicKey))
+	}
+	if len(persister.persistCalls) != 1 {
+		t.Errorf("expected 1 PersistKeypair call, got %d", len(persister.persistCalls))
+	}
+	if len(applier.calls) != 1 {
+		t.Errorf("expected 1 ApplyParams call, got %d", len(applier.calls))
+	}
+}
+
+// TestRotateKeypair_NilPersister: when statePersister is nil (master/client mode)
+// the handler must return codes.Unimplemented without touching anything else.
+func TestRotateKeypair_NilPersister(t *testing.T) {
+	t.Parallel()
+
+	h := makeRotateHandler(nil, nil)
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	_, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "ep-01",
+	})
+	if rpcErr == nil {
+		t.Fatal("expected Unimplemented error, got nil")
+	}
+	if st, ok := status.FromError(rpcErr); !ok || st.Code() != codes.Unimplemented {
+		t.Errorf("expected Unimplemented, got %v", rpcErr)
+	}
+}
+
+// TestRotateKeypair_InvalidKeyLength: key shorter than 32 bytes → InvalidArgument.
+func TestRotateKeypair_InvalidKeyLength(t *testing.T) {
+	t.Parallel()
+
+	persister := &testNodeStatePersister{}
+	h := makeRotateHandler(persister, nil)
+
+	_, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: make([]byte, 31), // 31 bytes — one short
+		TunnelName: "ep-01",
+	})
+	if rpcErr == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	if st, ok := status.FromError(rpcErr); !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", rpcErr)
+	}
+	// No persist or lock must have been acquired.
+	if len(persister.persistCalls) != 0 {
+		t.Errorf("PersistKeypair must not be called on invalid key, got %d calls", len(persister.persistCalls))
+	}
+}
+
+// TestRotateKeypair_EmptyTunnelName: empty tunnel_name → InvalidArgument.
+func TestRotateKeypair_EmptyTunnelName(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	persister := &testNodeStatePersister{}
+	h := makeRotateHandler(persister, nil)
+
+	_, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "",
+	})
+	if rpcErr == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	if st, ok := status.FromError(rpcErr); !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", rpcErr)
+	}
+}
+
+// TestRotateKeypair_InvalidTunnelName: tunnel name with illegal chars → InvalidArgument.
+func TestRotateKeypair_InvalidTunnelName(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	persister := &testNodeStatePersister{}
+	h := makeRotateHandler(persister, nil)
+
+	_, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "bad name!", // space + exclamation — fails validTunnelName
+	})
+	if rpcErr == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	if st, ok := status.FromError(rpcErr); !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", rpcErr)
+	}
+}
+
+// TestRotateKeypair_PersistError: PersistKeypair returns an error →
+// handler returns Internal and does NOT call ApplyParams.
+func TestRotateKeypair_PersistError(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	persister := &testNodeStatePersister{persistErr: errors.New("disk full")}
+	applier := &testParamApplier{}
+	h := makeRotateHandler(persister, applier)
+
+	_, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "ep-01",
+	})
+	if rpcErr == nil {
+		t.Fatal("expected Internal error, got nil")
+	}
+	if st, ok := status.FromError(rpcErr); !ok || st.Code() != codes.Internal {
+		t.Errorf("expected Internal, got %v", rpcErr)
+	}
+	// ApplyParams must NOT have been called.
+	if len(applier.calls) != 0 {
+		t.Errorf("ApplyParams must not be called when persist fails, got %d calls", len(applier.calls))
+	}
+}
+
+// TestRotateKeypair_UAPIError: PersistKeypair succeeds but ApplyParams fails →
+// handler returns Internal.
+func TestRotateKeypair_UAPIError(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	persister := &testNodeStatePersister{}
+	applier := &testParamApplier{err: errors.New("uapi: device busy")}
+	h := makeRotateHandler(persister, applier)
+
+	_, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "ep-01",
+	})
+	if rpcErr == nil {
+		t.Fatal("expected Internal error from UAPI failure, got nil")
+	}
+	if st, ok := status.FromError(rpcErr); !ok || st.Code() != codes.Internal {
+		t.Errorf("expected Internal, got %v", rpcErr)
+	}
+	// Persist was called once (before the UAPI attempt).
+	if len(persister.persistCalls) != 1 {
+		t.Errorf("expected 1 PersistKeypair call before UAPI, got %d", len(persister.persistCalls))
+	}
+}
+
+// TestRotateKeypair_ConcurrentLock: two goroutines call RotateKeypair concurrently.
+// The mock uses a real mutex so the second call blocks until the first releases the lock.
+// Both must complete without data races (run with -race).
+func TestRotateKeypair_ConcurrentLock(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	persister := &testNodeStatePersister{useRealMu: true}
+	h := makeRotateHandler(persister, &testParamApplier{})
+
+	req := &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "ep-01",
+	}
+
+	var wg2 sync.WaitGroup
+	errs := make([]error, 2)
+	wg2.Add(2)
+	for i := 0; i < 2; i++ {
+		i := i
+		go func() {
+			defer wg2.Done()
+			_, errs[i] = h.RotateKeypair(context.Background(), req)
+		}()
+	}
+	wg2.Wait()
+
+	for i, e := range errs {
+		if e != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, e)
+		}
+	}
+	// Both goroutines completed one persist call each → 2 total.
+	if len(persister.persistCalls) != 2 {
+		t.Errorf("expected 2 PersistKeypair calls (one per goroutine), got %d", len(persister.persistCalls))
+	}
+}
+
+// TestRotateKeypair_LogHygiene: capture zerolog output into a bytes.Buffer and
+// verify that no 4+ consecutive hex bytes from the private key appear in the logs.
+// This is the NFR-1 CI assertion: private key bytes must never appear in logs.
+func TestRotateKeypair_LogHygiene(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := zerolog.New(&buf)
+
+	persister := &testNodeStatePersister{}
+	applier := &testParamApplier{}
+	h := &AgentHandler{
+		logger:         logger,
+		statePersister: persister,
+		paramApplier:   applier,
+	}
+
+	_, rpcErr := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		PrivateKey: privKey[:],
+		TunnelName: "ep-01",
+	})
+	if rpcErr != nil {
+		t.Fatalf("unexpected error: %v", rpcErr)
+	}
+
+	logOutput := buf.String()
+
+	// Check that no 4-byte (8 hex char) run from the private key appears in the log.
+	// Four consecutive bytes is long enough to be a leak but short enough to avoid
+	// false positives from tunnel names or other incidental hex strings.
+	keyHex := hex.EncodeToString(privKey[:])
+	for i := 0; i+8 <= len(keyHex); i += 2 {
+		chunk := keyHex[i : i+8]
+		if strings.Contains(logOutput, chunk) {
+			t.Errorf("NFR-1 violation: log output contains private key bytes %q at offset %d.\nLog: %s",
+				chunk, i, logOutput)
+		}
 	}
 }
 

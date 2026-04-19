@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-04-19
+
+### Added — Tier-3 keypair rotation (full 4-party coordinated, MINOR release)
+
+The `mesh-ctl rotate --tier 3 <endpoint>` command now performs real keypair
+rotation across the entire cluster: CLI → endpoint → every master → admin-state,
+atomically. Prior to v1.12 tier-3 was documented as "full keypair rotation" but
+the second `ApplyParams` call silently no-op'd (see local tracker #125) — the
+new public key was never persisted at the endpoint, and masters saw a phantom
+peer added next to the original.
+
+#### How it works (4-party flow)
+
+1. `mesh-ctl` generates a fresh Curve25519 keypair locally.
+2. `mesh-ctl` calls the NEW `RotateKeypair` RPC on the endpoint: endpoint
+   persists the new private key atomically (`.tmp + rename`, mode 0600) and
+   rebinds amneziawg-go via UAPI `PrivateKey=<new>`. Rolls back on failure.
+3. `mesh-ctl` fans out `UpdateTunnelPeer` RPCs to every master that has the
+   endpoint as a peer — each master atomically does `Remove(old) + Add(new)`
+   via a single UAPI transaction with restore-on-error.
+4. `mesh-ctl` atomically commits the new public key to the local admin-state
+   (`.tmp + rename`, no backup file).
+
+On any master failure: CLI surfaces a structured `NAME / STATUS / DETAIL`
+stderr table (STATUS ∈ {ROTATED, FAILED, REVERTED, REVERT_FAILED}) and issues
+best-effort rollback. Admin-state is only committed after all masters succeed.
+
+#### API additions
+
+- `proto.RotateKeypair` gRPC RPC (request: `bytes private_key`, `string tunnel_name`; response: `bytes new_public_key` — derived via Curve25519 for verification)
+- Endpoint-mode ONLY: master/client modes return `codes.Unimplemented`
+- `NodeStatePersister` interface (`pkg/grpc/interfaces.go`) — implemented exclusively by `EndpointRunner`
+
+#### Semantics
+
+- **No idempotency short-circuit.** Every `mesh-ctl rotate --tier 3` call issues
+  a fresh rotation, regardless of whether admin-state pubkey matches per-master
+  runtime pubkey. The prior "already converged" exit path was a bug (permanent
+  no-op once the cluster reached steady state) and is removed in v1.12.
+- **Mutex-serialized on endpoint.** Concurrent RotateKeypair RPCs against the
+  same endpoint are serialized by a per-runner mutex (NFR-5).
+- **Private-key bytes never logged.** CI greps zerolog output at all levels
+  (info/debug/error) for private-key leakage (NFR-1).
+- **Atomic admin-state writes.** `.tmp + rename` at mode 0600; no backup file.
+- **Fail-closed persistence.** `PersistKeypair` only synthesizes fresh state on
+  `os.ErrNotExist`; corrupt/permission errors are propagated instead of
+  silently overwriting.
+
+#### Compatibility
+
+- v1.12+ endpoints + masters are REQUIRED for tier-3 rotation to function
+  end-to-end. v1.10+ masters already support `UpdateTunnelPeer` (local tracker #92);
+  v1.11+ endpoints understand the UAPI parser fix (local tracker #128) that this
+  release depends on.
+- Wire protocol changes: new RPC added (backwards-compatible addition); no
+  existing RPC signatures changed.
+- CLI flags / topology YAML / config directory layout: no breaking changes.
+
+#### Fixed
+
+- Resolves local tracker #125 (tier-3 second-layer no-op — the underlying
+  parser bug that caused the first v1.12.0 attempt to fail was shipped as
+  v1.11.4 fix in commit 25afde0).
+
+### Verification
+
+- 17 Go packages green: `go test -short -count=1 ./...`
+- Real-UAPI integration test: `pkg/wg/uapi_integration_test.go::TestUAPI_RotatePrivateKey_PreservesPeers` — proves amneziawg-go UAPI preserves peer table across PrivateKey swap.
+- Docker e2e sim: `tests/simulation/issue-92-rotation.sh` — 12+ checks PASS on WSL2/Linux with extended R3a-R3g assertions verifying admin-state pubkey change, per-master runtime convergence, absence of old pubkey, zero drift via `mesh-ctl inspect`.
+- Release gate: per AGENTS.md "RELEASE GATE — NON-NEGOTIABLE", e2e sim confirmed PASS before tag.
+
+### Links
+
+- Local tracker: #125
+- PR: (to fill in after merge)
+- Design evolution: superseded broken v1.12.0 (reverted 2026-04-19 via PR #67) — original design was architecturally correct; only the underlying parser bug prevented end-to-end success.
+
 ## [1.11.4] — 2026-04-19
 
 ### Fixed
@@ -816,7 +893,9 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.4...v1.12.0
+[1.11.4]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...v1.11.4
 [1.10.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.2...v1.10.0

@@ -49,7 +49,7 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
-	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, c, c, nil, c); err != nil {
+	if err := startGRPCServer(ctx, c.node.config.ConfigDir, c.node.logger, nil, nil, c, c, nil, c, nil); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	c.startTime = time.Now()
