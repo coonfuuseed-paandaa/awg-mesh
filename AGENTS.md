@@ -90,3 +90,25 @@ Tag is created on GitHub, then fetched locally. No manual `git tag` needed.
 - All management via gRPC, SSH only for bootstrap
 - One binary, multiple modes (--mode master|endpoint|client)
 - UAPI-first for runtime config changes
+
+## RELEASE GATE — NON-NEGOTIABLE
+
+**Docker smoke + e2e tests are MANDATORY before tagging any version.** Every
+release (PATCH, MINOR, MAJOR) MUST pass `tests/simulation/issue-92-rotation.sh`
+on a real WSL2/Linux host with Docker. `go test -short ./...` and CI build
+green are NOT sufficient — they validated v1.12.0 which then failed e2e
+catastrophically (broken tier-3 rotation: idempotency check + master
+applyPeerKeyUpdate device-handle drift).
+
+**Process for every release:**
+1. `go test -short -count=1 ./...` — all packages green
+2. `docker build -t awg-mesh-node:local -f deploy/Dockerfile.node .`
+3. `bash tests/simulation/issue-92-rotation.sh` — MUST exit 0 with all R1-R5 + R3a-R3g PASS
+4. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
+
+**If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
+"Tests pass + lint clean" without e2e proves only that the code compiles,
+not that it works.
+
+This rule was added 2026-04-19 after v1.12.0 shipped broken because e2e
+was skipped. v1.12.0 had to be reverted.
