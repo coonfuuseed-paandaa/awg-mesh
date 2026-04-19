@@ -81,6 +81,26 @@ type ClientStateSaver interface {
 	SaveClientState() error
 }
 
+// NodeStatePersister is implemented by node runners that can persist and
+// rebind a wireguard keypair (endpoint mode only; master/client return
+// Unimplemented from the RotateKeypair handler). The handler uses this
+// interface to gate which node modes can accept keypair-rotation RPCs.
+type NodeStatePersister interface {
+	// LoadKeypair returns the current private key bytes for the named tunnel.
+	// Returns os.ErrNotExist wrapped if the state file does not yet exist.
+	LoadKeypair(tunnelName string) ([]byte, error)
+
+	// PersistKeypair atomically writes the new private key for the named
+	// tunnel via .tmp + rename at mode 0600. Fail-closed: only synthesizes
+	// fresh state on os.ErrNotExist; propagates corrupt/permission errors.
+	PersistKeypair(tunnelName string, privateKey []byte) error
+
+	// LockRotation acquires the rotation mutex for the named tunnel and
+	// returns an unlock func. Callers MUST defer the unlock immediately.
+	// Serializes Load -> Persist -> Apply -> rollback against concurrent RPCs.
+	LockRotation(tunnelName string) (unlock func(), err error)
+}
+
 type TunnelInfo struct {
 	Name          string
 	OverlayIP     string
