@@ -21,10 +21,11 @@ import (
 // driftRow holds one row of the inspect comparison table.
 type driftRow struct {
 	peerName     string
-	adminKey     string // hex pubkey known to admin (from disk pubkey file)
-	diskKey      string // hex pubkey from node's transport.yml (disk state)
-	runtimeKey   string // hex pubkey from live wg/tunnel state (runtime)
-	adminIPs     string // allowed IPs per topology
+	ifaceName    string   // kernel interface name for this peer's tunnel (e.g. "wg-master-a")
+	adminKey     string   // hex pubkey known to admin (from disk pubkey file)
+	diskKey      string   // hex pubkey from node's transport.yml (disk state)
+	runtimeKey   string   // hex pubkey from live wg/tunnel state (runtime)
+	adminIPs     string   // allowed IPs per topology
 	diskIPs      string
 	runtimeIPs   string
 	driftReasons []string
@@ -32,8 +33,9 @@ type driftRow struct {
 
 // adminPeerView holds what admin believes a peer should look like.
 type adminPeerView struct {
-	name      string
-	pubkeyHex string
+	name       string
+	ifaceName  string // kernel interface name for this peer's tunnel
+	pubkeyHex  string
 	allowedIPs []string
 }
 
@@ -127,9 +129,10 @@ Pre-v1.10.1 nodes (returning codes.Unimplemented) are reported gracefully.`,
 
 			for _, ap := range adminPeers {
 				row := driftRow{
-					peerName: ap.name,
-					adminKey: ap.pubkeyHex,
-					adminIPs: strings.Join(ap.allowedIPs, ","),
+					peerName:  ap.name,
+					ifaceName: ap.ifaceName,
+					adminKey:  ap.pubkeyHex,
+					adminIPs:  strings.Join(ap.allowedIPs, ","),
 				}
 
 				// Locate node peer: prefer exact key match, fall back to name match.
@@ -230,6 +233,7 @@ func buildAdminView(
 
 	if master != nil {
 		// Admin expects one peer per bound endpoint.
+		// Master creates one tunnel interface per endpoint: "wg-" + endpointName (no truncation).
 		for _, epName := range master.Endpoints {
 			epNode := topo.FindEndpoint(epName)
 			if epNode == nil {
@@ -237,21 +241,29 @@ func buildAdminView(
 			}
 			pubkeyHex := readAdminPubkey(cfgDir, epName)
 			peers = append(peers, adminPeerView{
-				name:      epName,
-				pubkeyHex: pubkeyHex,
+				name:       epName,
+				ifaceName:  "wg-" + epName,
+				pubkeyHex:  pubkeyHex,
 				allowedIPs: []string{epNode.OverlayIP + "/32"},
 			})
 		}
 	} else if ep != nil {
 		// Admin expects one peer per master that this endpoint is bound to.
+		// Endpoint creates one interface per master: "wg-" + masterName, truncated to 15 chars
+		// total (kernel IFNAMSIZ limit): "wg-" is 3 chars, leaving 12 chars for the master name.
 		for _, m := range topo.Masters {
 			if !containsName(m.Endpoints, nodeName) {
 				continue
 			}
 			pubkeyHex := readAdminPubkey(cfgDir, m.Name)
+			masterNamePart := m.Name
+			if len(masterNamePart) > 12 {
+				masterNamePart = masterNamePart[:12]
+			}
 			peers = append(peers, adminPeerView{
-				name:      m.Name,
-				pubkeyHex: pubkeyHex,
+				name:       m.Name,
+				ifaceName:  "wg-" + masterNamePart,
+				pubkeyHex:  pubkeyHex,
 				allowedIPs: []string{m.OverlayIP + "/32"},
 			})
 		}
@@ -311,7 +323,10 @@ func sortedUniqueIPs(s []string) string {
 	return strings.Join(unique, ",")
 }
 
-// printInspectReport renders the 3-column drift report. Returns true if drift was found.
+// printInspectReport renders the drift report with an IFACE column inserted between PEER and
+// ADMIN_KEY. The IFACE column shows the kernel interface name for each peer's tunnel
+// (e.g. "wg-master-a" for an endpoint, "wg-ep-a" for a master).
+// Returns true if drift was found.
 func printInspectReport(nodeName string, state *proto.TransportStateResponse, rows []driftRow) bool {
 	fmt.Printf("Node: %s  Mode: %s  Overlay: %s\n\n", nodeName, state.GetMode(), state.GetOverlayIp())
 
@@ -322,14 +337,15 @@ func printInspectReport(nodeName string, state *proto.TransportStateResponse, ro
 
 	const (
 		colWidth  = 18
+		ifaceWidth = 20
 		ipWidth   = 22
 	)
 
-	// Header.
-	fmt.Printf("%-20s %-20s %-20s %-20s %-24s %-24s %-24s %s\n",
-		"PEER", "ADMIN_KEY", "NODE_KEY", "RUNTIME_KEY",
+	// Header — IFACE sits between PEER and ADMIN_KEY.
+	fmt.Printf("%-20s %-20s %-20s %-20s %-20s %-24s %-24s %-24s %s\n",
+		"PEER", "IFACE", "ADMIN_KEY", "NODE_KEY", "RUNTIME_KEY",
 		"ADMIN_IPS", "DISK_IPS", "RUNTIME_IPS", "STATUS")
-	fmt.Println(strings.Repeat("-", 160))
+	fmt.Println(strings.Repeat("-", 180))
 
 	hasDrift := false
 	for _, r := range rows {
@@ -346,8 +362,9 @@ func printInspectReport(nodeName string, state *proto.TransportStateResponse, ro
 		diskIPs := truncate(r.diskIPs, ipWidth)
 		runtimeIPs := truncate(r.runtimeIPs, ipWidth)
 
-		fmt.Printf("%-20s %-20s %-20s %-20s %-24s %-24s %-24s %s\n",
+		fmt.Printf("%-20s %-20s %-20s %-20s %-20s %-24s %-24s %-24s %s\n",
 			truncate(r.peerName, 20),
+			truncate(r.ifaceName, ifaceWidth),
 			adminKey, diskKey, runtimeKey,
 			adminIPs, diskIPs, runtimeIPs,
 			statusStr)

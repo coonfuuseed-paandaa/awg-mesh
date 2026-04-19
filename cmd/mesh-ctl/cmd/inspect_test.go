@@ -260,3 +260,132 @@ func TestPrintInspectReportWithDrift(t *testing.T) {
 		t.Error("expected hasDrift=true for row with key_mismatch, got false")
 	}
 }
+
+// TestBuildAdminViewEndpointIface verifies that buildAdminView sets ifaceName correctly
+// for endpoint nodes: "wg-" + masterName (truncated to 15 chars total per IFNAMSIZ).
+//
+// Anti-stub: replacing ifaceName assignment with "" makes all wantIface checks fail.
+func TestBuildAdminViewEndpointIface(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{
+			{Name: "master-a", Host: "10.0.0.1", OverlayIP: "10.1.0.1", ListenPort: 51820, Endpoints: []string{"ep-1"}},
+			{Name: "master-b", Host: "10.0.0.2", OverlayIP: "10.1.0.2", ListenPort: 51821, Endpoints: []string{"ep-1"}},
+		},
+		Endpoints: []topology.EndpointNode{
+			{Name: "ep-1", Host: "10.0.0.10", OverlayIP: "10.1.0.10", ListenPort: 51830},
+		},
+	}
+
+	cfgDir := t.TempDir() // no pubkey files needed — testing ifaceName only
+
+	ep1 := &topo.Endpoints[0]
+	peers := buildAdminView(topo, "ep-1", cfgDir, nil, ep1)
+
+	if len(peers) != 2 {
+		t.Fatalf("want 2 peers for ep-1 bound to 2 masters, got %d", len(peers))
+	}
+
+	wantIfaces := map[string]string{
+		"master-a": "wg-master-a",
+		"master-b": "wg-master-b",
+	}
+	for _, p := range peers {
+		want, ok := wantIfaces[p.name]
+		if !ok {
+			t.Errorf("unexpected peer name %q", p.name)
+			continue
+		}
+		if p.ifaceName != want {
+			t.Errorf("peer %q: ifaceName = %q, want %q", p.name, p.ifaceName, want)
+		}
+	}
+}
+
+// TestBuildAdminViewMasterIface verifies that buildAdminView sets ifaceName correctly
+// for master nodes: "wg-" + endpointName (no truncation on the master side).
+//
+// Anti-stub: replacing ifaceName assignment with "" makes all wantIface checks fail.
+func TestBuildAdminViewMasterIface(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{
+			{Name: "master-1", Host: "10.0.0.1", OverlayIP: "10.1.0.1", ListenPort: 51820, Endpoints: []string{"ep-a", "ep-b"}},
+		},
+		Endpoints: []topology.EndpointNode{
+			{Name: "ep-a", Host: "10.0.0.2", OverlayIP: "10.1.0.2", ListenPort: 51820},
+			{Name: "ep-b", Host: "10.0.0.3", OverlayIP: "10.1.0.3", ListenPort: 51821},
+		},
+	}
+
+	cfgDir := t.TempDir() // no pubkey files needed — testing ifaceName only
+
+	master := &topo.Masters[0]
+	peers := buildAdminView(topo, "master-1", cfgDir, master, nil)
+
+	if len(peers) != 2 {
+		t.Fatalf("want 2 peers for master with 2 endpoints, got %d", len(peers))
+	}
+
+	wantIfaces := map[string]string{
+		"ep-a": "wg-ep-a",
+		"ep-b": "wg-ep-b",
+	}
+	for _, p := range peers {
+		want, ok := wantIfaces[p.name]
+		if !ok {
+			t.Errorf("unexpected peer name %q", p.name)
+			continue
+		}
+		if p.ifaceName != want {
+			t.Errorf("peer %q: ifaceName = %q, want %q", p.name, p.ifaceName, want)
+		}
+	}
+}
+
+// TestPrintInspectReportHasIfaceColumn verifies that printInspectReport output
+// includes an "IFACE" column header between "PEER" and "ADMIN_KEY".
+//
+// Anti-stub: removing the IFACE header from printInspectReport makes this fail.
+func TestPrintInspectReportHasIfaceColumn(t *testing.T) {
+	t.Parallel()
+
+	// Redirect stdout to capture output.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+
+	state := &proto.TransportStateResponse{
+		NodeName:  "ep-1",
+		Mode:      "endpoint",
+		OverlayIp: "10.1.0.10/32",
+	}
+	rows := []driftRow{
+		{peerName: "master-a", ifaceName: "wg-master-a",
+			adminKey: "aabb", diskKey: "aabb", runtimeKey: "aabb",
+			adminIPs: "10.1.0.1/32", diskIPs: "10.1.0.1/32", runtimeIPs: "10.1.0.1/32"},
+	}
+
+	printInspectReport("ep-1", state, rows)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	os.Stdout = oldStdout
+
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	output := string(buf[:n])
+
+	if !strings.Contains(output, "IFACE") {
+		t.Errorf("expected output to contain IFACE header, got:\n%s", output)
+	}
+	if !strings.Contains(output, "wg-master-a") {
+		t.Errorf("expected output to contain iface name 'wg-master-a', got:\n%s", output)
+	}
+}
