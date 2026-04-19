@@ -246,7 +246,11 @@ jobs:
             echo test > /config/mesh.token &&
             timeout 5 /usr/local/bin/awg-mesh-node --mode endpoint --name ci-test --overlay-ip 10.0.0.99 2>&1 || true
           ' | tee /tmp/smoke.log
-          grep -q "endpoint interface created" /tmp/smoke.log || (echo "::error::Smoke test failed — no AWG interface created" && exit 1)
+          # v1.12.2+: endpoint uses lazy per-master iface creation on AddPeer RPC instead of
+          # creating a wg0 on startup. Accept either the new lazy marker or the legacy message
+          # so the check remains backward-compatible if the endpoint ever runs in the old mode.
+          grep -qE "endpoint_lazy_iface_mode|endpoint per-master iface created|endpoint interface created" /tmp/smoke.log \
+            || (echo "::error::Smoke test failed — no endpoint iface signal (lazy or legacy)" && exit 1)
           grep -q "gRPC server listening" /tmp/smoke.log || (echo "::error::Smoke test failed — no gRPC server" && exit 1)
           echo "Smoke test passed"
 
