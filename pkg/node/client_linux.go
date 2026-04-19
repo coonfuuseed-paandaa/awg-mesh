@@ -598,7 +598,7 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 		if balancerIP := strings.TrimSpace(tunnel.BalancerIP); balancerIP != "" {
 			c.SetBalancerIP(pubkeyHex, balancerIP)
 		}
-		if err := c.ConfigureTransport(pubkeyHex, strings.TrimSpace(tunnel.TransportIP), strings.TrimSpace(tunnel.PeerTransportIP), tunnel.AllowedIPs, tunnel.Name); err != nil {
+		if err := c.ConfigureTransport(pubkeyHex, strings.TrimSpace(tunnel.TransportIP), strings.TrimSpace(tunnel.PeerTransportIP), tunnel.AllowedIPs, tunnel.Name, nil); err != nil {
 			c.node.logger.Warn().
 				Str("tunnel", tunnel.Name).
 				Err(err).
