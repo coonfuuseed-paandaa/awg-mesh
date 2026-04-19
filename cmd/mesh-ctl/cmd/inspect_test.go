@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -345,20 +346,86 @@ func TestBuildAdminViewMasterIface(t *testing.T) {
 	}
 }
 
+func TestReadAdminPubkey(t *testing.T) {
+	t.Parallel()
+
+	cfgDir := t.TempDir()
+
+	t.Run("raw 32-byte key is hex-encoded", func(t *testing.T) {
+		raw := make([]byte, 32)
+		for i := range raw {
+			raw[i] = byte(i + 1)
+		}
+		rawNode := "ep-raw"
+		rawDir := nodeDir(cfgDir, rawNode)
+		if err := os.MkdirAll(rawDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(rawDir, "pubkey"), raw, 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		got := readAdminPubkey(cfgDir, rawNode)
+		want := hex.EncodeToString(raw)
+		if got != want {
+			t.Fatalf("readAdminPubkey(raw) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("hex string with newline is parsed", func(t *testing.T) {
+		want := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		hexNode := "ep-hex"
+		hexDir := nodeDir(cfgDir, hexNode)
+		if err := os.MkdirAll(hexDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(hexDir, "pubkey"), []byte(want+"\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		got := readAdminPubkey(cfgDir, hexNode)
+		if got != strings.ToLower(want) {
+			t.Fatalf("readAdminPubkey(hex+newline) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("invalid pubkey content returns empty", func(t *testing.T) {
+		invalidNode := "ep-invalid"
+		invalidDir := nodeDir(cfgDir, invalidNode)
+		if err := os.MkdirAll(invalidDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(invalidDir, "pubkey"), []byte("not-a-pubkey"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if got := readAdminPubkey(cfgDir, invalidNode); got != "" {
+			t.Fatalf("readAdminPubkey(invalid) = %q, want empty string", got)
+		}
+	})
+
+	t.Run("missing key file returns empty", func(t *testing.T) {
+		t.Parallel()
+
+		if got := readAdminPubkey(cfgDir, "missing-node"); got != "" {
+			t.Fatalf("readAdminPubkey(missing) = %q, want empty string", got)
+		}
+	})
+}
+
 // TestPrintInspectReportHasIfaceColumn verifies that printInspectReport output
 // includes an "IFACE" column header between "PEER" and "ADMIN_KEY".
 //
 // Anti-stub: removing the IFACE header from printInspectReport makes this fail.
 func TestPrintInspectReportHasIfaceColumn(t *testing.T) {
-	t.Parallel()
-
-	// Redirect stdout to capture output.
+	// Do NOT t.Parallel() here: this test swaps os.Stdout which is a process-wide
+	// resource. Running in parallel with other tests that also mutate os.Stdout
+	// (or that call fmt.Println during printInspectReport) triggers -race warnings.
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
 	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
 
 	state := &proto.TransportStateResponse{
 		NodeName:  "ep-1",
@@ -376,7 +443,6 @@ func TestPrintInspectReportHasIfaceColumn(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatalf("close pipe writer: %v", err)
 	}
-	os.Stdout = oldStdout
 
 	buf := make([]byte, 4096)
 	n, _ := r.Read(buf)
