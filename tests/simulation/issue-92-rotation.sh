@@ -22,13 +22,6 @@
 # uses the control-plane path instead — `mesh-ctl inspect <node>` fetches
 # runtime peer state via gRPC GetTransportState.
 #
-# Scope note — this harness does NOT validate that the tier-3 operation
-# actually rotated the peer's cryptographic keypair. That concern is tracked
-# separately as local tracker #125 (tier-3 second-layer ApplyParams silently
-# no-ops — master runtime peer key never changes, endpoint never receives
-# the new private key). Restoring keypair-rotation assertions here is
-# contingent on #125 landing in a future release (target v1.12).
-#
 # Usage (Linux host with Docker):
 #   cd <repo-root>
 #   bash tests/simulation/issue-92-rotation.sh
@@ -608,6 +601,89 @@ for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
 done
 
 # ---------------------------------------------------------------------------
+# R3c: Admin-state pubkey CHANGED from baseline after rotation.
+#      SetPubkey must have committed the new key to the admin-state file.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3c] Verifying admin-state pubkey changed after rotation..."
+POST_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
+if [[ -z "${POST_ADMIN}" || "${#POST_ADMIN}" -lt 32 ]]; then
+    fail "R3c: post-rotation admin pubkey missing or malformed (len=${#POST_ADMIN})"
+elif [[ "${POST_ADMIN}" == "${BASELINE_ADMIN}" ]]; then
+    fail "R3c: admin-state pubkey unchanged after rotation — key wasn't committed (was: ${BASELINE_ADMIN:0:8}..., now: ${POST_ADMIN:0:8}...)"
+else
+    pass "R3c: admin-state pubkey rotated (${BASELINE_ADMIN:0:8}... → ${POST_ADMIN:0:8}...)"
+fi
+
+# ---------------------------------------------------------------------------
+# R3d: Per-master runtime pubkey CHANGED from baseline.
+#      UpdateTunnelPeer must have replaced the old peer entry on each master.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3d] Verifying per-master runtime pubkey changed..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    POST_RT=$(inspect_runtime_prefix_for "${m}" "${ENDPOINT_US_01}")
+    case "${m}" in
+        "${MASTER_RU_01}") BASELINE_RT="${BASELINE_RT_RU_01}" ;;
+        "${MASTER_RU_02}") BASELINE_RT="${BASELINE_RT_RU_02}" ;;
+    esac
+    if [[ -z "${POST_RT}" ]]; then
+        fail "R3d: ${m} runtime pubkey missing after rotation"
+    elif [[ "${POST_RT}" == "${BASELINE_RT}" ]]; then
+        fail "R3d: ${m} runtime pubkey unchanged (${BASELINE_RT:0:8}...) — UpdateTunnelPeer no-op"
+    else
+        pass "R3d: ${m} runtime pubkey rotated (${BASELINE_RT:0:8}... → ${POST_RT:0:8}...)"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R3e: Per-master runtime pubkey CONVERGED with admin-state.
+#      After successful rotation, admin-state and each master's runtime peer
+#      entry must reflect the same new public key.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3e] Verifying per-master runtime converged with admin-state..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    POST_RT=$(inspect_runtime_prefix_for "${m}" "${ENDPOINT_US_01}")
+    if admin_prefix_matches_runtime "${POST_ADMIN}" "${POST_RT}"; then
+        pass "R3e: ${m} runtime pubkey matches admin-state (${POST_ADMIN:0:8}...)"
+    else
+        fail "R3e: ${m} runtime (${POST_RT:0:8}...) differs from admin-state (${POST_ADMIN:0:8}...)"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R3f: OLD baseline pubkey NOT present on any master (no phantom peer).
+#      Remove(oldPubKey) must have run — the old peer entry must be gone.
+#      We use `mesh-ctl inspect <master>` and check that the baseline admin
+#      pubkey prefix does not appear anywhere in the output (which would
+#      indicate the old peer is still registered as an extra_peer or key_mismatch).
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3f] Verifying old pubkey is gone from master peer tables..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    peers=$(meshctl inspect "${m}" 2>&1 || true)
+    if echo "${peers}" | grep -qi "${BASELINE_ADMIN:0:16}"; then
+        fail "R3f: ${m} still has old pubkey ${BASELINE_ADMIN:0:8}... in peer table — Remove(old) didn't run"
+    else
+        pass "R3f: ${m} no longer has old pubkey ${BASELINE_ADMIN:0:8}... — phantom absent"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R3g: `mesh-ctl inspect <endpoint>` reports zero drift (exit 0).
+#      Admin-state, disk, and runtime must all agree after rotation commits.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3g] Verifying zero drift across admin-state / disk / runtime..."
+if meshctl inspect "${ENDPOINT_US_01}" > /tmp/inspect-drift.txt 2>&1; then
+    pass "R3g: mesh-ctl inspect reports zero drift after rotation"
+else
+    fail "R3g: mesh-ctl inspect reports drift — admin/disk/runtime inconsistent"
+    sed 's/^/    /' /tmp/inspect-drift.txt
+fi
+
+# ---------------------------------------------------------------------------
 # R4: Post-rotation control-plane + data-plane liveness. Masters must remain
 #     gRPC-reachable and the amneziawg-go tunnel interface must still be up.
 #     A hard failure in tier-3 would leave the interface down or make the
@@ -657,15 +733,6 @@ if [[ "${POST_RC}" -eq 0 ]]; then
 else
     fail "R5: post-rotation endpoint init exited ${POST_RC} — control plane broken"
 fi
-
-# Scope note — this harness does NOT verify that the tier-3 operation actually
-# rotated the cryptographic keypair. local tracker #125 tracks that separate
-# bug (ApplyParams second call is a silent no-op; CLI never delivers the new
-# private key to the endpoint). Restoring keypair-rotation assertions is
-# contingent on #125 landing.
-info "R5 note: keypair-rotation assertions are intentionally absent — see"
-info "  local tracker #125 for the second-layer ApplyParams silent-no-op bug."
-info "  This harness covers only the #117 fix scope (no uapi errno=-22)."
 
 # ---------------------------------------------------------------------------
 # Summary
