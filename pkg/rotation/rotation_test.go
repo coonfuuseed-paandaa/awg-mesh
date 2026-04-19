@@ -76,6 +76,10 @@ func (m *mockAwgAgentClient) GetRoutes(_ context.Context, _ *proto.Empty, _ ...g
 	return &proto.RouteTable{}, nil
 }
 
+func (m *mockAwgAgentClient) RotateKeypair(_ context.Context, _ *proto.RotateKeypairRequest, _ ...grpc.CallOption) (*proto.RotateKeypairResponse, error) {
+	return &proto.RotateKeypairResponse{Success: true}, nil
+}
+
 func (m *mockAwgAgentClient) RotateParams(_ context.Context, req *proto.RotateParamsRequest, _ ...grpc.CallOption) (*proto.RotateParamsResponse, error) {
 	m.mu.Lock()
 	m.rotateCalls++

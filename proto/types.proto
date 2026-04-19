@@ -163,11 +163,24 @@ message RotateParamsRequest {
   int32 tier = 2;
   AwgParams new_params = 3;
   bytes new_public_key = 4;
+  bytes old_public_key = 5;
+  repeated string allowed_ips = 6;
 }
 
 message RotateParamsResponse {
   bool success = 1;
   string message = 2;
+}
+
+message RotateKeypairRequest {
+  bytes new_private_key = 1;
+  string tunnel_name = 2;
+}
+
+message RotateKeypairResponse {
+  bool success = 1;
+  bytes new_public_key = 2;
+  string message = 3;
 }
 
 message GetParamsRequest {
