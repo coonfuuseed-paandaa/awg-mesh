@@ -266,17 +266,24 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 		return fmt.Errorf("read admin-state pubkey for %q: %w", endpoint.Name, err)
 	}
 
-	var oldPubKey wg.Key
-	if oldPubKeyStr != "" {
-		oldBytes, decErr := hex.DecodeString(strings.TrimSpace(oldPubKeyStr))
-		if decErr != nil {
-			return fmt.Errorf("admin-state pubkey for %q is corrupt (hex decode failed): %w", endpoint.Name, decErr)
-		}
-		if len(oldBytes) != 32 {
-			return fmt.Errorf("admin-state pubkey for %q has wrong length %d (want 32)", endpoint.Name, len(oldBytes))
-		}
-		copy(oldPubKey[:], oldBytes)
+	// Guard: tier-3 rotation requires a prior `mesh-ctl endpoint init`. Without
+	// admin-state there is no old key for masters to Remove; UpdateTunnelPeer
+	// would be called with a zero-value pubkey and any rollback attempt would
+	// target the zero key — corrupting cluster state. Operator must run init
+	// first.
+	if strings.TrimSpace(oldPubKeyStr) == "" {
+		return fmt.Errorf("tier-3 rotation requires an initialized endpoint: no admin-state pubkey for %q (run `mesh-ctl endpoint init %s` first)", endpoint.Name, endpoint.Name)
 	}
+
+	var oldPubKey wg.Key
+	oldBytes, decErr := hex.DecodeString(strings.TrimSpace(oldPubKeyStr))
+	if decErr != nil {
+		return fmt.Errorf("admin-state pubkey for %q is corrupt (hex decode failed): %w", endpoint.Name, decErr)
+	}
+	if len(oldBytes) != 32 {
+		return fmt.Errorf("admin-state pubkey for %q has wrong length %d (want 32)", endpoint.Name, len(oldBytes))
+	}
+	copy(oldPubKey[:], oldBytes)
 
 	// Step 1: Generate fresh curve25519 keypair.
 	privateKey, err := wg.GeneratePrivateKey()
@@ -382,7 +389,7 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 				continue
 			}
 
-			// oldPubKey is the original public key parsed from admin-state (base64 → wg.Key).
+			// oldPubKey is the original public key parsed from admin-state (hex → wg.Key).
 			// Passing oldPubKey[:] restores the peer entry to the pre-rotation state.
 			_, revertErr := mClient.Agent().UpdateTunnelPeer(ctx, &proto.UpdateTunnelPeerRequest{
 				Name:          endpoint.Name,
@@ -401,7 +408,9 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 			}
 		}
 
-		printTier3Table(results)
+		if tableErr := printTier3Table(results); tableErr != nil {
+			fmt.Fprintf(os.Stderr, "tier 3 rotation: failed to write results table: %v\n", tableErr)
+		}
 
 		// Count failures for the error summary.
 		failCount := 0
@@ -423,12 +432,16 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 	}); err != nil {
 		// Masters already committed. Admin-state write failed.
 		// Surface as a cluster-inconsistent state; operator must run 'mesh-ctl reconcile'.
-		printTier3Table(results)
+		if tableErr := printTier3Table(results); tableErr != nil {
+			fmt.Fprintf(os.Stderr, "tier 3 rotation: failed to write results table: %v\n", tableErr)
+		}
 		fmt.Fprintf(os.Stderr, "tier 3 rotation: masters updated but admin-state commit failed — run 'mesh-ctl reconcile %s'\n", endpoint.Name)
 		return fmt.Errorf("commit admin-state: %w", err)
 	}
 
-	printTier3Table(results)
+	if tableErr := printTier3Table(results); tableErr != nil {
+		fmt.Fprintf(os.Stderr, "tier 3 rotation: failed to write results table: %v\n", tableErr)
+	}
 	fmt.Printf("tier 3 rotation complete: endpoint %q pubkey rotated (%d/%d masters)\n",
 		endpoint.Name, len(masters), len(masters))
 	return nil
@@ -437,17 +450,21 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 // printTier3Table emits the structured NAME/STATUS/DETAIL table to stderr.
 // One row per master, final status only — never duplicate rows.
 // STATUS values: ROTATED, FAILED, REVERTED, REVERT_FAILED.
-func printTier3Table(results []tier3MasterResult) {
+func printTier3Table(results []tier3MasterResult) error {
 	w := tabwriter.NewWriter(os.Stderr, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tSTATUS\tDETAIL")
+	if _, err := fmt.Fprintln(w, "NAME\tSTATUS\tDETAIL"); err != nil {
+		return err
+	}
 	for _, r := range results {
 		detail := r.detail
 		if detail == "" {
 			detail = "-"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", r.name, r.status, detail)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", r.name, r.status, detail); err != nil {
+			return err
+		}
 	}
-	_ = w.Flush()
+	return w.Flush()
 }
 
 // connectEndpointAgent dials the gRPC agent on an endpoint node.

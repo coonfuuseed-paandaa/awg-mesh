@@ -1098,7 +1098,7 @@ mesh-ctl reconcile
 ```bash
 mesh-ctl rotate --tier 1                    # rotate junk packet count/sizes
 mesh-ctl rotate --tier 2                    # rotate S1/H1/S2/H2 obfuscation headers
-mesh-ctl rotate --tier 3 <endpoint>         # full keypair rotation (v1.12+: 4-party coordinated, masters updated automatically)
+mesh-ctl rotate --tier 3 --endpoint <endpoint>  # full keypair rotation (v1.12+: 4-party coordinated, masters updated automatically)
 ```
 
 ### Token management
@@ -1229,7 +1229,7 @@ Schedule rotation via `mesh-ctl rotate` or configure automatic intervals in `mes
 
 #### Tier 3 — full keypair rotation (v1.12+)
 
-`mesh-ctl rotate --tier 3 <endpoint-name>` atomically rotates the endpoint's
+`mesh-ctl rotate --tier 3 --endpoint <endpoint-name>` atomically rotates the endpoint's
 WireGuard keypair across the entire cluster:
 
 1. CLI generates fresh Curve25519 keypair.

@@ -292,6 +292,12 @@ func ipcGetParsed(t *testing.T, dev interface {
 		return nil, fmt.Errorf("IpcGet: %w", err)
 	}
 	// Append the errno terminator that the UAPI socket framing normally adds.
+	// Guard against IpcGet returning output without a trailing newline so we
+	// never produce a merged line (e.g. "key=val\errno=0\n" instead of two
+	// separate lines).
+	if !strings.HasSuffix(raw, "\n") {
+		raw += "\n"
+	}
 	return parseDevice(strings.NewReader(raw + "errno=0\n"))
 }
 
