@@ -184,6 +184,27 @@ func (e *EndpointRunner) closeIface(masterName string) error {
 	return iface.Close()
 }
 
+// cleanupStaleIfaces closes any interface whose master name is NOT present in
+// activeTunnels. Called during Run() startup after createInterface() to evict
+// masters that were removed from topology between restarts.
+// Errors are logged per-master and do not abort the cleanup loop.
+func (e *EndpointRunner) cleanupStaleIfaces(activeTunnels map[string]bool) {
+	for _, masterName := range e.listIfaces() {
+		if activeTunnels[masterName] {
+			continue
+		}
+		e.node.logger.Warn().
+			Str("master", masterName).
+			Msg("closing stale iface: master no longer in transport state")
+		if err := e.closeIface(masterName); err != nil {
+			e.node.logger.Warn().
+				Err(err).
+				Str("master", masterName).
+				Msg("stale iface close failed")
+		}
+	}
+}
+
 // closeAllIfaces closes every interface in the map and clears it. Acquires write lock.
 func (e *EndpointRunner) closeAllIfaces() error {
 	e.platformState.mu.Lock()

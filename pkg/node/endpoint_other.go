@@ -32,6 +32,9 @@ func (e *EndpointRunner) closeAllIfaces() error {
 	return nil
 }
 
+// cleanupStaleIfaces is a no-op on non-Linux platforms.
+func (e *EndpointRunner) cleanupStaleIfaces(_ map[string]bool) {}
+
 func (e *EndpointRunner) ApplyParams(tunnelName string, cfg wg.Config) error {
 	return fmt.Errorf("UAPI not supported on this platform")
 }
