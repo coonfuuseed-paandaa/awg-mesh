@@ -40,11 +40,12 @@ type AgentHandler struct {
 	captureFunc      CaptureFunc
 	captureScheduler CaptureScheduler
 	keyProvider      KeyProvider
+	statePersister   NodeStatePersister // nil for master/client modes; set for endpoint mode
 }
 
 // NewAgentHandler creates an AgentHandler that stores received config under configDir.
 func NewAgentHandler(configDir string, logger zerolog.Logger) *AgentHandler {
-	return NewAgentHandlerFull(configDir, logger, nil, nil, nil, nil, nil, nil, nil)
+	return NewAgentHandlerFull(configDir, logger, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 // NewAgentHandlerFull creates an AgentHandler with optional runtime managers.
@@ -58,6 +59,7 @@ func NewAgentHandlerFull(
 	stateProvider NodeStateProvider,
 	captureScheduler CaptureScheduler,
 	keyProvider KeyProvider,
+	statePersister NodeStatePersister,
 ) *AgentHandler {
 	return &AgentHandler{
 		configDir:        configDir,
@@ -69,6 +71,7 @@ func NewAgentHandlerFull(
 		captureFunc:      captureFunc,
 		captureScheduler: captureScheduler,
 		keyProvider:      keyProvider,
+		statePersister:   statePersister,
 	}
 }
 
@@ -912,6 +915,71 @@ func (h *AgentHandler) RotateToken(_ context.Context, req *proto.RotateTokenRequ
 
 	h.logger.Info().Msg("token rotated")
 	return &proto.RotateTokenResponse{Success: true}, nil
+}
+
+// RotateKeypair atomically persists and applies a new WireGuard private key on
+// endpoint-mode nodes. Master and client nodes return codes.Unimplemented
+// because h.statePersister is nil for those modes.
+//
+// Security: private key bytes are NEVER written to any log at any level.
+func (h *AgentHandler) RotateKeypair(ctx context.Context, req *proto.RotateKeypairRequest) (*proto.RotateKeypairResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+
+	// Gate: only endpoint mode has a statePersister injected.
+	if h.statePersister == nil {
+		return nil, status.Error(codes.Unimplemented, "keypair rotation not available in this mode")
+	}
+
+	// Validate key length first so we return InvalidArgument before locking.
+	if len(req.PrivateKey) != 32 {
+		return nil, status.Errorf(codes.InvalidArgument, "private_key must be exactly 32 bytes, got %d", len(req.PrivateKey))
+	}
+
+	tunnelName := strings.TrimSpace(req.TunnelName)
+	if tunnelName == "" {
+		return nil, status.Error(codes.InvalidArgument, "tunnel_name is required")
+	}
+	if !validTunnelName.MatchString(tunnelName) {
+		return nil, status.Errorf(codes.InvalidArgument, "tunnel_name %q must match [a-zA-Z0-9_-]{1,12}", tunnelName)
+	}
+
+	// Serialize concurrent rotate RPCs for this node via the persister lock.
+	unlock, err := h.statePersister.LockRotation(tunnelName)
+	if err != nil {
+		h.logger.Error().Err(err).Str("tunnel", tunnelName).Msg("rotate keypair: lock failed")
+		return nil, status.Errorf(codes.Internal, "acquire rotation lock: %v", err)
+	}
+	defer unlock()
+	h.logger.Info().Str("tunnel", tunnelName).Msg("rotate keypair: lock acquired")
+
+	// Persist the new private key atomically before touching the data plane.
+	if persistErr := h.statePersister.PersistKeypair(tunnelName, req.PrivateKey); persistErr != nil {
+		h.logger.Error().Err(persistErr).Str("tunnel", tunnelName).
+			Msg("rotate keypair: persist failed")
+		return nil, status.Errorf(codes.Internal, "persist keypair: %v", persistErr)
+	}
+	h.logger.Info().Str("tunnel", tunnelName).Int("key_len", len(req.PrivateKey)).
+		Msg("rotate keypair: persisted to disk")
+
+	// Copy into wg.Key and derive the public key via curve25519 scalar mult.
+	var newPrivKey wg.Key
+	copy(newPrivKey[:], req.PrivateKey)
+	newPubKey := newPrivKey.PublicKey()
+
+	// Apply to the live WireGuard interface via UAPI.
+	if h.paramApplier != nil {
+		cfg := wg.Config{PrivateKey: &newPrivKey}
+		if applyErr := h.paramApplier.ApplyParams(tunnelName, cfg); applyErr != nil {
+			h.logger.Error().Err(applyErr).Str("tunnel", tunnelName).
+				Msg("rotate keypair: uapi apply failed")
+			return nil, status.Errorf(codes.Internal, "apply keypair to uapi: %v", applyErr)
+		}
+		h.logger.Info().Str("tunnel", tunnelName).Msg("rotate keypair: uapi applied")
+	}
+
+	return &proto.RotateKeypairResponse{NewPublicKey: newPubKey[:]}, nil
 }
 
 // mapParamsToConfig converts proto AWG params to wg.Config.

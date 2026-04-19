@@ -87,7 +87,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 		}
 	}
 	scheduler := newCaptureScheduler(m.node.logger, newCaptureFunc())
-	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, scheduler, m); err != nil {
+	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, scheduler, m, nil); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	m.startTime = time.Now()
