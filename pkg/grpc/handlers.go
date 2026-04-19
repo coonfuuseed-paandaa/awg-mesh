@@ -653,12 +653,17 @@ func (h *AgentHandler) RotateParams(_ context.Context, req *proto.RotateParamsRe
 	h.logger.Info().
 		Str("tunnel", tunnelName).
 		Int32("tier", req.GetTier()).
-		Msg("rotate params requested")
+		Bool("has_jc", cfg.Jc != nil).
+		Bool("has_s1", cfg.S1 != nil).
+		Bool("has_s2", cfg.S2 != nil).
+		Bool("has_h1", cfg.H1 != nil).
+		Bool("has_i1", cfg.I1 != nil).
+		Msg("rotate params: applying AWG config via UAPI")
 
 	// Apply AWG obfuscation parameters via UAPI.
 	if err := h.paramApplier.ApplyParams(tunnelName, cfg); err != nil {
-		h.logger.Error().Err(err).Str("tunnel", tunnelName).Int32("tier", req.GetTier()).Msg("rotate params failed")
-		return nil, status.Errorf(codes.Internal, "apply params: %v", err)
+		h.logger.Error().Err(err).Str("tunnel", tunnelName).Int32("tier", req.GetTier()).Msg("rotate params: UAPI apply failed")
+		return nil, status.Errorf(codes.Internal, "apply params: configure tunnel %q: %v", tunnelName, err)
 	}
 
 	// Tier 3: apply new peer public key if provided.

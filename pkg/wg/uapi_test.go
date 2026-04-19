@@ -80,6 +80,41 @@ func TestWriteConfigSuccess(t *testing.T) {
 	}
 }
 
+// TestWriteConfigS3S4NotEmitted asserts that S3 and S4 are silently dropped
+// from the UAPI payload. amneziawg-go v1.0.4 only recognises s1/s2 in its
+// handleDeviceLine switch; any unrecognised key returns errno=-22 (EINVAL).
+// Regression test for local tracker issue #117.
+func TestWriteConfigS3S4NotEmitted(t *testing.T) {
+	t.Parallel()
+
+	s1, s2, s3, s4 := 15, 20, 30, 5
+	cfg := Config{
+		S1: &s1,
+		S2: &s2,
+		S3: &s3,
+		S4: &s4,
+	}
+
+	var buf strings.Builder
+	if err := writeConfig(&buf, cfg); err != nil {
+		t.Fatalf("writeConfig returned error: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "s3=") {
+		t.Errorf("writeConfig emitted s3 but amneziawg-go UAPI does not accept it; would cause errno=-22\noutput:\n%s", output)
+	}
+	if strings.Contains(output, "s4=") {
+		t.Errorf("writeConfig emitted s4 but amneziawg-go UAPI does not accept it; would cause errno=-22\noutput:\n%s", output)
+	}
+	if !strings.Contains(output, "s1=15\n") {
+		t.Errorf("writeConfig missing s1; output:\n%s", output)
+	}
+	if !strings.Contains(output, "s2=20\n") {
+		t.Errorf("writeConfig missing s2; output:\n%s", output)
+	}
+}
+
 func TestWriteConfigRequiresPeerPublicKey(t *testing.T) {
 	t.Parallel()
 

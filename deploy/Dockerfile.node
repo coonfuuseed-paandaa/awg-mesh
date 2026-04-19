@@ -16,6 +16,12 @@ RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags "-X main.versionFromBui
 FROM alpine:3.21
 
 # libpcap runtime library required for live packet capture.
+# NOTE: `wireguard-tools` (`wg` CLI) is intentionally NOT installed. amneziawg-go
+# runs in userspace and exposes its UAPI via /run/amneziawg/<iface>.sock, which
+# the kernel-targeted `wg` CLI cannot access ("Unable to access interface: Not
+# supported"). Operator introspection goes through `mesh-ctl inspect <node>`
+# which reads runtime state via gRPC. The E2E simulation harness
+# (tests/simulation/issue-92-rotation.sh) also uses `mesh-ctl inspect`.
 RUN apk add --no-cache iptables ip6tables iproute2 libpcap
 
 COPY --from=builder /build/bin/awg-mesh-node /usr/local/bin/awg-mesh-node
