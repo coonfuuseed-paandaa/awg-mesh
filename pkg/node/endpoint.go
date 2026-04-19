@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
@@ -16,6 +17,9 @@ type EndpointRunner struct {
 	node          *Node
 	startTime     time.Time
 	platformState endpointPlatformState
+	// rotateMu serializes concurrent RotateKeypair RPC calls per NFR-5.
+	// A single mutex is sufficient because each endpoint container serves one tunnel.
+	rotateMu sync.Mutex
 }
 
 // NewEndpointRunner creates an endpoint mode runner.
@@ -47,7 +51,7 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
-	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e, e, e, nil, e); err != nil {
+	if err := startGRPCServer(ctx, e.node.config.ConfigDir, e.node.logger, nil, e, e, e, nil, e, e); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
 	}
 	e.startTime = time.Now()
