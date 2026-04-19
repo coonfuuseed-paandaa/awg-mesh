@@ -9,6 +9,9 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
+// endpointPlatformState is an empty stub on non-Linux platforms.
+// On Linux, this struct holds the ifaces map and its protecting mutex.
+// The wg.Interface type is Linux-only, so this struct cannot reference it here.
 type endpointPlatformState struct{}
 
 func (e *EndpointRunner) createInterface() error {
@@ -21,6 +24,11 @@ func (e *EndpointRunner) createInterface() error {
 }
 
 func (e *EndpointRunner) closeInterface() error {
+	return nil
+}
+
+// closeAllIfaces is a no-op on non-Linux platforms (no interfaces are created).
+func (e *EndpointRunner) closeAllIfaces() error {
 	return nil
 }
 
