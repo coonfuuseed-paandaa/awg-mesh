@@ -22,12 +22,14 @@
 # uses the control-plane path instead — `mesh-ctl inspect <node>` fetches
 # runtime peer state via gRPC GetTransportState.
 #
-# Scope note — this harness does NOT validate that the tier-3 operation
-# actually rotated the peer's cryptographic keypair. That concern is tracked
-# separately as local tracker #125 (tier-3 second-layer ApplyParams silently
-# no-ops — master runtime peer key never changes, endpoint never receives
-# the new private key). Restoring keypair-rotation assertions here is
-# contingent on #125 landing in a future release (target v1.12).
+# Scope (post local tracker #125 / v1.12):
+#   R6  mesh-ctl rotate --tier 3 — full keypair rotation (endpoint privKey
+#       rebind via new RotateKeypair RPC + per-master UpdateTunnelPeer swap +
+#       atomic admin-state write).
+#   R6a admin-state pubkey on disk DIFFERS from pre-rotation.
+#   R6b both masters show the NEW pubkey in mesh-ctl inspect runtime column.
+#   R6c OLD pubkey is absent from runtime peer list on every master.
+#   R6d `mesh-ctl inspect` reports zero drift on both masters post-rotation.
 #
 # Usage (Linux host with Docker):
 #   cd <repo-root>
@@ -658,14 +660,72 @@ else
     fail "R5: post-rotation endpoint init exited ${POST_RC} — control plane broken"
 fi
 
-# Scope note — this harness does NOT verify that the tier-3 operation actually
-# rotated the cryptographic keypair. local tracker #125 tracks that separate
-# bug (ApplyParams second call is a silent no-op; CLI never delivers the new
-# private key to the endpoint). Restoring keypair-rotation assertions is
-# contingent on #125 landing.
-info "R5 note: keypair-rotation assertions are intentionally absent — see"
-info "  local tracker #125 for the second-layer ApplyParams silent-no-op bug."
-info "  This harness covers only the #117 fix scope (no uapi errno=-22)."
+# ---------------------------------------------------------------------------
+# R6: Actual keypair rotation via `mesh-ctl rotate --tier 3` (engram #125, v1.12).
+#     After the tier-3 rotation fix the keypair is genuinely rotated end-to-end:
+#     endpoint persists new privKey, every master swaps Remove(old)+Add(new)
+#     via UpdateTunnelPeer, admin-state pubkey updated atomically.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R6] Rotating endpoint keypair via mesh-ctl rotate --tier 3..."
+
+# Capture admin-state BEFORE rotation — this is the oldPub reference.
+BEFORE_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
+info "admin pubkey before rotation: ${BEFORE_ADMIN:0:8}..."
+
+ROTATE_OUT=$(meshctl rotate --tier 3 --endpoint "${ENDPOINT_US_01}" 2>&1) \
+    && ROTATE_RC=0 || ROTATE_RC=$?
+info "rotation output:"
+echo "${ROTATE_OUT}" | sed 's/^/    /'
+
+if [[ "${ROTATE_RC}" -ne 0 ]]; then
+    fail "R6: mesh-ctl rotate --tier 3 exited non-zero (rc=${ROTATE_RC})"
+    echo "[abort] tier-3 rotation failed — cannot verify keypair-rotation assertions."
+    exit "${FAILURES}"
+fi
+pass "R6: mesh-ctl rotate --tier 3 exited 0"
+
+# R6a: admin-state pubkey on disk DIFFERS from pre-rotation value (keypair changed).
+AFTER_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
+if [[ -z "${AFTER_ADMIN}" || "${#AFTER_ADMIN}" -lt 32 ]]; then
+    fail "R6a: admin-state pubkey missing/malformed after rotation"
+elif [[ "${AFTER_ADMIN}" == "${BEFORE_ADMIN}" ]]; then
+    fail "R6a: admin-state pubkey did NOT change after rotation (still ${AFTER_ADMIN:0:8}...)"
+else
+    pass "R6a: admin-state pubkey CHANGED — ${BEFORE_ADMIN:0:8}... → ${AFTER_ADMIN:0:8}..."
+fi
+
+# R6b: both masters show the NEW pubkey in mesh-ctl inspect runtime column.
+for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    rt=$(inspect_runtime_prefix_for "${master_name}" "${ENDPOINT_US_01}")
+    if admin_prefix_matches_runtime "${AFTER_ADMIN}" "${rt}"; then
+        pass "R6b: ${master_name} runtime key matches new admin key (${AFTER_ADMIN:0:8}...)"
+    else
+        fail "R6b: ${master_name} runtime key does NOT match new admin key"
+        info "  admin new: ${AFTER_ADMIN:-<empty>}"
+        info "  runtime:   ${rt:-<empty>}"
+    fi
+done
+
+# R6c: OLD pubkey is absent from runtime peer list on every master.
+OLD_PREFIX="${BEFORE_ADMIN:0:17}"
+for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    if inspect_node "${master_name}" | grep -qF "${OLD_PREFIX}"; then
+        fail "R6c: old pubkey prefix ${OLD_PREFIX}… still present on ${master_name}"
+    else
+        pass "R6c: old pubkey absent from ${master_name} runtime"
+    fi
+done
+
+# R6d: inspect reports zero drift on both masters post-rotation.
+for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    if inspect_has_no_drift "${master_name}"; then
+        pass "R6d: ${master_name} reports zero drift (admin == disk == runtime)"
+    else
+        fail "R6d: ${master_name} still reports drift after rotation"
+        inspect_node "${master_name}" | sed 's/^/    /'
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # Summary
