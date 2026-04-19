@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -257,8 +258,8 @@ type tier3MasterResult struct {
 func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, masters []topology.MasterNode) error {
 	// Step 0: Read old admin-state pubkey.
 	// Needed as the rollback target if master fan-out partially fails.
-	// Admin-state stores pubkeys in WireGuard canonical base64 (wg.Key.String()).
-	// NEVER use hex.DecodeString — admin-state is NOT hex-encoded.
+	// Admin-state stores pubkeys as 64 hex chars (see endpoint.go's
+	// `newPubKeyHex := hex.EncodeToString(resp.NodePublicKey)` + SetPubkey).
 	store := adminstate.NewStore(configDir)
 	oldPubKeyStr, err := store.GetPubkey(endpoint.Name)
 	if err != nil {
@@ -267,10 +268,14 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 
 	var oldPubKey wg.Key
 	if oldPubKeyStr != "" {
-		oldPubKey, err = wg.ParseKey(oldPubKeyStr)
-		if err != nil {
-			return fmt.Errorf("admin-state pubkey for %q is corrupt (parse failed): %w", endpoint.Name, err)
+		oldBytes, decErr := hex.DecodeString(strings.TrimSpace(oldPubKeyStr))
+		if decErr != nil {
+			return fmt.Errorf("admin-state pubkey for %q is corrupt (hex decode failed): %w", endpoint.Name, decErr)
 		}
+		if len(oldBytes) != 32 {
+			return fmt.Errorf("admin-state pubkey for %q has wrong length %d (want 32)", endpoint.Name, len(oldBytes))
+		}
+		copy(oldPubKey[:], oldBytes)
 	}
 
 	// Step 1: Generate fresh curve25519 keypair.
@@ -411,7 +416,8 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 
 	// Step 4: All masters confirmed — commit admin-state atomically.
 	// Admin-state is the LAST step (NFR-3 / DD-5): file reflects actual cluster state.
-	newPubKeyStr := publicKey.String()
+	// Admin-state format is 64 hex chars (see endpoint.go's newPubKeyHex pattern).
+	newPubKeyStr := hex.EncodeToString(publicKey[:])
 	if _, err := store.SetPubkey(endpoint.Name, func(_ string) (string, error) {
 		return newPubKeyStr, nil
 	}); err != nil {
