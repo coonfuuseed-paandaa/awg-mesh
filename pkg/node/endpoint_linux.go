@@ -13,6 +13,7 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
@@ -24,6 +25,87 @@ const endpointLegacyIfaceName = "wg0"
 var endpointAddInterfaceAddress = addInterfaceAddress
 var endpointRouteReplaceLink = func(dest *net.IPNet, dev string) error {
 	return routing.NewNetlinkRouter().RouteReplaceLink(dest, dev)
+}
+
+// endpointCreateIfaceFn is the test seam for wg.NewInterface. Unit tests
+// replace this with a factory that returns a mock without touching the kernel.
+var endpointCreateIfaceFn = func(name string, mtu int, logger *device.Logger) (*wg.Interface, error) {
+	return wg.NewInterface(name, mtu, logger)
+}
+
+// endpointConfigureIfaceFn is the test seam for (*wg.Interface).Configure.
+// Unit tests replace this to capture the wg.Config without kernel access.
+var endpointConfigureIfaceFn = func(iface *wg.Interface, cfg wg.Config) error {
+	return iface.Configure(cfg)
+}
+
+// endpointSetIfaceUpFn is the test seam for setInterfaceUp.
+// Unit tests replace this to skip the netlink call.
+var endpointSetIfaceUpFn = func(name string) error {
+	return setInterfaceUp(name)
+}
+
+// buildEndpointPeerAllowedIPs returns the minimal AllowedIPs for an endpoint-side
+// master peer: [transport_subnet, master_overlay_ip/32].
+//
+// This is intentionally NOT using topology.BuildAllowedIPsForEndpoint — that function
+// produces the full (overlapping) list used on the master side. The endpoint side uses
+// only the minimal set to avoid the AllowedIPs dedup issue (#134): two master peers
+// sharing overlapping overlay CIDRs would fight over the same kernel AllowedIPs entry,
+// causing one peer's traffic to silently route to the wrong interface. The /30 transport
+// subnet and the master's exact /32 overlay IP are sufficient for correct forwarding.
+func buildEndpointPeerAllowedIPs(transportSubnet, masterOverlayIP string) ([]net.IPNet, error) {
+	trimmedSubnet := strings.TrimSpace(transportSubnet)
+	if trimmedSubnet == "" {
+		return nil, fmt.Errorf("transport subnet is required")
+	}
+	_, subnetNet, err := net.ParseCIDR(trimmedSubnet)
+	if err != nil {
+		return nil, fmt.Errorf("parse transport subnet %q: %w", transportSubnet, err)
+	}
+
+	trimmedOverlay := strings.TrimSpace(masterOverlayIP)
+	if trimmedOverlay == "" {
+		return nil, fmt.Errorf("master overlay IP is required")
+	}
+	// Normalise to host/32: strip any prefix length the caller may have included.
+	overlayHost := trimmedOverlay
+	if strings.Contains(trimmedOverlay, "/") {
+		h, _, parseErr := net.ParseCIDR(trimmedOverlay)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse master overlay IP %q: %w", masterOverlayIP, parseErr)
+		}
+		overlayHost = h.String()
+	}
+	_, overlayNet, err := net.ParseCIDR(overlayHost + "/32")
+	if err != nil {
+		return nil, fmt.Errorf("build overlay /32 for %q: %w", masterOverlayIP, err)
+	}
+
+	return []net.IPNet{*subnetNet, *overlayNet}, nil
+}
+
+// deriveTransportSubnet returns the network address of the subnet that contains ip,
+// expressed as a CIDR string (e.g. "10.255.0.0/30").
+// If ip is empty or unparseable, it returns "".
+// prefixLen must be in the range [1, 32]; values outside that range use 30 as a safe default.
+func deriveTransportSubnet(ip string, prefixLen int) string {
+	trimmed := strings.TrimSpace(ip)
+	if trimmed == "" {
+		return ""
+	}
+	parsed := net.ParseIP(trimmed)
+	if parsed == nil {
+		return ""
+	}
+	if prefixLen < 1 || prefixLen > 32 {
+		prefixLen = 30
+	}
+	_, network, err := net.ParseCIDR(trimmed + "/" + fmt.Sprintf("%d", prefixLen))
+	if err != nil {
+		return ""
+	}
+	return network.String()
 }
 
 // endpointPlatformState holds all kernel-level WireGuard interfaces for an endpoint.
@@ -101,7 +183,24 @@ func (e *EndpointRunner) closeAllIfaces() error {
 	return lastErr
 }
 
-func (e *EndpointRunner) createInterface() error {
+// createMasterInterface creates a dedicated AWG interface for one master peer.
+// It mirrors master_linux.go::createTunnelInterface for the endpoint side.
+//
+// Parameters:
+//   - master: the master node descriptor from topology
+//   - portOffset: added to node.config.ListenPort; index 0 = base port (no shift)
+//   - transportIP: endpoint's /30 transport IP for this subnet (may be empty on first-boot)
+//   - peerTransportIP: master's /30 transport IP (informational; not used for AllowedIPs)
+//   - transportSubnet: /30 CIDR (e.g. "10.255.0.0/30"); empty means peer is added without AllowedIPs
+//   - masterPubkey: master's WG public key; zero value means no peer is configured yet
+func (e *EndpointRunner) createMasterInterface(
+	master topology.MasterNode,
+	portOffset int,
+	transportIP string,
+	peerTransportIP string,
+	transportSubnet string,
+	masterPubkey wg.Key,
+) error {
 	if e == nil || e.node == nil {
 		return fmt.Errorf("endpoint runner node is required")
 	}
@@ -111,11 +210,175 @@ func (e *EndpointRunner) createInterface() error {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
 
-	// T002 placeholder: create the legacy single wg0 interface stored under key "wg0".
-	// T003 will replace this with per-master createMasterInterface calls and remove
-	// the reference to endpointLegacyIfaceName.
+	// Interface name: "wg-" + master name, truncated so the full name fits the
+	// kernel's IFNAMSIZ limit (15 chars + NUL). "wg-" is 3 chars, leaving 12 for the name.
+	masterNamePart := master.Name
+	if len(masterNamePart) > 12 {
+		masterNamePart = masterNamePart[:12]
+	}
+	ifaceName := "wg-" + masterNamePart
+
+	listenPort := e.node.config.ListenPort + portOffset
 	mtu := calculateMTUFromTopology(e.node.topology, 1)
-	iface, err := wg.NewInterface(
+
+	iface, err := endpointCreateIfaceFn(
+		ifaceName,
+		mtu,
+		device.NewLogger(device.LogLevelError, "[endpoint] "),
+	)
+	if err != nil {
+		return fmt.Errorf("create interface %q for master %q: %w", ifaceName, master.Name, err)
+	}
+
+	// Build peer config. If masterPubkey is zero (master not yet known) we configure
+	// the interface without a peer — AddPeer/UpdateTunnelPeer will add it later.
+	peerConfigs := make([]wg.PeerConfig, 0, 1)
+	if !masterPubkey.IsZero() {
+		peerCfg := wg.PeerConfig{
+			PublicKey:         masterPubkey,
+			ReplaceAllowedIPs: true,
+		}
+
+		// Resolve master endpoint address for the initial handshake.
+		peerAddr := master.PeerAddr()
+		if peerAddr != ":" {
+			addr, resolveErr := net.ResolveUDPAddr("udp", peerAddr)
+			if resolveErr != nil {
+				e.node.logger.Warn().
+					Err(resolveErr).
+					Str("master", master.Name).
+					Str("peer_addr", peerAddr).
+					Msg("failed to resolve master peer address; peer configured without endpoint")
+			} else {
+				peerCfg.Endpoint = addr
+			}
+		}
+
+		if strings.TrimSpace(transportSubnet) != "" && strings.TrimSpace(master.OverlayIP) != "" {
+			allowedIPs, aipErr := buildEndpointPeerAllowedIPs(transportSubnet, master.OverlayIP)
+			if aipErr != nil {
+				_ = iface.Close()
+				return fmt.Errorf("build allowed IPs for master %q: %w", master.Name, aipErr)
+			}
+			peerCfg.AllowedIPs = allowedIPs
+		}
+
+		keepalive := 25 * time.Second
+		peerCfg.PersistentKeepaliveInterval = &keepalive
+		peerConfigs = append(peerConfigs, peerCfg)
+	}
+
+	cfg := wg.Config{
+		PrivateKey: &privateKey,
+		ListenPort: &listenPort,
+		Peers:      peerConfigs,
+	}
+	if err := endpointConfigureIfaceFn(iface, cfg); err != nil {
+		_ = iface.Close()
+		return fmt.Errorf("configure interface %q: %w", ifaceName, err)
+	}
+
+	if err := endpointSetIfaceUpFn(ifaceName); err != nil {
+		_ = iface.Close()
+		return fmt.Errorf("bring up interface %q: %w", ifaceName, err)
+	}
+
+	if strings.TrimSpace(transportIP) != "" {
+		if err := endpointAddInterfaceAddress(ifaceName, strings.TrimSpace(transportIP)); err != nil {
+			_ = iface.Close()
+			return fmt.Errorf("assign transport address %q to interface %q: %w", transportIP, ifaceName, err)
+		}
+	}
+
+	e.setIface(master.Name, iface)
+	e.node.logger.Info().
+		Str("event", "endpoint_iface_created").
+		Str("interface", ifaceName).
+		Str("master", master.Name).
+		Int("listen_port", listenPort).
+		Msg("endpoint master interface created")
+
+	return nil
+}
+
+// createInterface creates AWG interfaces for this endpoint node.
+//
+// If the topology lists masters for this endpoint AND transport.yml has per-master
+// transport metadata (i.e. we have been contacted by at least one master), we use the
+// per-master iface path: one wg-<master> device per master.
+//
+// Otherwise (first-boot before any master has contacted us, or no topology loaded) we
+// fall back to the legacy single-wg0 path. The ConfigureTransport RPC will add
+// transport metadata on first contact; T005 will retrofit this into the per-master path.
+func (e *EndpointRunner) createInterface() error {
+	if e == nil || e.node == nil {
+		return fmt.Errorf("endpoint runner node is required")
+	}
+
+	// Attempt per-master iface creation when topology and transport state are available.
+	if e.node.topology != nil {
+		masters := e.node.topology.MastersForEndpoint(e.node.config.Name)
+		if len(masters) > 0 {
+			// Load transport.yml to resolve per-master transport IPs.
+			transportState, tsErr := loadNodeTransportState(e.node.config.ConfigDir)
+			if tsErr != nil {
+				e.node.logger.Warn().Err(tsErr).Msg("failed to load transport state; falling back to legacy interface")
+			} else {
+				// Build a lookup map: master name → tunnel transport entry.
+				tunnelByName := make(map[string]TunnelTransport, len(transportState.Tunnels))
+				for _, tt := range transportState.Tunnels {
+					tunnelByName[tt.Name] = tt
+				}
+
+				created := 0
+				for i, master := range masters {
+					tt := tunnelByName[master.Name]
+					var masterPubkey wg.Key // zero if not yet known
+					if tt.PeerPublicKey != "" {
+						parsed, parseErr := wg.ParseKey(tt.PeerPublicKey)
+						if parseErr == nil {
+							masterPubkey = parsed
+						}
+					}
+					// Derive the /30 transport subnet from the endpoint's transport IP.
+					// The prefix length comes from the topology transport config (default 30).
+					prefixLen := 30
+					if e.node.topology.Transport.PrefixLength > 0 {
+						prefixLen = e.node.topology.Transport.PrefixLength
+					}
+					transportSubnet := deriveTransportSubnet(tt.TransportIP, prefixLen)
+					if err := e.createMasterInterface(master, i, tt.TransportIP, tt.PeerTransportIP, transportSubnet, masterPubkey); err != nil {
+						e.node.logger.Warn().
+							Err(err).
+							Str("master", master.Name).
+							Msg("failed to create per-master interface; skipping")
+						continue
+					}
+					created++
+				}
+				if created > 0 {
+					e.setupForwarding()
+					return nil
+				}
+				e.node.logger.Warn().Msg("no per-master interfaces created; falling back to legacy interface")
+			}
+		}
+	}
+
+	// Legacy path: single wg0 interface, no per-master segregation.
+	return e.createLegacyInterface()
+}
+
+// createLegacyInterface is the pre-v1.12.2 single-wg0 creation path retained for
+// first-boot scenarios where no transport state is yet available.
+func (e *EndpointRunner) createLegacyInterface() error {
+	privateKey, _, err := EnsureKeypair(e.node.config.ConfigDir)
+	if err != nil {
+		return fmt.Errorf("ensure keypair: %w", err)
+	}
+
+	mtu := calculateMTUFromTopology(e.node.topology, 1)
+	iface, err := endpointCreateIfaceFn(
 		endpointLegacyIfaceName,
 		mtu,
 		device.NewLogger(device.LogLevelError, "[endpoint] "),
@@ -128,12 +391,12 @@ func (e *EndpointRunner) createInterface() error {
 		PrivateKey: &privateKey,
 		ListenPort: wg.IntPtr(e.node.config.ListenPort),
 	}
-	if err := iface.Configure(cfg); err != nil {
+	if err := endpointConfigureIfaceFn(iface, cfg); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("configure interface %q: %w", endpointLegacyIfaceName, err)
 	}
 
-	if err := setInterfaceUp(endpointLegacyIfaceName); err != nil {
+	if err := endpointSetIfaceUpFn(endpointLegacyIfaceName); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("bring up interface %q: %w", endpointLegacyIfaceName, err)
 	}
@@ -142,7 +405,14 @@ func (e *EndpointRunner) createInterface() error {
 	e.node.logger.Info().
 		Str("interface", iface.Name()).
 		Int("mtu", mtu).
-		Msg("endpoint interface created")
+		Msg("endpoint interface created (legacy)")
+	e.setupForwarding()
+	return nil
+}
+
+// setupForwarding enables IP forwarding and configures nftables NAT/MSS clamping.
+// Called after all interfaces are brought up. Errors are non-fatal (logged as warn/error).
+func (e *EndpointRunner) setupForwarding() {
 	sysctl := routing.NewProcSysctl()
 	if err := sysctl.EnableForwarding(); err != nil {
 		e.node.logger.Warn().Err(err).Msg("failed to enable IP forwarding")
@@ -158,8 +428,6 @@ func (e *EndpointRunner) createInterface() error {
 			e.node.logger.Warn().Err(err).Msg("nftables: failed to enable MSS clamping")
 		}
 	}
-
-	return nil
 }
 
 // ConfigureTransport assigns the local transport IP to the legacy wg0 interface after
