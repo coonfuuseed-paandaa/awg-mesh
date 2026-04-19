@@ -1029,12 +1029,6 @@ else
     fail "R7.2: ${ENDPOINT_ASIA_01} cannot reach ${ENDPOINT_ASIA_02} overlay IP (${ENDPOINT_ASIA_02_OVERLAY}) — policy routing not working"
     docker exec "${CTR_ENDPOINT_ASIA_01}" ip route show 2>&1 | sed 's/^/    /' || true
     docker exec "${CTR_ENDPOINT_ASIA_01}" ip rule show 2>&1 | sed 's/^/    /' || true
-    echo "    --- src-explicit ping ---"
-    docker exec "${CTR_ENDPOINT_ASIA_01}" ping -I "${ENDPOINT_ASIA_01_OVERLAY}" -c 3 -W 2 "${ENDPOINT_ASIA_02_OVERLAY}" 2>&1 | sed 's/^/    /' || true
-    echo "    --- node-asia-01 v1122-debug entries ---"
-    docker logs "${CTR_ENDPOINT_ASIA_01}" 2>&1 | grep -E "v1122-debug|installed with src hint|failed to install overlay" | sed 's/^/    /' || echo "    (none)"
-    echo "    --- node-asia-01 all logs (last 80) ---"
-    docker logs "${CTR_ENDPOINT_ASIA_01}" 2>&1 | tail -80 | sed 's/^/    /' || true
 fi
 
 # R7.3: Legacy wg0 must NOT exist on endpoint-a. The per-master-iface feature

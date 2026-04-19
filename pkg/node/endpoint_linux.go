@@ -636,7 +636,6 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 	// route back to the transport IP). Setting `src` to this node's overlay IP
 	// makes outgoing pings use the overlay IP as src, which the far endpoint can
 	// reach via its symmetric overlay /32 route.
-	e.node.logger.Info().Bool("overlayIP_nil", overlayIP == nil).Int("allowedIPs_count", len(allowedIPs)).Msg("v1122-debug: entering src-hint loop")
 	if overlayIP != nil {
 		for _, allowedCIDR := range allowedIPs {
 			trimmedCIDR := strings.TrimSpace(allowedCIDR)
@@ -659,9 +658,6 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 			if err := router.RouteReplaceLinkWithSrc(cidrNet, ifaceName, overlayIP); err != nil {
 				e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Str("src", overlayIP.String()).
 					Msg("failed to install overlay route with src hint")
-			} else {
-				e.node.logger.Info().Str("cidr", cidrNet.String()).Str("src", overlayIP.String()).Str("dev", ifaceName).
-					Msg("endpoint overlay /32 route installed with src hint")
 			}
 		}
 	}
