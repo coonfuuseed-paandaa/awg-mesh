@@ -8,6 +8,7 @@ import (
 	"time"
 
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 )
@@ -368,8 +369,25 @@ func (d *Driver) phaseInit(ctx context.Context, step *NodeUpgradeStep) error {
 		return fmt.Errorf("endpoint %q not found in topology", step.Name)
 	}
 
+	// Engram #131: phaseInit previously sent only CaCert + Config, omitting
+	// NodeCert + NodeKey. Init handler at pkg/grpc/handlers.go (introduced in
+	// PR #15 / v1.6.0) rejects any request missing them with InvalidArgument,
+	// so every guided upgrade since v1.6.0 failed at phase 4. Mint a
+	// per-node cert the same way the standalone `mesh-ctl endpoint init`
+	// path does (cmd/mesh-ctl/cmd/endpoint.go).
+	caCert, caKey, err := pkgtls.LoadCA(d.cfg.ConfigDir)
+	if err != nil {
+		return fmt.Errorf("load CA key material for %s init: %w", step.Name, err)
+	}
+	certPEM, keyPEM, err := pkgtls.IssueCert(caCert, caKey, ep.Name, []string{ep.Host})
+	if err != nil {
+		return fmt.Errorf("issue node cert for %s init: %w", step.Name, err)
+	}
+
 	_, initErr := client.Agent().Init(initCtx, &proto.InitRequest{
-		CaCert: caCertPEM,
+		CaCert:   caCertPEM,
+		NodeCert: certPEM,
+		NodeKey:  keyPEM,
 		Config: &proto.NodeConfig{
 			Name:       ep.Name,
 			Mode:       "endpoint",

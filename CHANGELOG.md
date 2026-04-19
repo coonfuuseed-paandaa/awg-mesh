@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.1] — 2026-04-19
+
+### Fixed — two pre-existing critical bugs discovered during v1.12.0 multi-host beta
+
+Both bugs predate v1.12.0 by several minor versions and were invisible to
+existing unit tests and the `tests/simulation/issue-92-rotation.sh` harness
+until real multi-host beta testing of v1.12.0. Upgrading from v1.12.0 to
+v1.12.1 is **strongly recommended** for any operator running `mesh-ctl
+master init` or `mesh-ctl upgrade --ssh`.
+
+#### `master transport.yml` now persists `allowed_ips` per tunnel (local tracker #132)
+
+`pkg/node/master.go::MasterRunner.saveTransportState` was writing tunnel
+entries to `/config/transport.yml` without the `allowed_ips:` key. On
+fresh deploys and after container restart this left amneziawg-go's peer
+set with empty AllowedIPs, which silently blocks every inbound handshake
+and causes 100% data-plane loss.
+
+This bug has existed since the v1.7.0 schema-v1 introduction — it only
+surfaced now because the first real multi-host beta of v1.12.0 exercised
+`master init` against a fresh `/config` state. The sim harness missed it
+because it only inspected the endpoint-side `transport.yml`, never the
+master's.
+
+The fix populates AllowedIPs from `computeMasterPeerAllowedIPs` — the
+same `[transport_subnet, overlay_ip/32]` layout the live UAPI peer gets
+from the platform-specific `buildPeerAllowedIPs` — and stamps
+`SchemaVersion=CurrentSchemaVersion` so `mesh-ctl inspect` / `reconcile`
+treat the state as v1.6.0-compliant rather than legacy.
+
+#### `mesh-ctl upgrade --ssh` phaseInit now mints per-node certs (local tracker #131)
+
+`pkg/upgrade/driver.go::phaseInit` was building `InitRequest` with only
+`CaCert + Config`, omitting `NodeCert` and `NodeKey`. The Init handler
+validation added in v1.6.0 (PR #15) rejects any such request with
+`InvalidArgument: ca_cert, node_cert, and node_key are all required`.
+As a result **every** guided upgrade since v1.6.0 failed at phase 4 on
+every endpoint. Operators had to abandon `--ssh` for phase 4 and fall
+back to running `mesh-ctl endpoint init <name>` by hand — which explains
+why the bug went undetected until nvmd-devops became the first beta site
+to actually run the guided upgrade end-to-end.
+
+The fix mirrors the standalone `mesh-ctl endpoint init` flow: call
+`pkgtls.LoadCA` + `pkgtls.IssueCert` locally on the admin workstation
+and pass the resulting PEMs to Init.
+
+#### Sim harness — new assertions that would have caught both bugs
+
+- **R3g-drift (S-FIX-5)**: narrowed from "any DRIFT" to "disk_runtime_diverge"
+  on endpoint-side inspect of master rows, which was the root cause
+  signature; the broader `stale_allowed_ips` is a known architectural
+  divergence (admin tracks only master's overlay /32 while runtime has
+  full allowed_ips for cross-subnet routing).
+- **R3h (S-FIX-1)**: reads master `/config/transport.yml` via
+  `docker exec` and asserts every tunnel block contains `allowed_ips:`.
+- **R3i (S-FIX-2)**: asserts `mesh-ctl inspect <master>` shows non-empty
+  `DISK_IPS` and `RUNTIME_IPS` for every endpoint peer row — previously
+  the sim only inspected the endpoint view.
+
+These three assertions turn the sim from a control-plane conformance
+harness into a real data-plane schema check. Running pre-fix code against
+the new sim correctly produces 4 failures (R3g-drift × 2, R3h × 2);
+running post-fix code produces 30/30 PASS.
+
+#### Verification (per AGENTS.md release-gate rule)
+
+- `go test -short -count=1 ./...` — 17 packages PASS
+- `tests/simulation/issue-92-rotation.sh` on WSL2/Docker — **30/30 PASS**
+  (was 22/22 with the narrower pre-v1.12.1 assertions)
+
+### Links
+
+- Local tracker: #131, #132
+- Depends on: v1.12.0 (tier-3 rotation; not affected by either bug)
+- Lineage: both bugs pre-exist v1.12.0; v1.12.0 shipped correctly but was
+  "unusable for real multi-host deploy" until these fixes landed.
+
 ## [1.12.0] — 2026-04-19
 
 ### Added — Tier-3 keypair rotation (full 4-party coordinated, MINOR release)
@@ -893,7 +970,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...HEAD
+[1.12.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.4...v1.12.0
 [1.11.4]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...v1.11.4
 [1.10.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.1...v1.10.2

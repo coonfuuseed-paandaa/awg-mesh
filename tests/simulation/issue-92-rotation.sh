@@ -673,42 +673,105 @@ for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
 done
 
 # ---------------------------------------------------------------------------
-# R3g: `mesh-ctl inspect <endpoint>` — verify ADMIN_KEY/NODE_KEY/RUNTIME_KEY
-#      columns converge for each master peer (rotation-specific assertion).
-#      Note: inspect may also surface pre-existing orthogonal drift such as
-#      stale_allowed_ips on master peer entries (admin-state tracks only
-#      overlay /32 while runtime has full transport_subnet). That drift
-#      exists both pre- and post-rotation and is tracked separately — R3g
-#      checks ONLY the pubkey-column convergence that tier-3 rotation must
-#      deliver.
+# R3g (S-FIX-5): Pubkey column convergence AND zero drift status. Earlier
+#      versions rationalized `stale_allowed_ips` as "pre-existing orthogonal
+#      admin /32 vs runtime full subnet" divergence. Engram #132 proved that
+#      explanation wrong — on real multi-host deploys disk AND runtime are
+#      BOTH empty, which is the actual 100% data-plane-loss condition. STATUS
+#      column is now load-bearing: any DRIFT category fails the assertion.
 # ---------------------------------------------------------------------------
 echo ""
-echo "[R3g] Verifying pubkey column convergence after rotation..."
+echo "[R3g] Verifying pubkey convergence AND zero drift after rotation..."
 meshctl inspect "${ENDPOINT_US_01}" > /tmp/inspect-drift.txt 2>&1 || true
 if grep -qE "^(mst-ru-01|mst-ru-02)[[:space:]]+" /tmp/inspect-drift.txt; then
-    # Extract the three key-prefix columns per master row; assert they match.
-    all_pass=1
     for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
         row=$(grep -E "^${m}[[:space:]]+" /tmp/inspect-drift.txt | head -1)
-        # Columns 2,3,4 are ADMIN_KEY, NODE_KEY, RUNTIME_KEY (prefixes).
         adm=$(echo "${row}" | awk '{print $2}')
         nod=$(echo "${row}" | awk '{print $3}')
         run=$(echo "${row}" | awk '{print $4}')
+        # STATUS column spans from column 8 to end of row.
+        status=$(echo "${row}" | awk '{for(i=8;i<=NF;i++) printf "%s ",$i}')
         if [[ "${adm}" == "${nod}" && "${nod}" == "${run}" ]]; then
             pass "R3g: ${m} admin/node/runtime pubkeys converged (${adm})"
         else
             fail "R3g: ${m} pubkey columns diverge (admin=${adm} node=${nod} run=${run})"
-            all_pass=0
+        fi
+        # Fail only on disk_runtime_diverge — that is the actual data-plane
+        # killer (endpoint will restart with empty allowed_ips → no handshake).
+        # stale_allowed_ips in endpoint-side inspect of master rows is an
+        # architectural divergence (admin tracks just the master's overlay /32
+        # while runtime carries the full allowed_ips list for cross-subnet
+        # routing) — not the engram #132 bug we are guarding here. That bug is
+        # now caught directly by R3i (master inspect DISK_IPS/RUNTIME_IPS) and
+        # R3h (master transport.yml schema).
+        if echo "${status}" | grep -qiE "disk_runtime_diverge"; then
+            fail "R3g-drift: ${m} disk≠runtime (${status}) — data-plane risk (engram #132)"
+        else
+            pass "R3g-drift: ${m} no disk_runtime_diverge (STATUS='${status}')"
         fi
     done
-    if [[ "${all_pass}" -eq 1 ]]; then
-        info "R3g note: any 'stale_allowed_ips' rows are pre-existing and orthogonal"
-        info "           to tier-3 keypair rotation (tracked separately)."
-    fi
 else
     fail "R3g: mesh-ctl inspect produced no master peer rows — unexpected"
     sed 's/^/    /' /tmp/inspect-drift.txt
 fi
+
+# ---------------------------------------------------------------------------
+# R3h (S-FIX-1): Verify MASTER /config/transport.yml persists allowed_ips per
+#      tunnel. Engram #132 showed production masters ship with tunnel entries
+#      missing the `allowed_ips:` key → amneziawg-go runtime has empty
+#      AllowedIPs → no handshake → 100% data-plane loss. Read raw YAML and
+#      assert each tunnel has its allowed_ips block.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3h] Verifying master /config/transport.yml persists allowed_ips per tunnel..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    ctr="${COMPOSE_PROJECT}-${m}"
+    yml=$(docker exec "${ctr}" cat /config/transport.yml 2>/dev/null || echo "")
+    if [[ -z "${yml}" ]]; then
+        fail "R3h: ${m} /config/transport.yml missing or empty"
+        continue
+    fi
+    tunnel_count=$(echo "${yml}" | grep -cE '^[[:space:]]+- name:' || true)
+    allowed_count=$(echo "${yml}" | grep -cE '^[[:space:]]+allowed_ips:' || true)
+    if [[ "${tunnel_count}" -eq 0 ]]; then
+        fail "R3h: ${m} transport.yml has no tunnel entries"
+    elif [[ "${allowed_count}" -lt "${tunnel_count}" ]]; then
+        fail "R3h: ${m} has ${tunnel_count} tunnel(s) but only ${allowed_count} allowed_ips block(s) — engram #132"
+        echo "${yml}" | sed 's/^/    /' >&2
+    else
+        pass "R3h: ${m} transport.yml has allowed_ips for all ${tunnel_count} tunnel(s)"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R3i (S-FIX-2): Verify MASTER inspect DISK_IPS and RUNTIME_IPS non-empty for
+#      every endpoint peer row. Engram #132 surfaces as empty strings in
+#      these columns. Inspect layout per cmd/mesh-ctl/cmd/inspect.go:
+#      PEER ADMIN_KEY NODE_KEY RUNTIME_KEY ADMIN_IPS DISK_IPS RUNTIME_IPS STATUS
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R3i] Verifying master inspect DISK_IPS + RUNTIME_IPS populated for endpoint peers..."
+for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    meshctl inspect "${m}" > "/tmp/inspect-master-${m}.txt" 2>&1 || true
+    row=$(grep -E "^${ENDPOINT_US_01}[[:space:]]+" "/tmp/inspect-master-${m}.txt" | head -1)
+    if [[ -z "${row}" ]]; then
+        fail "R3i: ${m} inspect has no row for endpoint ${ENDPOINT_US_01}"
+        sed 's/^/    /' "/tmp/inspect-master-${m}.txt"
+        continue
+    fi
+    disk_ips=$(echo "${row}" | awk '{print $6}')
+    runtime_ips=$(echo "${row}" | awk '{print $7}')
+    if [[ -z "${disk_ips}" || "${disk_ips}" == "-" ]]; then
+        fail "R3i: ${m} DISK_IPS for ${ENDPOINT_US_01} empty — transport.yml missing allowed_ips (engram #132)"
+    else
+        pass "R3i: ${m} DISK_IPS populated for ${ENDPOINT_US_01} (${disk_ips})"
+    fi
+    if [[ -z "${runtime_ips}" || "${runtime_ips}" == "-" ]]; then
+        fail "R3i: ${m} RUNTIME_IPS for ${ENDPOINT_US_01} empty — amneziawg-go has no allowed_ips (engram #132)"
+    else
+        pass "R3i: ${m} RUNTIME_IPS populated for ${ENDPOINT_US_01} (${runtime_ips})"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # R4: Post-rotation control-plane + data-plane liveness. Masters must remain
