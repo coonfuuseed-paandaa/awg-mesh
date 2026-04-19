@@ -49,7 +49,7 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 	return fmt.Errorf("client peer management is not available on this platform")
 }
 
-func (c *ClientRunner) ConfigureTransport(_ string, _ string, _ string, _ []string, _ string) error {
+func (c *ClientRunner) ConfigureTransport(_ string, _ string, _ string, _ []string, _ string, _ []string) error {
 	return fmt.Errorf("client transport configuration is not available on this platform")
 }
 

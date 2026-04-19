@@ -53,7 +53,7 @@ type PeerManager interface {
 // Implementations MUST be safe to call concurrently with each other but
 // SHOULD serialize multiple calls to the same tunnel via internal locking.
 type TransportConfigurator interface {
-	ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string) error
+	ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error
 }
 
 // BalancerIPSetter is an optional extension for setting balancer IP on a peer

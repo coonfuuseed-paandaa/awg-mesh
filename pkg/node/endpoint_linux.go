@@ -569,7 +569,7 @@ func (e *EndpointRunner) setupForwarding() {
 //
 // When peerName is non-empty (v1.12.2+), routes are installed on wg-<peerName>.
 // When peerName is empty (legacy path), falls back to the legacy wg0 interface.
-func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string) error {
+func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error {
 	if e == nil || e.node == nil {
 		return fmt.Errorf("endpoint runner node is required")
 	}
@@ -623,11 +623,37 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 		}
 	}
 
+	// v1.12.2+: install extra kernel routes (other endpoint overlay /32s reachable via this master).
+	// These go through the same per-master iface as AllowedIPs but are NOT part of the WG peer
+	// AllowedIPs set — they are pure kernel routes for endpoint↔endpoint traffic.
+	for _, routeCIDR := range extraRoutes {
+		trimmedRoute := strings.TrimSpace(routeCIDR)
+		if trimmedRoute == "" {
+			continue
+		}
+		_, routeNet, parseErr := net.ParseCIDR(trimmedRoute)
+		if parseErr != nil {
+			e.node.logger.Warn().Err(parseErr).Str("cidr", trimmedRoute).Msg("skip invalid extra_route")
+			continue
+		}
+		if shouldSkipEndpointLinkRoute(routeNet, overlayIP) {
+			continue
+		}
+		if err := endpointRouteReplaceLink(routeNet, ifaceName); err != nil {
+			e.node.logger.Warn().Err(err).Str("cidr", routeNet.String()).Str("interface", ifaceName).
+				Msg("failed to install extra kernel route")
+		} else {
+			e.node.logger.Debug().Str("cidr", routeNet.String()).Str("interface", ifaceName).
+				Msg("extra kernel route installed")
+		}
+	}
+
 	e.node.logger.Info().
 		Str("interface", ifaceName).
 		Str("master", masterName).
 		Str("local_ip", trimmedLocalIP).
 		Str("peer_ip", peerIP).
+		Int("extra_routes", len(extraRoutes)).
 		Msg("endpoint transport configured")
 
 	return nil

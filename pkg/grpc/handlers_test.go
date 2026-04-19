@@ -196,7 +196,7 @@ func (m *testPeerManager) RemovePeer(publicKey []byte) error {
 	return m.removeErr
 }
 
-func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string) error {
+func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error {
 	m.configureCalls = append(m.configureCalls, configureTransportCall{
 		pubkeyHex:  pubkeyHex,
 		localIP:    localIP,

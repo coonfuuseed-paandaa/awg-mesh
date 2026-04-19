@@ -59,6 +59,6 @@ func (e *EndpointRunner) RemovePeer(publicKey []byte) error {
 	return fmt.Errorf("peer management not supported on this platform")
 }
 
-func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string) error {
+func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error {
 	return fmt.Errorf("transport configuration not supported on this platform")
 }
