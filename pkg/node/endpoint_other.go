@@ -7,7 +7,15 @@ import (
 
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/rs/zerolog"
 )
+
+// detectLegacyWg0 is a no-op stub on non-Linux platforms. Legacy wg0 migration
+// only applies to Linux kernel network interfaces.
+func detectLegacyWg0() bool { return false }
+
+// migrateLegacyWg0 is a no-op stub on non-Linux platforms.
+func migrateLegacyWg0(_ zerolog.Logger) error { return nil }
 
 // endpointPlatformState is an empty stub on non-Linux platforms.
 // On Linux, this struct holds the ifaces map and its protecting mutex.

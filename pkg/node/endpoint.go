@@ -61,6 +61,15 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 		}
 	}
 
+	// Migration: if a legacy wg0 interface exists from a pre-v1.12.2 run, tear it
+	// down before creating per-master interfaces. Non-fatal: if migration fails the
+	// operator can restart; createInterface() will warn and attempt its own recovery.
+	if detectLegacyWg0() {
+		if migErr := migrateLegacyWg0(e.node.logger); migErr != nil {
+			e.node.logger.Warn().Err(migErr).Msg("legacy wg0 migration failed — will attempt again on next restart")
+		}
+	}
+
 	// Phase 1: create per-master interfaces (or legacy wg0 fallback).
 	// createInterface() handles both paths; see endpoint_linux.go for details.
 	if err := e.createInterface(); err != nil {

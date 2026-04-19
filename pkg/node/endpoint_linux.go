@@ -15,6 +15,8 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/rs/zerolog"
+	"github.com/vishvananda/netlink"
 )
 
 // endpointLegacyIfaceName is the single-interface name used by pre-v1.12.2 endpoints.
@@ -43,6 +45,58 @@ var endpointConfigureIfaceFn = func(iface *wg.Interface, cfg wg.Config) error {
 // Unit tests replace this to skip the netlink call.
 var endpointSetIfaceUpFn = func(name string) error {
 	return setInterfaceUp(name)
+}
+
+// detectLegacyWg0 returns true if a "wg0" network interface currently exists in the
+// kernel. This indicates the endpoint was previously configured with v1.12.1 or earlier,
+// which used a single shared wg0 interface instead of per-master interfaces.
+func detectLegacyWg0() bool {
+	_, err := netlink.LinkByName("wg0")
+	return err == nil
+}
+
+// migrateLegacyWg0 tears down the legacy wg0 interface. The peer config is NOT
+// read from wg0 — transport.yml is the authoritative source and will be used by
+// the normal reconcile loop that follows. This function only ensures wg0 is gone.
+//
+// Strategy:
+//  1. Try wg.OpenExistingInterface("wg0") for a managed teardown. This succeeds only
+//     if the old process is still running and its UAPI socket is reachable (rare
+//     in practice — migration runs on first v1.12.2 boot where the old binary is gone).
+//  2. Fall back to raw netlink.LinkDel, which works regardless of UAPI availability.
+//  3. If wg0 is already gone (LinkByName fails in the fallback), return nil (idempotent).
+//
+// Only the final teardown failure (step 2 returning an error) is returned as an error.
+// Callers treat this as non-fatal (warn + proceed).
+func migrateLegacyWg0(logger zerolog.Logger) error {
+	iface, err := wg.OpenExistingInterface("wg0")
+	if err == nil {
+		// Managed close: shuts down the amneziawg-go device and UAPI listener.
+		// Note: Close() does not remove the kernel TUN device, so we still
+		// proceed to netlink deletion below after this succeeds.
+		if closeErr := iface.Close(); closeErr != nil {
+			logger.Warn().Err(closeErr).Msg("legacy wg0: managed close failed; retrying via netlink")
+		}
+	}
+	// Always attempt netlink deletion — even after a managed close the kernel
+	// TUN device may still be present.
+	link, nlErr := netlink.LinkByName("wg0")
+	if nlErr != nil {
+		// Already gone (either was never there or managed close removed it).
+		logger.Info().
+			Str("event", "migrated_wg0_to_per_master_ifaces").
+			Str("migrated_from", "wg0").
+			Msg("legacy wg0 interface removed; per-master ifaces will be created by reconcile")
+		return nil
+	}
+	if delErr := netlink.LinkDel(link); delErr != nil {
+		return fmt.Errorf("delete legacy wg0: %w", delErr)
+	}
+	logger.Info().
+		Str("event", "migrated_wg0_to_per_master_ifaces").
+		Str("migrated_from", "wg0").
+		Msg("legacy wg0 interface removed; per-master ifaces will be created by reconcile")
+	return nil
 }
 
 // buildEndpointPeerAllowedIPs returns the minimal AllowedIPs for an endpoint-side
