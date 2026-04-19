@@ -618,6 +618,13 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 			continue
 		}
 
+		// Skip /32 routes here — they are installed below with src=overlay hint
+		// in the second loop. Installing them twice (first without src, then with)
+		// causes the src attribute to be silently lost on some kernels.
+		if ones, bits := cidrNet.Mask.Size(); bits == 32 && ones == 32 && overlayIP != nil {
+			continue
+		}
+
 		if err := endpointRouteReplaceLink(cidrNet, ifaceName); err != nil {
 			e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Msg("failed to install overlay route")
 		}
