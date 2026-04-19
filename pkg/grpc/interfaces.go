@@ -64,6 +64,31 @@ type NodeStateProvider interface {
 	GetNodeState() NodeState
 }
 
+// NodeStatePersister extends NodeStateProvider with the ability to load and
+// atomically persist the node's on-disk keypair (node.yml).
+//
+// Implemented only by endpoint mode. Handlers that need to rotate an endpoint's
+// keypair perform a type assertion on stateProvider — if the assertion fails,
+// the mode does not support keypair rotation (reject with codes.Unimplemented).
+//
+// Contract:
+//   - LoadKeypair reads the current keypair from disk; returns error if the
+//     state file is missing, malformed, or the keypair fields are absent.
+//   - PersistKeypair writes atomically (.tmp + rename) with mode 0600.
+//   - On success the on-disk state has the new PrivateKey and PublicKey; other
+//     fields (Name, Mode, OverlayIP) are preserved.
+//   - On error the on-disk state is unchanged (caller relies on this for rollback).
+//   - LockRotation serializes the entire rotation sequence (Load → Persist →
+//     Apply → optional rollback Persist+Apply). Returns an unlock closure that
+//     callers MUST defer. Concurrent RotateKeypair invocations interleaving the
+//     load/persist/apply steps would otherwise leave the on-disk and runtime
+//     state inconsistent.
+type NodeStatePersister interface {
+	LoadKeypair() (priv wg.Key, pub wg.Key, err error)
+	PersistKeypair(priv wg.Key, pub wg.Key) error
+	LockRotation() (unlock func())
+}
+
 // CaptureFunc performs capture using a network interface and returns how many
 // packets were captured.
 type CaptureFunc func(interfaceName string, domains []string, countPerDomain int, timeout time.Duration) (int, error)

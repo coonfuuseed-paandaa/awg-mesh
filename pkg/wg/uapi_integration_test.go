@@ -152,6 +152,96 @@ func TestIntegration_writeConfig_S3S4NeverSent(t *testing.T) {
 	}
 }
 
+// TestUAPI_RotatePrivateKey_PreservesPeers proves that sending a PrivateKey-only
+// UAPI payload to an amneziawg-go device replaces the device private key while
+// leaving the pre-existing peer table intact.
+//
+// This is the UAPI contract that RotateKeypair (pkg/grpc) relies on: issuing
+// ApplyParams with only PrivateKey set must NOT remove any peers, because
+// writeConfig only emits "private_key=<hex>" with no "replace_peers=true" flag
+// when the Peers slice is empty (local tracker #125).
+func TestUAPI_RotatePrivateKey_PreservesPeers(t *testing.T) {
+	dev := newTestDevice(t)
+
+	// --- Step 1: create initial keypair K1 and peer P1 ---
+	k1 := randomPrivateKey(t)
+
+	// Build a distinct peer key P1 (different byte pattern from k1).
+	peerRaw := make([]byte, 32)
+	for i := range peerRaw {
+		peerRaw[i] = byte(i + 100)
+	}
+	peerRaw[0] &= 248
+	peerRaw[31] &= 127
+	peerRaw[31] |= 64
+	p1, err := NewKey(peerRaw)
+	if err != nil {
+		t.Fatalf("NewKey peer: %v", err)
+	}
+
+	// Apply K1 + P1 to device.
+	initialCfg := Config{
+		PrivateKey: &k1,
+		Peers: []PeerConfig{
+			{PublicKey: p1},
+		},
+	}
+	if err := ipcSetFromWriteConfig(dev, initialCfg); err != nil {
+		t.Fatalf("initial IpcSet (K1+P1): %v", err)
+	}
+
+	// Verify device has K1 and P1 before rotation.
+	state1, err := dev.IpcGet()
+	if err != nil {
+		t.Fatalf("IpcGet after initial config: %v", err)
+	}
+	k1Hex := hex.EncodeToString(k1[:])
+	p1Hex := hex.EncodeToString(p1[:])
+	if !strings.Contains(state1, "private_key="+k1Hex) {
+		t.Fatalf("device state does not contain K1 private key after initial config:\n%s", state1)
+	}
+	if !strings.Contains(state1, "public_key="+p1Hex) {
+		t.Fatalf("device state does not contain P1 public key after initial config:\n%s", state1)
+	}
+
+	// --- Step 2: rotate to K2 with no peer changes ---
+	k2Raw := make([]byte, 32)
+	for i := range k2Raw {
+		k2Raw[i] = byte(i + 200)
+	}
+	k2Raw[0] &= 248
+	k2Raw[31] &= 127
+	k2Raw[31] |= 64
+	k2, err := NewKey(k2Raw)
+	if err != nil {
+		t.Fatalf("NewKey K2: %v", err)
+	}
+
+	// PrivateKey-only config — no Peers field, no replace_peers in wire format.
+	rotateCfg := Config{PrivateKey: &k2}
+	if err := ipcSetFromWriteConfig(dev, rotateCfg); err != nil {
+		t.Fatalf("rotation IpcSet (K2 only): %v", err)
+	}
+
+	// --- Step 3: verify K2 is active AND P1 is still present ---
+	state2, err := dev.IpcGet()
+	if err != nil {
+		t.Fatalf("IpcGet after rotation: %v", err)
+	}
+	k2Hex := hex.EncodeToString(k2[:])
+
+	if !strings.Contains(state2, "private_key="+k2Hex) {
+		t.Errorf("after rotation: device private_key is not K2\nstate:\n%s", state2)
+	}
+	if strings.Contains(state2, "private_key="+k1Hex) {
+		t.Errorf("after rotation: device still reports old K1 private_key\nstate:\n%s", state2)
+	}
+	// P1 must still be listed as a peer — rotation must NOT wipe peers.
+	if !strings.Contains(state2, "public_key="+p1Hex) {
+		t.Errorf("after rotation: peer P1 was dropped — PrivateKey-only UAPI set must not remove peers\nstate:\n%s", state2)
+	}
+}
+
 // TestIntegration_writeConfig_FullPeerRoundTrip verifies that a peer config
 // with AWG params can be applied to an in-memory device end-to-end.
 func TestIntegration_writeConfig_FullPeerRoundTrip(t *testing.T) {
