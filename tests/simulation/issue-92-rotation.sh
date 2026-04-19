@@ -229,7 +229,7 @@ inspect_node() {
 inspect_runtime_prefix_for() {
     local node="$1"
     local peer="$2"
-    inspect_node "${node}" | awk -v p="${peer}" '$1 == p { print $4 }' | head -1
+    inspect_node "${node}" | awk -v p="${peer}" '$1 == p { print $5 }' | head -1
 }
 
 # inspect_has_no_drift <node> — returns 0 when admin == runtime for every peer.
@@ -824,9 +824,9 @@ meshctl inspect "${ENDPOINT_US_01}" > /tmp/inspect-drift.txt 2>&1 || true
 if grep -qE "^(mst-ru-01|mst-ru-02)[[:space:]]+" /tmp/inspect-drift.txt; then
     for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
         row=$(grep -E "^${m}[[:space:]]+" /tmp/inspect-drift.txt | head -1)
-        adm=$(echo "${row}" | awk '{print $2}')
-        nod=$(echo "${row}" | awk '{print $3}')
-        run=$(echo "${row}" | awk '{print $4}')
+        adm=$(echo "${row}" | awk '{print $3}')
+        nod=$(echo "${row}" | awk '{print $4}')
+        run=$(echo "${row}" | awk '{print $5}')
         # STATUS column spans from column 8 to end of row.
         status=$(echo "${row}" | awk '{for(i=8;i<=NF;i++) printf "%s ",$i}')
         if [[ "${adm}" == "${nod}" && "${nod}" == "${run}" ]]; then
@@ -897,8 +897,8 @@ for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
         sed 's/^/    /' "/tmp/inspect-master-${m}.txt"
         continue
     fi
-    disk_ips=$(echo "${row}" | awk '{print $6}')
-    runtime_ips=$(echo "${row}" | awk '{print $7}')
+    disk_ips=$(echo "${row}" | awk '{print $7}')
+    runtime_ips=$(echo "${row}" | awk '{print $8}')
     if [[ -z "${disk_ips}" || "${disk_ips}" == "-" ]]; then
         fail "R3i: ${m} DISK_IPS for ${ENDPOINT_US_01} empty — transport.yml missing allowed_ips (engram #132)"
     else
