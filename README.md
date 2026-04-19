@@ -716,6 +716,17 @@ entryPoints:
 | 9090 | TCP | Traefik (mTLS passthrough) | gRPC management, TLS at node |
 | 9091 | HTTP | Traefik | Prometheus metrics |
 
+> **Multi-master endpoints (v1.12.2+):** Each bound master uses a separate UDP port starting at
+> `listen_port` (sorted by master name). An endpoint with `listen_port: 51820` and two masters
+> uses ports 51820 and 51821. When using explicit port mappings (Traefik or bridge-network mode),
+> expand the `ports:` entry to a range that covers all bound masters:
+> ```yaml
+> ports:
+>   - "51820-51829:51820-51829/udp"   # covers up to 10 bound masters
+> ```
+> With `network_mode: host` (the default), all host ports are accessible automatically and no
+> change is needed. Single-master endpoints are unaffected.
+
 ### Systemd integration (optional)
 
 ```ini

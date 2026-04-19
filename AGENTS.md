@@ -29,6 +29,7 @@ Unified node binary (`awg-mesh-node`) + CLI control plane (`mesh-ctl`).
 - `mesh-ctl status --verify-data-plane` — L3 data-plane health probes per (master, endpoint) pair with structured failure reasons (v1.10.1+)
 - `mesh-ctl upgrade <version>` — guided rolling upgrade with plan/confirm/execute/verify/rollback phases (v1.10.2+)
 - `mesh-ctl upgrade compose <old-file>` — docker-compose schema migration helper for v1.5.1/v1.6.0/v1.9.0 → current (v1.10.2+)
+- Endpoint per-master interface pattern (v1.12.2+): each bound master gets its own `wg-<master-name>` iface on the endpoint, avoiding WireGuard AllowedIPs dedup. Endpoint↔endpoint traffic flows via kernel policy routing. Symmetric with master-side architecture (local tracker #134).
 
 ## ARCHITECTURE
 
