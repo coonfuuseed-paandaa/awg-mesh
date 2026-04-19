@@ -423,13 +423,13 @@ func (e *EndpointRunner) createMasterInterface(
 
 // createInterface creates AWG interfaces for this endpoint node.
 //
-// If the topology lists masters for this endpoint AND transport.yml has per-master
-// transport metadata (i.e. we have been contacted by at least one master), we use the
-// per-master iface path: one wg-<master> device per master.
+// Per-master iface mode (v1.12.2+): when topology is available, create one wg-<master>
+// device per master listed in the topology (if transport state is already present).
+// If topology is nil or no transport state exists yet, skip interface creation entirely —
+// AddPeer RPCs will create per-master ifaces lazily on first contact from each master.
 //
-// Otherwise (first-boot before any master has contacted us, or no topology loaded) we
-// fall back to the legacy single-wg0 path. The ConfigureTransport RPC will add
-// transport metadata on first contact; T005 will retrofit this into the per-master path.
+// The legacy single-wg0 path is intentionally removed: it caused R7.3 failures when
+// endpoint containers started without topology.yml (the common production case).
 func (e *EndpointRunner) createInterface() error {
 	if e == nil || e.node == nil {
 		return fmt.Errorf("endpoint runner node is required")
@@ -442,7 +442,7 @@ func (e *EndpointRunner) createInterface() error {
 			// Load transport.yml to resolve per-master transport IPs.
 			transportState, tsErr := loadNodeTransportState(e.node.config.ConfigDir)
 			if tsErr != nil {
-				e.node.logger.Warn().Err(tsErr).Msg("failed to load transport state; falling back to legacy interface")
+				e.node.logger.Warn().Err(tsErr).Msg("failed to load transport state; will create ifaces lazily via AddPeer")
 			} else {
 				// Build a lookup map: master name → tunnel transport entry.
 				tunnelByName := make(map[string]TunnelTransport, len(transportState.Tunnels))
@@ -487,13 +487,20 @@ func (e *EndpointRunner) createInterface() error {
 					}
 					return nil
 				}
-				e.node.logger.Warn().Msg("no per-master interfaces created; falling back to legacy interface")
+				e.node.logger.Info().Msg("no per-master transport state found at startup; ifaces will be created lazily on AddPeer")
 			}
 		}
 	}
 
-	// Legacy path: single wg0 interface, no per-master segregation.
-	return e.createLegacyInterface()
+	// No topology loaded (endpoint containers don't mount topology.yml) or no masters
+	// found — skip wg0 creation. Per-master ifaces are created lazily when AddPeer RPCs
+	// arrive from mesh-ctl. Install forwarding rules now so NAT/MSS is ready on first
+	// data-plane packet.
+	e.node.logger.Info().
+		Str("event", "endpoint_lazy_iface_mode").
+		Msg("no topology/transport state at startup; per-master ifaces will be created lazily on AddPeer RPC")
+	e.setupForwarding()
+	return nil
 }
 
 // createLegacyInterface is the pre-v1.12.2 single-wg0 creation path retained for
@@ -557,10 +564,12 @@ func (e *EndpointRunner) setupForwarding() {
 	}
 }
 
-// ConfigureTransport assigns the local transport IP to the legacy wg0 interface after
-// a peer is added. Each master peer gets its own /30 subnet; the endpoint's IP is added
-// to wg0. This function will be replaced in T003/T004 with per-master iface routing.
-func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error {
+// ConfigureTransport assigns the local transport IP and installs overlay routes on
+// the per-master WireGuard interface for the given master peer.
+//
+// When peerName is non-empty (v1.12.2+), routes are installed on wg-<peerName>.
+// When peerName is empty (legacy path), falls back to the legacy wg0 interface.
+func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string) error {
 	if e == nil || e.node == nil {
 		return fmt.Errorf("endpoint runner node is required")
 	}
@@ -570,8 +579,24 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 		return fmt.Errorf("local transport IP %q is invalid", localIP)
 	}
 
-	if err := endpointAddInterfaceAddress(endpointLegacyIfaceName, trimmedLocalIP); err != nil {
+	// Determine which interface to configure: per-master (v1.12.2+) or legacy wg0.
+	masterName := strings.TrimSpace(peerName)
+	ifaceName := endpointLegacyIfaceName
+	if masterName != "" {
+		iface := e.getIface(masterName)
+		if iface != nil {
+			masterNamePart := masterName
+			if len(masterNamePart) > 12 {
+				masterNamePart = masterNamePart[:12]
+			}
+			ifaceName = "wg-" + masterNamePart
+		}
+		// If iface not found (shouldn't happen after lazy AddPeer), fall through to legacy.
+	}
+
+	if err := endpointAddInterfaceAddress(ifaceName, trimmedLocalIP); err != nil {
 		e.node.logger.Warn().Err(err).
+			Str("interface", ifaceName).
 			Str("local_ip", trimmedLocalIP).
 			Msg("transport IP may already be assigned")
 	}
@@ -593,13 +618,14 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 			continue
 		}
 
-		if err := endpointRouteReplaceLink(cidrNet, endpointLegacyIfaceName); err != nil {
+		if err := endpointRouteReplaceLink(cidrNet, ifaceName); err != nil {
 			e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Msg("failed to install overlay route")
 		}
 	}
 
 	e.node.logger.Info().
-		Str("interface", endpointLegacyIfaceName).
+		Str("interface", ifaceName).
+		Str("master", masterName).
 		Str("local_ip", trimmedLocalIP).
 		Str("peer_ip", peerIP).
 		Msg("endpoint transport configured")
@@ -733,15 +759,93 @@ func (e *EndpointRunner) firstIface() *wg.Interface {
 	return e.getIface(names[0])
 }
 
-// AddPeer adds a peer to the endpoint interface.
-// T002 placeholder: routes to the first available interface in the map.
-// T003 will introduce per-master routing (AddPeer will accept a masterName parameter
-// or derive it from the public key via the transport state).
-func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
-	iface := e.firstIface()
-	if iface == nil {
-		return fmt.Errorf("endpoint interface is not initialized")
+// countIfacesLocked returns the current number of ifaces in the map under read lock.
+// Used by AddPeer to derive a stable listen-port offset for lazily created interfaces.
+func (e *EndpointRunner) countIfacesLocked() int {
+	e.platformState.mu.RLock()
+	defer e.platformState.mu.RUnlock()
+	return len(e.platformState.ifaces)
+}
+
+// AddPeer adds a master peer to the correct per-master WireGuard interface.
+//
+// When peerName is non-empty (v1.12.2+ clients), AddPeer performs a lazy
+// get-or-create of the "wg-<peerName>" interface and then adds the peer to it.
+// This is the primary code path for multi-master endpoints.
+//
+// When peerName is empty (pre-v1.12.2 backwards-compat path), AddPeer falls
+// back to the first available interface (legacy wg0 behaviour).
+func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32, peerName string) error {
+	masterName := strings.TrimSpace(peerName)
+	if masterName == "" {
+		// Legacy fallback: use first interface (pre-v1.12.2 behaviour).
+		iface := e.firstIface()
+		if iface == nil {
+			return fmt.Errorf("endpoint interface is not initialized (and no peer_name given)")
+		}
+		return e.addPeerToIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
 	}
+
+	// Per-master mode: get-or-create wg-<masterName>.
+	iface := e.getIface(masterName)
+	if iface == nil {
+		// Lazily create a per-master interface on first AddPeer RPC from this master.
+		privateKey, _, err := EnsureKeypair(e.node.config.ConfigDir)
+		if err != nil {
+			return fmt.Errorf("ensure keypair: %w", err)
+		}
+
+		// Interface name: "wg-" + masterName, truncated to IFNAMSIZ-1 (15 chars total).
+		masterNamePart := masterName
+		if len(masterNamePart) > 12 {
+			masterNamePart = masterNamePart[:12]
+		}
+		ifaceName := "wg-" + masterNamePart
+
+		// Port offset = current iface count (stable: new entry not yet inserted).
+		listenPort := e.node.config.ListenPort + e.countIfacesLocked()
+
+		mtu := calculateMTUFromTopology(e.node.topology, 1)
+
+		newIface, err := endpointCreateIfaceFn(
+			ifaceName,
+			mtu,
+			device.NewLogger(device.LogLevelError, "[endpoint-"+masterName+"] "),
+		)
+		if err != nil {
+			return fmt.Errorf("create iface %q for master %q: %w", ifaceName, masterName, err)
+		}
+
+		cfg := wg.Config{
+			PrivateKey: &privateKey,
+			ListenPort: wg.IntPtr(listenPort),
+		}
+		if err := endpointConfigureIfaceFn(newIface, cfg); err != nil {
+			_ = newIface.Close()
+			return fmt.Errorf("configure iface %q: %w", ifaceName, err)
+		}
+		if err := endpointSetIfaceUpFn(ifaceName); err != nil {
+			_ = newIface.Close()
+			return fmt.Errorf("bring up iface %q: %w", ifaceName, err)
+		}
+
+		e.setIface(masterName, newIface)
+		iface = newIface
+
+		e.node.logger.Info().
+			Str("event", "endpoint_iface_created_lazy").
+			Str("interface", ifaceName).
+			Str("master", masterName).
+			Int("listen_port", listenPort).
+			Msg("endpoint per-master iface created lazily from AddPeer RPC")
+	}
+
+	return e.addPeerToIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)
+}
+
+// addPeerToIface configures a peer on the given interface. Extracted from AddPeer
+// to share the peer-config logic between the per-master and legacy code paths.
+func (e *EndpointRunner) addPeerToIface(iface *wg.Interface, publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
 	key, err := wg.NewKey(publicKey)
 	if err != nil {
 		return fmt.Errorf("parse peer public key: %w", err)

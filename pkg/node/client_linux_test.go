@@ -35,7 +35,7 @@ func TestAddPeerConcurrentSamePubkey(t *testing.T) {
 	}
 
 	// First AddPeer creates the interface — may fail on non-privileged, skip in that case
-	err = runner.AddPeer(peerKey, nil, []string{"0.0.0.0/0"}, "192.168.1.1:51820", 25)
+	err = runner.AddPeer(peerKey, nil, []string{"0.0.0.0/0"}, "192.168.1.1:51820", 25, "")
 	if err != nil {
 		t.Skipf("AddPeer requires TUN device (privileged): %v", err)
 	}
@@ -51,7 +51,7 @@ func TestAddPeerConcurrentSamePubkey(t *testing.T) {
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
-			errs[idx] = runner.AddPeer(peerKey, nil, []string{"0.0.0.0/0"}, "192.168.1.1:51820", 25)
+			errs[idx] = runner.AddPeer(peerKey, nil, []string{"0.0.0.0/0"}, "192.168.1.1:51820", 25, "")
 		}(i)
 	}
 	wg.Wait()
@@ -82,7 +82,7 @@ func TestListPeersConcurrentClose(t *testing.T) {
 	}
 
 	// Add a peer first
-	err = runner.AddPeer(peerKey, nil, []string{"0.0.0.0/0"}, "192.168.1.1:51820", 25)
+	err = runner.AddPeer(peerKey, nil, []string{"0.0.0.0/0"}, "192.168.1.1:51820", 25, "")
 	if err != nil {
 		t.Skipf("AddPeer requires TUN device (privileged): %v", err)
 	}
@@ -418,7 +418,7 @@ func TestAddPeerExistingLinkDoesNotHoldMuWhileReconfigure(t *testing.T) {
 	}
 
 	go func() {
-		done <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25)
+		done <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25, "")
 	}()
 
 	select {
@@ -505,7 +505,7 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 	done2 := make(chan error, 1)
 
 	go func() {
-		done1 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25)
+		done1 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.1:51820", 25, "")
 	}()
 
 	// Wait for first to be inside configure (holding link.mu).
@@ -517,7 +517,7 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 
 	// Launch second. It MUST block on existingLink.mu.Lock() inside AddPeer.
 	go func() {
-		done2 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.2:51820", 25)
+		done2 <- runner.AddPeer(peerKey, nil, []string{"10.0.0.0/24"}, "198.18.0.2:51820", 25, "")
 	}()
 
 	// Synchronize on the beforeExistingLinkLockFn seam — after this fires the

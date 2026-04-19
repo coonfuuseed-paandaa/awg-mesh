@@ -129,6 +129,7 @@ message AddPeerRequest {
   string local_transport_ip = 8;
   string peer_transport_ip = 9;
   string balancer_ip = 10;
+  string peer_name = 11;  // master name (on endpoint side) or endpoint name (on master side); used for per-iface routing
 }
 
 message AddPeerResponse {

@@ -421,6 +421,7 @@ func reconcileEndpointNode(
 			TransportSubnet:     transportSubnet,
 			LocalTransportIp:    localTransportIP,
 			PeerTransportIp:     peerTransportIP,
+			PeerName:            m.Name,
 		})
 		cancel()
 

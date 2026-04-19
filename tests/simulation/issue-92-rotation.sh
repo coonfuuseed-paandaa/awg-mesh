@@ -1033,8 +1033,10 @@ fi
 
 # R7.3: Legacy wg0 must NOT exist on endpoint-a. The per-master-iface feature
 # replaces the single wg0 with per-master named interfaces.
+# NOTE: stderr is suppressed (2>/dev/null) so that the "Device does not exist"
+# error message (which contains "wg0") does not produce a false-positive count.
 WG0_COUNT=$(docker exec "${CTR_ENDPOINT_ASIA_01}" \
-    ip link show wg0 2>&1 | grep -c "wg0" || true)
+    ip link show wg0 2>/dev/null | grep -c "wg0" || true)
 if [[ "${WG0_COUNT}" -eq 0 ]]; then
     pass "R7.3: legacy wg0 does not exist on ${ENDPOINT_ASIA_01} — migration complete"
 else

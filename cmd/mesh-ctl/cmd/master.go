@@ -330,6 +330,7 @@ func newMasterInitCommand() *cobra.Command {
 					TransportSubnet:     allocation.Subnet.String(),
 					LocalTransportIp:    allocation.EndpointIP.String(),
 					PeerTransportIp:     allocation.MasterIP.String(),
+					PeerName:            master.Name,
 				})
 				peerCancel()
 				if closeErr := peerClient.Close(); closeErr != nil {

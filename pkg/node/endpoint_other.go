@@ -51,7 +51,7 @@ func (e *EndpointRunner) ListPeers() []grpcserver.PeerInfo {
 	return nil
 }
 
-func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
+func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32, peerName string) error {
 	return fmt.Errorf("peer management not supported on this platform")
 }
 
@@ -59,6 +59,6 @@ func (e *EndpointRunner) RemovePeer(publicKey []byte) error {
 	return fmt.Errorf("peer management not supported on this platform")
 }
 
-func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string) error {
+func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string) error {
 	return fmt.Errorf("transport configuration not supported on this platform")
 }

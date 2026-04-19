@@ -31,7 +31,7 @@ func (c *ClientRunner) closeInterfaces() error {
 	return nil
 }
 
-func (c *ClientRunner) AddPeer(publicKey []byte, _ []byte, _ []string, _ string, _ int32) error {
+func (c *ClientRunner) AddPeer(publicKey []byte, _ []byte, _ []string, _ string, _ int32, _ string) error {
 	if len(publicKey) == 0 {
 		return fmt.Errorf("public key is required")
 	}
@@ -49,7 +49,7 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 	return fmt.Errorf("client peer management is not available on this platform")
 }
 
-func (c *ClientRunner) ConfigureTransport(_ string, _ string, _ string, _ []string) error {
+func (c *ClientRunner) ConfigureTransport(_ string, _ string, _ string, _ []string, _ string) error {
 	return fmt.Errorf("client transport configuration is not available on this platform")
 }
 

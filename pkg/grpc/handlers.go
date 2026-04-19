@@ -459,6 +459,7 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 		req.GetAllowedIps(),
 		strings.TrimSpace(req.GetEndpointHost()),
 		req.GetPersistentKeepalive(),
+		strings.TrimSpace(req.GetPeerName()),
 	); err != nil {
 		h.logger.Error().Err(err).Msg("add peer failed")
 		return nil, status.Errorf(codes.Internal, "add peer: %v", err)
@@ -479,7 +480,7 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 					bs.SetBalancerIP(pubkeyHex, balancerIP)
 				}
 			}
-			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP, req.GetAllowedIps()); err != nil {
+			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP, req.GetAllowedIps(), strings.TrimSpace(req.GetPeerName())); err != nil {
 				h.logger.Warn().Err(err).Msg("configure transport after AddPeer failed")
 			}
 		}

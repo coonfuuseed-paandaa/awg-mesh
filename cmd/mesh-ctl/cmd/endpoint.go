@@ -462,6 +462,7 @@ func newEndpointInitCommand() *cobra.Command {
 					TransportSubnet:     work.subnet,
 					LocalTransportIp:    work.epTransIP,
 					PeerTransportIp:     work.masterIP,
+					PeerName:            work.masterName,
 				})
 				peerCancel()
 				if peerErr != nil {

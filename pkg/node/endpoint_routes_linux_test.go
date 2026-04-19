@@ -44,6 +44,7 @@ func TestEndpointConfigureTransportInstallsRoutesFromAllowedIPs(t *testing.T) {
 			"10.44.0.0/24",  // overlay range (install)
 			"10.66.0.0/27",  // overlay range (install)
 		},
+		"",
 	)
 	if err != nil {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
@@ -85,6 +86,7 @@ func TestEndpointConfigureTransportSkipsOnlyOwnHostRoute(t *testing.T) {
 			"10.50.0.10/32", // own host route (skip)
 			"10.50.0.0/24",  // containing network (must install)
 		},
+		"",
 	)
 	if err != nil {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
@@ -126,6 +128,7 @@ func TestEndpointConfigureTransportInstallsNonSelfHostRoute(t *testing.T) {
 		"10.255.0.2",
 		"10.255.0.1",
 		[]string{"10.44.0.1/32"},
+		"",
 	)
 	if err != nil {
 		t.Fatalf("ConfigureTransport returned error: %v", err)

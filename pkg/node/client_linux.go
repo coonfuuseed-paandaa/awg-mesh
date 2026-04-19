@@ -211,7 +211,9 @@ func (c *ClientRunner) createInterfaces(ctx context.Context) error {
 
 // AddPeer implements grpcserver.PeerManager.
 // It creates a per-peer WireGuard interface and configures the master peer on it.
-func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32) error {
+// peerName is accepted for interface compatibility but ignored by client mode (client
+// creates per-peer-key interfaces, not per-master-name interfaces).
+func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32, peerName string) error {
 	if c == nil || c.node == nil {
 		return fmt.Errorf("client runner node is required")
 	}
@@ -460,7 +462,7 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 // ConfigureTransport implements grpcserver.TransportConfigurator.
 // allowedIPs is accepted for interface compliance but ignored in client mode:
 // client overlay routing uses ECMP via rebuildClientECMP, not per-peer link routes.
-func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ []string) error {
+func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ []string, _ string) error {
 	if c == nil || c.node == nil {
 		return fmt.Errorf("client runner node is required")
 	}
@@ -584,7 +586,7 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 			continue
 		}
 
-		if err := c.AddPeer(peerPublicKey, nil, tunnel.AllowedIPs, strings.TrimSpace(tunnel.PeerEndpoint), tunnel.PersistentKeepalive); err != nil {
+		if err := c.AddPeer(peerPublicKey, nil, tunnel.AllowedIPs, strings.TrimSpace(tunnel.PeerEndpoint), tunnel.PersistentKeepalive, tunnel.Name); err != nil {
 			c.node.logger.Warn().
 				Str("tunnel", tunnel.Name).
 				Err(err).
@@ -596,7 +598,7 @@ func (c *ClientRunner) reconcileFromTransportState() error {
 		if balancerIP := strings.TrimSpace(tunnel.BalancerIP); balancerIP != "" {
 			c.SetBalancerIP(pubkeyHex, balancerIP)
 		}
-		if err := c.ConfigureTransport(pubkeyHex, strings.TrimSpace(tunnel.TransportIP), strings.TrimSpace(tunnel.PeerTransportIP), tunnel.AllowedIPs); err != nil {
+		if err := c.ConfigureTransport(pubkeyHex, strings.TrimSpace(tunnel.TransportIP), strings.TrimSpace(tunnel.PeerTransportIP), tunnel.AllowedIPs, tunnel.Name); err != nil {
 			c.node.logger.Warn().
 				Str("tunnel", tunnel.Name).
 				Err(err).
