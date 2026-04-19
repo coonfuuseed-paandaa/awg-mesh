@@ -439,13 +439,13 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 // STATUS values: ROTATED, FAILED, REVERTED, REVERT_FAILED.
 func printTier3Table(results []tier3MasterResult) {
 	w := tabwriter.NewWriter(os.Stderr, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tDETAIL")
+	_, _ = fmt.Fprintln(w, "NAME\tSTATUS\tDETAIL")
 	for _, r := range results {
 		detail := r.detail
 		if detail == "" {
 			detail = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", r.name, r.status, detail)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", r.name, r.status, detail)
 	}
 	_ = w.Flush()
 }
