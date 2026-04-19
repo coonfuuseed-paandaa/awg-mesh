@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.2] — 2026-04-19
+
+### Fixed — endpoint side AllowedIPs dedup broke multi-master routing (local tracker #134)
+
+Endpoints with two or more bound masters shared a single `wg0` interface and carried
+every master as a peer on that interface. WireGuard's peer-selection rules require
+each `AllowedIPs` entry to be unique per interface — when two master peers declared
+overlapping prefixes (the transport `/30` and the mesh overlay), the kernel
+deduplicated by keeping only the last peer's route. The first master's ingress
+flow silently became unreachable, producing ~50 percent multi-host ping loss that
+tracked cleanly to whichever master happened to be bound second. The bug was
+structural, not a configuration miss — `wg-quick`, `wgctrl`, Tailscale and NetBird
+all explicitly call out the same constraint.
+
+The fix adopts the industry-standard Pattern X topology on the endpoint side:
+one `wg-<master-name>` interface per bound master, each with exactly one peer and
+a minimal `AllowedIPs` list of `[transport_subnet, master_overlay_ip/32]`. Endpoint↔endpoint
+reachability moves from `AllowedIPs` stuffing to kernel policy routing — the endpoint
+installs `ip route <other_endpoint_overlay_ip>/32 dev wg-<chosen-master>` per remote
+endpoint, using the first master alphabetically that binds both sides.
+
+This matches the master-side architecture (which already follows Pattern X with one
+`wg-<endpoint-name>` per bound endpoint) — both sides are now symmetric. Migration
+is transparent: on first restart the endpoint's `Run()` reconcile detects the legacy
+`wg0` interface, tears it down via netlink, and rebuilds per-master interfaces from
+`transport.yml`. No operator action required, no topology or CLI changes.
+
+#### Research
+
+Full decision record at `.agent/reports/research-endpoint-allowedips-2026-04-19.md` —
+AUTHORITATIVE tier, 10 sources, weighted scoring of three candidate fixes.
+
+#### Scope
+
+- `pkg/node/endpoint_linux.go` — per-master interface setup, sorted-name port offsets, truncation for long master names
+- `pkg/node/endpoint_routes_linux.go` — new file, overlay routing helpers (install/remove/rebuild)
+- `pkg/topology/allowedips.go` — `BuildMinimalAllowedIPsForEndpointPeer` helper; the master-side `BuildAllowedIPsForEndpoint` remains untouched
+- `pkg/topology/topology.go` — `MastersForEndpoint` helper (sorted) and master-name length validation warning
+- `cmd/mesh-ctl/cmd/endpoint.go` — sends the minimal AllowedIPs via `AddPeer` RPC
+- `cmd/mesh-ctl/cmd/inspect.go` — new `IFACE` column shows `wg-<master>` per peer row
+- `tests/simulation/issue-92-rotation.sh` — new R7 (endpoint↔endpoint via policy route) and R8 (kill-master failover) assertions
+
+### Sim harness
+
+Pre-fix on the reproduction topology (two masters + two endpoints): R7 **RED** — second endpoint unreachable via policy route. Post-fix: **32/32 PASS** across R1-R8 + all R3a-R3i subassertions.
+
+### Upgrade
+
+Strongly recommended for any operator running endpoints bound to two or more masters. Rolling upgrade from v1.12.1 is safe — the reconcile loop migrates `wg0` → per-master interfaces on first boot. Single-master deployments are not affected (they boot one interface either way).
+
+### Links
+
+- Local tracker: #134
+- Depends on: v1.12.1 (master-side AllowedIPs persistence) — both sides now symmetric
+
 ## [1.12.1] — 2026-04-19
 
 ### Fixed — two pre-existing critical bugs discovered during v1.12.0 multi-host beta
