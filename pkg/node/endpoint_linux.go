@@ -658,6 +658,9 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 			if err := router.RouteReplaceLinkWithSrc(cidrNet, ifaceName, overlayIP); err != nil {
 				e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Str("src", overlayIP.String()).
 					Msg("failed to install overlay route with src hint")
+			} else {
+				e.node.logger.Info().Str("cidr", cidrNet.String()).Str("src", overlayIP.String()).Str("dev", ifaceName).
+					Msg("endpoint overlay /32 route installed with src hint")
 			}
 		}
 	}
