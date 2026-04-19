@@ -147,3 +147,83 @@ func (e *EndpointRunner) GetNodeState() grpcserver.NodeState {
 		StartTime: e.startTime,
 	}
 }
+
+// LoadKeypair reads the endpoint's current keypair from node.yml.
+//
+// Implements grpcserver.NodeStatePersister — paired with PersistKeypair for the
+// read→write cycle used by grpcserver.RotateKeypair to capture the pre-rotation
+// keypair for rollback.
+//
+// Returns error when node.yml is missing, malformed, or missing keypair fields.
+func (e *EndpointRunner) LoadKeypair() (wg.Key, wg.Key, error) {
+	if e == nil || e.node == nil {
+		return wg.Key{}, wg.Key{}, fmt.Errorf("endpoint runner is not initialized")
+	}
+	dir := strings.TrimSpace(e.node.config.ConfigDir)
+	if dir == "" {
+		return wg.Key{}, wg.Key{}, fmt.Errorf("config dir is required")
+	}
+	state, err := LoadNodeState(dir)
+	if err != nil {
+		return wg.Key{}, wg.Key{}, fmt.Errorf("load node state: %w", err)
+	}
+	priv, err := wg.ParseKey(state.PrivateKey)
+	if err != nil {
+		return wg.Key{}, wg.Key{}, fmt.Errorf("parse private key: %w", err)
+	}
+	pub, err := wg.ParseKey(state.PublicKey)
+	if err != nil {
+		return wg.Key{}, wg.Key{}, fmt.Errorf("parse public key: %w", err)
+	}
+	return priv, pub, nil
+}
+
+// PersistKeypair atomically updates the endpoint's on-disk keypair.
+//
+// Implements grpcserver.NodeStatePersister — master and client modes do NOT
+// implement this interface, which is how grpcserver.RotateKeypair gates
+// endpoint-only operation via type assertion on stateProvider.
+//
+// Writes node.yml via SaveNodeState (which uses .tmp + rename, mode 0600).
+// Preserves Name / Mode / OverlayIP from the current on-disk state, if any;
+// when the file is missing (fresh node never initialized) falls back to
+// config-driven defaults and the new keypair is written as the first entry.
+//
+// On error the on-disk file is unchanged (SaveNodeState is atomic).
+//
+// Used by tier-3 keypair rotation (engram #125).
+func (e *EndpointRunner) PersistKeypair(priv wg.Key, pub wg.Key) error {
+	if e == nil || e.node == nil {
+		return fmt.Errorf("endpoint runner is not initialized")
+	}
+	dir := strings.TrimSpace(e.node.config.ConfigDir)
+	if dir == "" {
+		return fmt.Errorf("config dir is required")
+	}
+
+	// Load current state to preserve non-keypair fields. Missing file is OK —
+	// we'll write a fresh NodeState with the new keypair as baseline.
+	current, loadErr := LoadNodeState(dir)
+	var next NodeState
+	if loadErr == nil && current != nil {
+		next = *current
+	} else {
+		next = NodeState{
+			Name:      e.node.config.Name,
+			Mode:      "endpoint",
+			OverlayIP: e.node.config.OverlayIP,
+		}
+	}
+
+	next.PrivateKey = priv.String()
+	next.PublicKey = pub.String()
+
+	if err := SaveNodeState(dir, next); err != nil {
+		return fmt.Errorf("persist keypair: %w", err)
+	}
+
+	e.node.logger.Info().
+		Str("new_pub_prefix", pub.String()[:8]).
+		Msg("endpoint keypair persisted to node.yml")
+	return nil
+}

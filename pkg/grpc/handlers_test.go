@@ -1,7 +1,10 @@
 package grpcserver
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -10,6 +13,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1930,5 +1934,340 @@ func TestUpdateTunnelPeer_FR5_ErrorMessage(t *testing.T) {
 		if !c.present && contains {
 			t.Errorf("FR-5: error must NOT contain %q but does. Full error: %v", c.needle, msg)
 		}
+	}
+}
+
+// testNodeStatePersister implements grpcserver.NodeStatePersister for endpoint-mode tests.
+// Records each PersistKeypair call for assertion.
+type testNodeStatePersister struct {
+	state       NodeState
+	priv        wg.Key // LoadKeypair returns this as current priv
+	pub         wg.Key // LoadKeypair returns this as current pub
+	loadErr     error
+	persistErr  error
+	persisted   [][2]wg.Key // [priv, pub] pairs
+	persistLock sync.Mutex
+}
+
+func (p *testNodeStatePersister) GetNodeState() NodeState {
+	return p.state
+}
+
+func (p *testNodeStatePersister) LoadKeypair() (wg.Key, wg.Key, error) {
+	if p.loadErr != nil {
+		return wg.Key{}, wg.Key{}, p.loadErr
+	}
+	return p.priv, p.pub, nil
+}
+
+func (p *testNodeStatePersister) PersistKeypair(priv wg.Key, pub wg.Key) error {
+	p.persistLock.Lock()
+	defer p.persistLock.Unlock()
+	if p.persistErr != nil {
+		return p.persistErr
+	}
+	p.persisted = append(p.persisted, [2]wg.Key{priv, pub})
+	p.priv = priv
+	p.pub = pub
+	return nil
+}
+
+func TestRotateKeypair_RejectsNilRequest(t *testing.T) {
+	t.Parallel()
+
+	applier := &testParamApplier{}
+	persister := &testNodeStatePersister{state: NodeState{Name: "ep-us-01", Mode: "endpoint"}}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, applier, nil, nil, persister, nil, nil)
+
+	_, err := h.RotateKeypair(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for nil request")
+	}
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", status.Code(err))
+	}
+}
+
+func TestRotateKeypair_RejectsShortKey(t *testing.T) {
+	t.Parallel()
+
+	applier := &testParamApplier{}
+	persister := &testNodeStatePersister{state: NodeState{Name: "ep-us-01", Mode: "endpoint"}}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, applier, nil, nil, persister, nil, nil)
+
+	_, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: []byte{1, 2, 3},
+	})
+	if err == nil {
+		t.Fatal("expected error for short key")
+	}
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", status.Code(err))
+	}
+	if len(applier.calls) != 0 {
+		t.Error("ApplyParams must not be called on validation rejection")
+	}
+	if len(persister.persisted) != 0 {
+		t.Error("PersistKeypair must not be called on validation rejection")
+	}
+}
+
+func TestRotateKeypair_UnimplementedInMasterMode(t *testing.T) {
+	t.Parallel()
+
+	applier := &testParamApplier{}
+	// Master mode: stateProvider is plain NodeStateProvider, NOT NodeStatePersister.
+	masterState := &testNodeStateProvider{state: NodeState{Name: "mst-ru-01", Mode: "master"}}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, applier, nil, nil, masterState, nil, nil)
+
+	validKey := make([]byte, 32)
+	for i := range validKey {
+		validKey[i] = byte(i + 0xA0)
+	}
+	_, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: validKey,
+	})
+	if err == nil {
+		t.Fatal("expected Unimplemented from master mode")
+	}
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("expected Unimplemented, got %v", status.Code(err))
+	}
+	if len(applier.calls) != 0 {
+		t.Error("ApplyParams must not be called when mode is rejected")
+	}
+}
+
+func TestRotateKeypair_UnimplementedWhenNoParamApplier(t *testing.T) {
+	t.Parallel()
+
+	persister := &testNodeStatePersister{state: NodeState{Name: "ep-us-01", Mode: "endpoint"}}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, nil, persister, nil, nil)
+
+	validKey := make([]byte, 32)
+	for i := range validKey {
+		validKey[i] = byte(i + 0xA0)
+	}
+	_, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: validKey,
+	})
+	if err == nil {
+		t.Fatal("expected Unimplemented when paramApplier is nil")
+	}
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("expected Unimplemented, got %v", status.Code(err))
+	}
+}
+
+func TestRotateKeypair_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	applier := &testParamApplier{}
+	persister := &testNodeStatePersister{state: NodeState{Name: "ep-us-01", Mode: "endpoint"}}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, applier, nil, nil, persister, nil, nil)
+
+	validKey := make([]byte, 32)
+	for i := range validKey {
+		validKey[i] = byte(i + 0x40)
+	}
+	resp, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: validKey,
+		TunnelName:    "wg0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatal("expected Success=true")
+	}
+	if len(resp.GetNewPublicKey()) != 32 {
+		t.Fatalf("expected 32-byte new_public_key, got %d", len(resp.GetNewPublicKey()))
+	}
+
+	// PersistKeypair called exactly once with the derived keypair.
+	if len(persister.persisted) != 1 {
+		t.Fatalf("expected 1 persisted keypair, got %d", len(persister.persisted))
+	}
+	priv, pub := persister.persisted[0][0], persister.persisted[0][1]
+	if !bytes.Equal(priv[:], validKey) {
+		t.Error("persisted private key differs from request")
+	}
+	derivedPub := priv.PublicKey()
+	if pub != derivedPub {
+		t.Error("persisted public key is not derived from private key")
+	}
+	if !bytes.Equal(resp.GetNewPublicKey(), derivedPub[:]) {
+		t.Error("response new_public_key differs from derived")
+	}
+
+	// ApplyParams called exactly once with tunnelName="wg0" and a PrivateKey-only config.
+	if len(applier.calls) != 1 {
+		t.Fatalf("expected 1 ApplyParams call, got %d", len(applier.calls))
+	}
+	call := applier.calls[0]
+	if call.tunnelName != "wg0" {
+		t.Errorf("expected tunnelName=wg0, got %q", call.tunnelName)
+	}
+	if call.cfg.PrivateKey == nil {
+		t.Fatal("expected PrivateKey to be set in ApplyParams config")
+	}
+	if *call.cfg.PrivateKey != priv {
+		t.Error("ApplyParams received different PrivateKey than persisted")
+	}
+	if len(call.cfg.Peers) != 0 {
+		t.Error("ApplyParams must not include Peers (keypair rotation preserves them)")
+	}
+}
+
+func TestRotateKeypair_DefaultTunnelName(t *testing.T) {
+	t.Parallel()
+
+	applier := &testParamApplier{}
+	persister := &testNodeStatePersister{state: NodeState{Name: "ep-us-01", Mode: "endpoint"}}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, applier, nil, nil, persister, nil, nil)
+
+	validKey := make([]byte, 32)
+	for i := range validKey {
+		validKey[i] = byte(i)
+	}
+	// Omit TunnelName — must default to "wg0".
+	resp, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: validKey,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatal("expected Success=true")
+	}
+	if len(applier.calls) != 1 {
+		t.Fatalf("expected 1 ApplyParams call, got %d", len(applier.calls))
+	}
+	if applier.calls[0].tunnelName != "wg0" {
+		t.Errorf("expected default tunnelName=wg0, got %q", applier.calls[0].tunnelName)
+	}
+}
+
+func TestRotateKeypair_PersistFailure(t *testing.T) {
+	t.Parallel()
+
+	applier := &testParamApplier{}
+	persister := &testNodeStatePersister{
+		state:      NodeState{Name: "ep-us-01", Mode: "endpoint"},
+		persistErr: fmt.Errorf("disk full"),
+	}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, applier, nil, nil, persister, nil, nil)
+
+	validKey := make([]byte, 32)
+	for i := range validKey {
+		validKey[i] = byte(i + 0x10)
+	}
+	_, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: validKey,
+	})
+	if err == nil {
+		t.Fatal("expected error when PersistKeypair fails")
+	}
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected Internal, got %v", status.Code(err))
+	}
+	// ApplyParams must not be called when persist failed (atomic contract).
+	if len(applier.calls) != 0 {
+		t.Errorf("ApplyParams must not be called when PersistKeypair fails, got %d calls", len(applier.calls))
+	}
+}
+
+func TestRotateKeypair_RollbackOnUAPIFailure(t *testing.T) {
+	t.Parallel()
+
+	applier := &testParamApplier{err: fmt.Errorf("uapi set failed: errno=-22")}
+	// Seed mock with an existing keypair so LoadKeypair succeeds pre-rotation.
+	var originalPriv wg.Key
+	for i := range originalPriv {
+		originalPriv[i] = byte(i)
+	}
+	originalPub := originalPriv.PublicKey()
+	persister := &testNodeStatePersister{
+		state: NodeState{Name: "ep-us-01", Mode: "endpoint"},
+		priv:  originalPriv,
+		pub:   originalPub,
+	}
+	h := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, applier, nil, nil, persister, nil, nil)
+
+	newPrivRaw := make([]byte, 32)
+	for i := range newPrivRaw {
+		newPrivRaw[i] = byte(i + 0x60)
+	}
+	_, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: newPrivRaw,
+	})
+	if err == nil {
+		t.Fatal("expected error when UAPI apply fails")
+	}
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected Internal, got %v", status.Code(err))
+	}
+	if !strings.Contains(err.Error(), "apply keypair") {
+		t.Errorf("expected error to mention UAPI apply, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Errorf("expected error to mention rollback, got %v", err)
+	}
+	// Handler flow on UAPI failure:
+	//   1. PersistKeypair(new) → 1st persist call.
+	//   2. ApplyParams(new) → fails → 1st apply call (the failure mock).
+	//   3. Rollback step 1: PersistKeypair(old) → 2nd persist call.
+	//   4. Rollback step 2: ApplyParams(old) → 2nd apply call (best-effort).
+	if len(persister.persisted) != 2 {
+		t.Errorf("expected 2 persist calls (forward + rollback), got %d", len(persister.persisted))
+	}
+	if len(applier.calls) != 2 {
+		t.Errorf("expected 2 ApplyParams calls (forward + rollback), got %d", len(applier.calls))
+	}
+	// After rollback the persister must hold the ORIGINAL keypair again.
+	if persister.priv != originalPriv || persister.pub != originalPub {
+		t.Errorf("rollback did not restore original keypair")
+	}
+	// First persist was new; second persist (rollback) was original.
+	if len(persister.persisted) >= 2 {
+		rbPriv := persister.persisted[1][0]
+		if rbPriv != originalPriv {
+			t.Error("rollback persist did not use original private key")
+		}
+	}
+}
+
+func TestRotateKeypair_NoPrivateKeyInLogs(t *testing.T) {
+	t.Parallel()
+
+	// Capture zerolog output in a buffer.
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf).Level(zerolog.TraceLevel)
+
+	applier := &testParamApplier{}
+	persister := &testNodeStatePersister{state: NodeState{Name: "ep-us-01", Mode: "endpoint"}}
+	h := NewAgentHandlerFull(t.TempDir(), logger, nil, applier, nil, nil, persister, nil, nil)
+
+	// Use a distinctive private key to make substring search reliable.
+	privKey := bytes.Repeat([]byte{0xDE}, 32)
+	_, err := h.RotateKeypair(context.Background(), &proto.RotateKeypairRequest{
+		NewPrivateKey: privKey,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logOutput := logBuf.String()
+	// Check for hex and base64 encodings of the private key — NEITHER must appear.
+	hexEncoded := hex.EncodeToString(privKey)
+	if strings.Contains(logOutput, hexEncoded) {
+		t.Errorf("NFR-1 violation: private key hex appears in log output")
+	}
+	if strings.Contains(logOutput, hexEncoded[:16]) {
+		t.Errorf("NFR-1 violation: 16-char private key hex prefix appears in log output")
+	}
+	b64 := base64.StdEncoding.EncodeToString(privKey)
+	if strings.Contains(logOutput, b64) {
+		t.Errorf("NFR-1 violation: private key base64 appears in log output")
 	}
 }
