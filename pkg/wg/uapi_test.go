@@ -129,17 +129,24 @@ func TestWriteConfigRequiresPeerPublicKey(t *testing.T) {
 	}
 }
 
+// TestParseDeviceSuccess feeds parseDevice a UAPI response that mirrors what
+// amneziawg-go::IpcGetOperation actually emits — NO device-side public_key
+// line. Device.PublicKey is derived from Device.PrivateKey by the parser.
+//
+// Pre-fix bug: the parser had a `seenDevicePublicKey` flag that captured the
+// FIRST public_key= line as Device.PublicKey, dropping the only peer when
+// N=1. This test would have caught the bug if it had used a realistic
+// response (the old version of this test added a fake device-side
+// public_key= line that WG UAPI never sends, masking the bug).
 func TestParseDeviceSuccess(t *testing.T) {
 	t.Parallel()
 
 	privateKey := mustKeyForUAPI(t, filledBytesUAPI(0x10))
-	devicePublicKey := mustKeyForUAPI(t, filledBytesUAPI(0x11))
 	peerPublicKey := mustKeyForUAPI(t, filledBytesUAPI(0x12))
 	peerPresharedKey := mustKeyForUAPI(t, filledBytesUAPI(0x13))
 
 	response := strings.Join([]string{
 		"private_key=" + hexKey(privateKey),
-		"public_key=" + hexKey(devicePublicKey),
 		"listen_port=51820",
 		"fwmark=77",
 		"s1=9",
@@ -164,8 +171,12 @@ func TestParseDeviceSuccess(t *testing.T) {
 	if device.PrivateKey != privateKey {
 		t.Fatalf("unexpected private key")
 	}
-	if device.PublicKey != devicePublicKey {
-		t.Fatalf("unexpected public key")
+	// Device.PublicKey must be derived from PrivateKey via curve25519
+	// scalar multiplication (WG UAPI does not emit it).
+	expectedDevicePub := privateKey.PublicKey()
+	if device.PublicKey != expectedDevicePub {
+		t.Fatalf("device public key not derived from private key: got %x, want %x",
+			device.PublicKey, expectedDevicePub)
 	}
 	if device.ListenPort != 51820 {
 		t.Fatalf("unexpected listen port: %d", device.ListenPort)
@@ -204,6 +215,86 @@ func TestParseDeviceSuccess(t *testing.T) {
 	if !peer.LastHandshakeTime.Equal(expectedHandshake) {
 		t.Fatalf("unexpected handshake time: got %s want %s", peer.LastHandshakeTime, expectedHandshake)
 	}
+}
+
+// TestParseDevice_PeerCounts is the explicit regression test for engram #128
+// (parseDevice silently dropped the first peer when N=1). It runs the parser
+// against responses with 0, 1, 2, and 3 peers and asserts every peer survives.
+//
+// Pre-fix behavior:
+//   - N=0: PASS (no peers to lose)
+//   - N=1: FAIL (the only peer was misclassified as device pubkey)
+//   - N=2: FAIL on PublicKey check (second peer in slot 0)
+//   - N=3: FAIL on PublicKey check (third peer in slot 1)
+//
+// The bug masked itself in production because:
+//   - mesh-ctl inspect uses tunnelMgr.ListTunnels() (in-memory, not UAPI)
+//   - applyPeerKeyUpdate failed silently — operators saw "key mismatch" errors
+//   - endpoint.ListPeers always returned 0 peers, but no test asserted otherwise
+func TestParseDevice_PeerCounts(t *testing.T) {
+	t.Parallel()
+
+	devicePriv := mustKeyForUAPI(t, filledBytesUAPI(0x20))
+	mkPeer := func(seed byte) Key {
+		return mustKeyForUAPI(t, filledBytesUAPI(seed))
+	}
+
+	tests := []struct {
+		name     string
+		peerKeys []Key
+	}{
+		{name: "N=0 (no peers)", peerKeys: nil},
+		{name: "N=1 (the regression case)", peerKeys: []Key{mkPeer(0x30)}},
+		{name: "N=2", peerKeys: []Key{mkPeer(0x40), mkPeer(0x41)}},
+		{name: "N=3", peerKeys: []Key{mkPeer(0x50), mkPeer(0x51), mkPeer(0x52)}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			lines := []string{
+				"private_key=" + hexKey(devicePriv),
+				"listen_port=51820",
+			}
+			for i, pk := range tc.peerKeys {
+				lines = append(lines,
+					"public_key="+hexKey(pk),
+					"protocol_version=1",
+					"allowed_ip=10."+itoa(i)+".0.0/24",
+				)
+			}
+			lines = append(lines, "errno=0")
+			response := strings.Join(lines, "\n") + "\n"
+
+			device, err := parseDevice(strings.NewReader(response))
+			if err != nil {
+				t.Fatalf("parseDevice returned error: %v", err)
+			}
+			if len(device.Peers) != len(tc.peerKeys) {
+				t.Fatalf("peer count: got %d, want %d", len(device.Peers), len(tc.peerKeys))
+			}
+			for i, want := range tc.peerKeys {
+				if device.Peers[i].PublicKey != want {
+					t.Fatalf("peer[%d] PublicKey: got %x, want %x",
+						i, device.Peers[i].PublicKey, want)
+				}
+			}
+			// Device pubkey is always derived, regardless of peer count.
+			if device.PublicKey != devicePriv.PublicKey() {
+				t.Fatalf("device PublicKey not derived from PrivateKey")
+			}
+		})
+	}
+}
+
+// itoa is a tiny local helper (avoids strconv just for one digit in a test).
+func itoa(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	// Test inputs never exceed 9 — keep it trivial.
+	return "x"
 }
 
 func TestParseDeviceErrors(t *testing.T) {

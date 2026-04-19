@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.4] — 2026-04-19
+
+### Fixed
+
+- **`pkg/wg/uapi.go::parseDevice`** silently dropped the first peer from `Device.Peers`
+  on every UAPI `get=1` response — bug existed since v0.1.0 (initial release 2026-03-27).
+  The parser had a `seenDevicePublicKey` flag that intercepted the FIRST `public_key=` line
+  and stored it as `Device.PublicKey`, but WireGuard UAPI never emits a device-side
+  `public_key=` line. Every `public_key=` is the start of a peer entry — verified against
+  `amneziawg-go/device/uapi.go::IpcGetOperation` and the WireGuard cross-platform spec
+  ([wireguard.com/xplatform/](https://www.wireguard.com/xplatform/)).
+  With N=1 peer (typical baseline for a fresh tunnel) the only peer was misclassified
+  and lost — `dev.Peers` returned empty.
+
+### Impact
+
+Three callers of `iface.GetDevice()` were silently broken since v0.1.0:
+
+- `pkg/node/master_linux.go::applyPeerKeyUpdate` → tier-3 keypair rotation:
+  "existing peer for tunnel X with old public key not found in device state"
+  (root cause of the v1.12.0 release that had to be reverted via PR #67).
+- `pkg/node/master_linux.go::masterHandshakeChecker` → handshake timestamp lost
+  for the only peer per tunnel (healthcheck false-negatives possible).
+- `pkg/node/endpoint_linux.go::ListPeers` → endpoint always returned 0 peers
+  via gRPC `ListPeers` RPC.
+
+### Why no test caught it
+
+- Old `TestParseDeviceSuccess` fed a synthetic UAPI response with a fake device-side
+  `public_key=` line that real WireGuard never emits — the fake line consumed the
+  `seenDevicePublicKey` trap and masked the bug.
+- `mesh-ctl inspect` uses `tunnelMgr.ListTunnels()` (in-memory) for the RUNTIME column,
+  NOT `GetDevice()` — so the drift report looked correct even when GetDevice() returned
+  empty Peers.
+- E2E sim `tests/simulation/issue-92-rotation.sh` was added in v1.10 but never run
+  end-to-end before the v1.12.0 attempt — that run caught the bug for the first time.
+
+### Changes
+
+- `pkg/wg/uapi.go::parseDevice`: removed `seenDevicePublicKey` flag; every `public_key=`
+  now opens a new peer entry. `Device.PublicKey` is derived from `Device.PrivateKey` via
+  curve25519 scalar multiplication after the parse loop completes.
+- `pkg/wg/uapi_test.go`: updated `TestParseDeviceSuccess` to remove the fake
+  device-side `public_key=` line and assert the derived device pubkey. Added new
+  `TestParseDevice_PeerCounts` with sub-tests for N=0, 1, 2, 3 peers — the N=1 case
+  is the explicit regression marker.
+
+### Verification (per AGENTS.md release-gate rule)
+
+- `go test -short -count=1 ./...` — 17 packages PASS
+- `tests/simulation/issue-92-rotation.sh` on WSL2/Docker — 12/12 PASS
+
+### Path forward
+
+This fix unblocks local tracker #125 (tier-3 keypair rotation). The v1.12.0 design
+was correct; only the parser bug prevented end-to-end success. Re-attempt of v1.12
+will land separately after this PATCH is shipped.
+
+Local tracker #128.
+
 ## [1.10.2] — 2026-04-18
 
 ### Added

@@ -197,12 +197,31 @@ func writeConfig(w io.Writer, cfg Config) error {
 	return nil
 }
 
+// parseDevice decodes a WireGuard/AmneziaWG UAPI `get=1` response.
+//
+// IMPORTANT: WireGuard UAPI does NOT emit a device-side public_key field. The
+// device portion of the response contains only private_key, listen_port, fwmark,
+// and (for AmneziaWG) S/H/I/J fields. Every public_key= line is the START of a
+// peer entry — see amneziawg-go device/uapi.go::IpcGetOperation lines 89-148
+// and the WireGuard cross-platform spec at https://www.wireguard.com/xplatform/.
+//
+// Pre-fix bug (existed since v0.1.0): an earlier version held a
+// `seenDevicePublicKey` flag that captured the first public_key= line as
+// `Device.PublicKey` and skipped creating a Peer. Result: with N=1 peer (the
+// typical baseline for a fresh tunnel) the only peer was silently dropped and
+// `Device.Peers` came back empty — breaking master.applyPeerKeyUpdate
+// (tier-3 keypair rotation), endpoint.ListPeers, and master.handshakeChecker.
+// Caught only by docker e2e sim, never by unit tests because earlier tests
+// fed responses with N=0 or N=2+ peers (where the second peer survived).
+//
+// `Device.PublicKey` is now derived from `Device.PrivateKey` via curve25519
+// scalar multiplication (PrivateKey.PublicKey()) AFTER the parse loop. This
+// matches what the kernel/userspace WG implementations do internally.
 func parseDevice(r io.Reader) (*Device, error) {
 	device := &Device{}
 	scanner := bufio.NewScanner(r)
 
 	var currentPeer *Peer
-	var seenDevicePublicKey bool
 	var handshakeSec int64
 	var handshakeNSec int64
 
@@ -234,6 +253,13 @@ func parseDevice(r io.Reader) (*Device, error) {
 				return nil, fmt.Errorf("uapi errno=%d", errno)
 			}
 			commitPeer()
+			// Derive device pubkey from private_key. WG UAPI never sends a
+			// device-side public_key, so callers that need it (logging,
+			// drift detection) must compute it from the private half. A
+			// zero/missing private_key leaves PublicKey at its zero value.
+			if !device.PrivateKey.IsZero() {
+				device.PublicKey = device.PrivateKey.PublicKey()
+			}
 			return device, nil
 		}
 
@@ -250,14 +276,12 @@ func parseDevice(r io.Reader) (*Device, error) {
 			}
 			device.PrivateKey = parsed
 		case "public_key":
+			// WireGuard UAPI never emits a device-side public_key — every
+			// occurrence here marks the start of a peer entry. Commit the
+			// previous peer (no-op for the first one) and open a new entry.
 			parsed, err := parseHexKey(value)
 			if err != nil {
 				return nil, fmt.Errorf("parse public_key: %w", err)
-			}
-			if !seenDevicePublicKey {
-				device.PublicKey = parsed
-				seenDevicePublicKey = true
-				continue
 			}
 			commitPeer()
 			currentPeer = &Peer{PublicKey: parsed}
