@@ -320,16 +320,12 @@ func newEndpointInitCommand() *cobra.Command {
 					// the AddTunnel path (tunnel was created, not updated).
 					var updateResp *proto.UpdateTunnelPeerResponse
 
-					// FR-1: build the full allowed_ips list via the shared helper.
-					allowedIPs, aipErr := topology.BuildAllowedIPsForEndpoint(topo, master.OverlayIP, allocation.Subnet.String())
+					// FR-1: build the minimal allowed_ips for the endpoint-side peer
+					// (per-master-iface model, Pattern X): [transport_subnet, master_overlay/32].
+					allowedIPs, aipErr := topology.BuildMinimalAllowedIPsForEndpointPeer(master.OverlayIP, allocation.Subnet.String())
 					if aipErr != nil {
 						fmt.Fprintf(os.Stderr, "warning: build allowed_ips for master %q / endpoint %q: %v\n", master.Name, ep.Name, aipErr)
-						allowedIPs = []string{allocation.Subnet.String()}
-						for _, nr := range topo.Overlay.Ranges {
-							if nr.CIDR != "" {
-								allowedIPs = append(allowedIPs, nr.CIDR)
-							}
-						}
+						allowedIPs = []string{allocation.Subnet.String(), master.OverlayIP + "/32"}
 					}
 					fmt.Printf("endpoint init: AddPeer to endpoint %q (master %q) with allowed_ips=%v\n", ep.Name, master.Name, allowedIPs)
 

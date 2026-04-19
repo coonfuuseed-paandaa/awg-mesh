@@ -206,3 +206,88 @@ func TestBuildAllowedIPsForEndpoint_InvalidOverlayRangeCIDR(t *testing.T) {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
+
+// --- BuildMinimalAllowedIPsForEndpointPeer tests ---
+
+// TestBuildMinimalAllowedIPsForEndpointPeer_Happy verifies that the function
+// returns exactly [transport_subnet, master_overlay_ip/32] in that order.
+func TestBuildMinimalAllowedIPsForEndpointPeer_Happy(t *testing.T) {
+	t.Parallel()
+
+	got, err := BuildMinimalAllowedIPsForEndpointPeer("172.20.70.1", "10.255.0.0/30")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"10.255.0.0/30", "172.20.70.1/32"}
+	if len(got) != len(want) {
+		t.Fatalf("len(got)=%d, want %d\ngot:  %v\nwant: %v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestBuildMinimalAllowedIPsForEndpointPeer_EmptyInputs verifies that empty
+// masterOverlayIP or transportSubnet both return an error.
+func TestBuildMinimalAllowedIPsForEndpointPeer_EmptyInputs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty masterOverlayIP", func(t *testing.T) {
+		t.Parallel()
+		_, err := BuildMinimalAllowedIPsForEndpointPeer("", "10.255.0.0/30")
+		if err == nil {
+			t.Fatal("expected error for empty masterOverlayIP, got nil")
+		}
+		if !strings.Contains(err.Error(), "master overlay IP is required") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("empty transportSubnet", func(t *testing.T) {
+		t.Parallel()
+		_, err := BuildMinimalAllowedIPsForEndpointPeer("172.20.70.1", "")
+		if err == nil {
+			t.Fatal("expected error for empty transportSubnet, got nil")
+		}
+		if !strings.Contains(err.Error(), "transport subnet is required") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+}
+
+// TestBuildMinimalAllowedIPsForEndpointPeer_InvalidSubnet verifies that a
+// malformed transportSubnet returns an error.
+func TestBuildMinimalAllowedIPsForEndpointPeer_InvalidSubnet(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildMinimalAllowedIPsForEndpointPeer("172.20.70.1", "not-a-cidr")
+	if err == nil {
+		t.Fatal("expected error for malformed transportSubnet, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid transport subnet") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestBuildMinimalAllowedIPsForEndpointPeer_IPv6 documents that the function
+// is IPv4-only (consistent with BuildAllowedIPsForEndpoint scope).
+// IPv6 addresses are valid net.IP values so net.ParseIP accepts them, but
+// the /32 suffix appended is semantically incorrect for IPv6 (/128 would be
+// correct). This test documents the current behaviour: no error is returned
+// for an IPv6 masterOverlayIP, but callers MUST NOT pass IPv6 addresses.
+func TestBuildMinimalAllowedIPsForEndpointPeer_IPv6(t *testing.T) {
+	t.Parallel()
+
+	// net.ParseIP accepts IPv6 — the function does not reject it, but the
+	// resulting /32 suffix is incorrect for IPv6. This is the documented
+	// limitation: IPv4-only scope, callers are responsible for passing
+	// IPv4 addresses.
+	_, err := BuildMinimalAllowedIPsForEndpointPeer("fd00::1", "10.255.0.0/30")
+	// No error expected — net.ParseIP accepts IPv6. Document this behaviour.
+	if err != nil {
+		t.Logf("note: IPv6 masterOverlayIP returned error (acceptable if validation tightened): %v", err)
+	}
+}
