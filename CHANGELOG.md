@@ -970,7 +970,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...HEAD
+[1.12.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.4...v1.12.0
 [1.11.4]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...v1.11.4
 [1.10.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.1...v1.10.2
