@@ -422,17 +422,15 @@ func executeTier3Rotation(ctx context.Context, endpoint *topology.EndpointNode, 
 	// 6. Rollback on any master failure (atomic semantics)
 	// ------------------------------------------------------------------
 	if anyFailed {
-		// Restore endpoint.
-		if _, rErr := endpointClient.Agent().RotateKeypair(ctx, &proto.RotateKeypairRequest{
-			NewPrivateKey: oldPubBytes, // NOTE: oldPriv is not recoverable from CLI — this is a best-effort marker
-			TunnelName:    "wg0",
-		}); rErr != nil {
-			// Expected to fail since oldPub is not a private key — document
-			// the limitation: CLI cannot rollback endpoint without holding
-			// oldPriv, which it never had (endpoint owns the only copy).
-			// The operator is directed to `mesh-ctl reconcile` for recovery.
-			_ = rErr
-		}
+		// NOTE: endpoint rollback is intentionally NOT attempted here.
+		// The CLI never holds oldPriv (the endpoint generated and owns the
+		// only copy on disk via PersistKeypair). Calling
+		// RotateKeypair(NewPrivateKey=oldPub) is semantically wrong (a public
+		// key is not a private key) and would fail validation. Operator MUST
+		// run `mesh-ctl reconcile` to restore admin/runtime alignment after
+		// triaging the per-master failure detail printed below
+		// (CodeRabbit finding on PR #66).
+
 		// Best-effort revert succeeded masters to oldPub.
 		for i := range results {
 			if !results[i].succeeded {

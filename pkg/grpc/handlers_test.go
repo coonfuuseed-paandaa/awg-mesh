@@ -1940,13 +1940,17 @@ func TestUpdateTunnelPeer_FR5_ErrorMessage(t *testing.T) {
 // testNodeStatePersister implements grpcserver.NodeStatePersister for endpoint-mode tests.
 // Records each PersistKeypair call for assertion.
 type testNodeStatePersister struct {
-	state       NodeState
-	priv        wg.Key // LoadKeypair returns this as current priv
-	pub         wg.Key // LoadKeypair returns this as current pub
-	loadErr     error
-	persistErr  error
-	persisted   [][2]wg.Key // [priv, pub] pairs
-	persistLock sync.Mutex
+	state         NodeState
+	priv          wg.Key // LoadKeypair returns this as current priv
+	pub           wg.Key // LoadKeypair returns this as current pub
+	loadErr       error
+	persistErr    error
+	persisted     [][2]wg.Key // [priv, pub] pairs
+	persistLock   sync.Mutex
+	rotateMu      sync.Mutex
+	lockCalls     int
+	unlockCalls   int
+	lockCallsLock sync.Mutex
 }
 
 func (p *testNodeStatePersister) GetNodeState() NodeState {
@@ -1970,6 +1974,19 @@ func (p *testNodeStatePersister) PersistKeypair(priv wg.Key, pub wg.Key) error {
 	p.priv = priv
 	p.pub = pub
 	return nil
+}
+
+func (p *testNodeStatePersister) LockRotation() func() {
+	p.rotateMu.Lock()
+	p.lockCallsLock.Lock()
+	p.lockCalls++
+	p.lockCallsLock.Unlock()
+	return func() {
+		p.lockCallsLock.Lock()
+		p.unlockCalls++
+		p.lockCallsLock.Unlock()
+		p.rotateMu.Unlock()
+	}
 }
 
 func TestRotateKeypair_RejectsNilRequest(t *testing.T) {

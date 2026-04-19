@@ -569,14 +569,19 @@ fi
 pass "R2: baseline state healthy — admin pubkey set, both masters hold peer"
 
 # ---------------------------------------------------------------------------
-# R3: `mesh-ctl rotate --tier 3` — this is the PRIMARY #117 assertion. Before
-#     the fix, this call returned `apply params: ... uapi errno=-22` (EINVAL)
-#     because pkg/wg/uapi.go::writeConfig emitted s3=/s4= keys that
-#     amneziawg-go v1.0.4 rejects via its UAPI default branch. After PR #65 /
-#     commit 698e912 the call completes cleanly.
+# R3: `mesh-ctl rotate --tier 3` — combined #117 (no uapi errno=-22) and #125
+#     (real keypair rotation end-to-end) assertions on a SINGLE rotate call.
+#     Before #117 fix: returned `apply params: ... uapi errno=-22` (EINVAL).
+#     Before #125 fix: completed cleanly but keypair was NOT rotated (cosmetic).
+#     After PR #65 + PR #66: completes cleanly AND endpoint priv + master peer
+#     keys are atomically rotated, admin-state pubkey updated.
 # ---------------------------------------------------------------------------
 echo ""
-echo "[R3] Rotating tier-3 params (#117 primary assertion — no uapi errno=-22)..."
+echo "[R3] Rotating tier-3 keypair (combined #117 + #125 assertion)..."
+
+# Capture admin-state BEFORE rotation — this is the oldPub reference.
+BEFORE_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
+info "admin pubkey before rotation: ${BEFORE_ADMIN:0:8}..."
 
 ROTATE_OUT=$(meshctl rotate --tier 3 --endpoint "${ENDPOINT_US_01}" 2>&1) \
     && ROTATE_RC=0 || ROTATE_RC=$?
@@ -586,13 +591,12 @@ echo "${ROTATE_OUT}" | sed 's/^/    /'
 
 if [[ "${ROTATE_RC}" -ne 0 ]]; then
     fail "R3: mesh-ctl rotate --tier 3 exited non-zero (rc=${ROTATE_RC})"
-    echo "[abort] #117 regression — tier-3 rotation failed."
+    echo "[abort] tier-3 rotation failed — cannot verify any post-rotation assertions."
     exit "${FAILURES}"
 fi
 pass "R3: mesh-ctl rotate --tier 3 exited 0"
 
-# Guard: the specific errno string must NOT appear anywhere in the output —
-# that's the #117 regression marker.
+# R3a: #117 regression marker — the specific errno string must NOT appear.
 if echo "${ROTATE_OUT}" | grep -qF "uapi errno=-22"; then
     fail "R3a: #117 REGRESSION — 'uapi errno=-22' appeared in rotation output"
     exit "${FAILURES}"
@@ -600,12 +604,61 @@ else
     pass "R3a: no 'uapi errno=-22' in rotation output — #117 fix holds"
 fi
 
-# Each bound master must report "tier 3 rotation succeeded" on stdout.
+# R3b: each bound master must report "ROTATED" status (new v1.12 CLI format).
 for m in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
-    if echo "${ROTATE_OUT}" | grep -qF "${m}: tier 3 rotation succeeded"; then
-        pass "R3b: ${m} reported tier 3 rotation succeeded"
+    if echo "${ROTATE_OUT}" | grep -qE "^${m}: ROTATED\$"; then
+        pass "R3b: ${m} reported status ROTATED"
     else
-        fail "R3b: ${m} did NOT report tier 3 rotation succeeded"
+        fail "R3b: ${m} did NOT report status ROTATED in CLI output"
+    fi
+done
+
+# R3c: CLI commits new admin-state pubkey via "tier 3 rotation: committed pubkey OLD → NEW".
+if echo "${ROTATE_OUT}" | grep -qE "tier 3 rotation: committed pubkey [a-f0-9]+ → [a-f0-9]+"; then
+    pass "R3c: CLI confirmed admin-state commit with OLD → NEW transition"
+else
+    fail "R3c: CLI output missing 'tier 3 rotation: committed pubkey ...' confirmation"
+fi
+
+# R3d: admin-state pubkey on disk DIFFERS from pre-rotation value (#125 fix).
+AFTER_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
+if [[ -z "${AFTER_ADMIN}" || "${#AFTER_ADMIN}" -lt 32 ]]; then
+    fail "R3d: admin-state pubkey missing/malformed after rotation"
+elif [[ "${AFTER_ADMIN}" == "${BEFORE_ADMIN}" ]]; then
+    fail "R3d: #125 REGRESSION — admin-state pubkey did NOT change (still ${AFTER_ADMIN:0:8}...)"
+else
+    pass "R3d: admin-state pubkey CHANGED — ${BEFORE_ADMIN:0:8}... → ${AFTER_ADMIN:0:8}..."
+fi
+
+# R3e: both masters show the NEW pubkey in mesh-ctl inspect runtime column.
+for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    rt=$(inspect_runtime_prefix_for "${master_name}" "${ENDPOINT_US_01}")
+    if admin_prefix_matches_runtime "${AFTER_ADMIN}" "${rt}"; then
+        pass "R3e: ${master_name} runtime key matches new admin key (${AFTER_ADMIN:0:8}...)"
+    else
+        fail "R3e: ${master_name} runtime key does NOT match new admin key"
+        info "  admin new: ${AFTER_ADMIN:-<empty>}"
+        info "  runtime:   ${rt:-<empty>}"
+    fi
+done
+
+# R3f: OLD pubkey is absent from runtime peer list on every master.
+OLD_PREFIX="${BEFORE_ADMIN:0:17}"
+for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    if inspect_node "${master_name}" | grep -qF "${OLD_PREFIX}"; then
+        fail "R3f: old pubkey prefix ${OLD_PREFIX}… still present on ${master_name}"
+    else
+        pass "R3f: old pubkey absent from ${master_name} runtime"
+    fi
+done
+
+# R3g: inspect reports zero drift on both masters post-rotation.
+for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    if inspect_has_no_drift "${master_name}"; then
+        pass "R3g: ${master_name} reports zero drift (admin == disk == runtime)"
+    else
+        fail "R3g: ${master_name} still reports drift after rotation"
+        inspect_node "${master_name}" | sed 's/^/    /'
     fi
 done
 
@@ -659,73 +712,6 @@ if [[ "${POST_RC}" -eq 0 ]]; then
 else
     fail "R5: post-rotation endpoint init exited ${POST_RC} — control plane broken"
 fi
-
-# ---------------------------------------------------------------------------
-# R6: Actual keypair rotation via `mesh-ctl rotate --tier 3` (engram #125, v1.12).
-#     After the tier-3 rotation fix the keypair is genuinely rotated end-to-end:
-#     endpoint persists new privKey, every master swaps Remove(old)+Add(new)
-#     via UpdateTunnelPeer, admin-state pubkey updated atomically.
-# ---------------------------------------------------------------------------
-echo ""
-echo "[R6] Rotating endpoint keypair via mesh-ctl rotate --tier 3..."
-
-# Capture admin-state BEFORE rotation — this is the oldPub reference.
-BEFORE_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
-info "admin pubkey before rotation: ${BEFORE_ADMIN:0:8}..."
-
-ROTATE_OUT=$(meshctl rotate --tier 3 --endpoint "${ENDPOINT_US_01}" 2>&1) \
-    && ROTATE_RC=0 || ROTATE_RC=$?
-info "rotation output:"
-echo "${ROTATE_OUT}" | sed 's/^/    /'
-
-if [[ "${ROTATE_RC}" -ne 0 ]]; then
-    fail "R6: mesh-ctl rotate --tier 3 exited non-zero (rc=${ROTATE_RC})"
-    echo "[abort] tier-3 rotation failed — cannot verify keypair-rotation assertions."
-    exit "${FAILURES}"
-fi
-pass "R6: mesh-ctl rotate --tier 3 exited 0"
-
-# R6a: admin-state pubkey on disk DIFFERS from pre-rotation value (keypair changed).
-AFTER_ADMIN=$(admin_pubkey_of "${ENDPOINT_US_01}")
-if [[ -z "${AFTER_ADMIN}" || "${#AFTER_ADMIN}" -lt 32 ]]; then
-    fail "R6a: admin-state pubkey missing/malformed after rotation"
-elif [[ "${AFTER_ADMIN}" == "${BEFORE_ADMIN}" ]]; then
-    fail "R6a: admin-state pubkey did NOT change after rotation (still ${AFTER_ADMIN:0:8}...)"
-else
-    pass "R6a: admin-state pubkey CHANGED — ${BEFORE_ADMIN:0:8}... → ${AFTER_ADMIN:0:8}..."
-fi
-
-# R6b: both masters show the NEW pubkey in mesh-ctl inspect runtime column.
-for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
-    rt=$(inspect_runtime_prefix_for "${master_name}" "${ENDPOINT_US_01}")
-    if admin_prefix_matches_runtime "${AFTER_ADMIN}" "${rt}"; then
-        pass "R6b: ${master_name} runtime key matches new admin key (${AFTER_ADMIN:0:8}...)"
-    else
-        fail "R6b: ${master_name} runtime key does NOT match new admin key"
-        info "  admin new: ${AFTER_ADMIN:-<empty>}"
-        info "  runtime:   ${rt:-<empty>}"
-    fi
-done
-
-# R6c: OLD pubkey is absent from runtime peer list on every master.
-OLD_PREFIX="${BEFORE_ADMIN:0:17}"
-for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
-    if inspect_node "${master_name}" | grep -qF "${OLD_PREFIX}"; then
-        fail "R6c: old pubkey prefix ${OLD_PREFIX}… still present on ${master_name}"
-    else
-        pass "R6c: old pubkey absent from ${master_name} runtime"
-    fi
-done
-
-# R6d: inspect reports zero drift on both masters post-rotation.
-for master_name in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
-    if inspect_has_no_drift "${master_name}"; then
-        pass "R6d: ${master_name} reports zero drift (admin == disk == runtime)"
-    else
-        fail "R6d: ${master_name} still reports drift after rotation"
-        inspect_node "${master_name}" | sed 's/^/    /'
-    fi
-done
 
 # ---------------------------------------------------------------------------
 # Summary

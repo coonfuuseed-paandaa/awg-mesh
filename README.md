@@ -1105,10 +1105,14 @@ mesh-ctl rotate --tier 3 --endpoint <name>  # full keypair rotation (v1.12+)
 end-to-end atomic keypair rotation — the CLI generates a new keypair, delivers
 it to the endpoint via the new `RotateKeypair` RPC, swaps the peer on every
 master via `UpdateTunnelPeer`, and commits the new pubkey to admin-state. Data
-plane reconverges within ~2-5s. Both CLI and all target nodes MUST be v1.12+;
-mixed-version meshes surface a structured `Unimplemented` error. Pre-v1.12
-tier-3 calls were cosmetic (keypair was not actually rotated — local tracker
-#125 — fixed in v1.12.0).
+plane reconverges within ~2-5s.
+
+**Version requirements:** the **CLI and the target endpoint** MUST be v1.12+
+(both sides need `RotateKeypair`). **Masters** only need v1.10+ (which
+introduced `UpdateTunnelPeer`). Mixed-version meshes surface a structured
+`Unimplemented` error from the offending endpoint; older masters are
+transparently supported. Pre-v1.12 tier-3 calls were cosmetic (keypair was not
+actually rotated — local tracker #125 — fixed in v1.12.0).
 
 ### Token management
 

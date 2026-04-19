@@ -3,8 +3,11 @@ package node
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
@@ -16,6 +19,10 @@ type EndpointRunner struct {
 	node          *Node
 	startTime     time.Time
 	platformState endpointPlatformState
+	// rotateMu serializes the entire keypair rotation sequence
+	// (Load → Persist → Apply → optional rollback) executed by
+	// grpcserver.RotateKeypair. Held via LockRotation() during the RPC.
+	rotateMu sync.Mutex
 }
 
 // NewEndpointRunner creates an endpoint mode runner.
@@ -201,18 +208,27 @@ func (e *EndpointRunner) PersistKeypair(priv wg.Key, pub wg.Key) error {
 		return fmt.Errorf("config dir is required")
 	}
 
-	// Load current state to preserve non-keypair fields. Missing file is OK —
-	// we'll write a fresh NodeState with the new keypair as baseline.
+	// Load current state to preserve non-keypair fields. ONLY synthesize a
+	// fresh NodeState when the file truly does not exist — corrupt YAML,
+	// permission errors, or any other read failure must propagate so we never
+	// silently overwrite a damaged but recoverable state file (CodeRabbit
+	// finding on PR #66).
 	current, loadErr := LoadNodeState(dir)
 	var next NodeState
-	if loadErr == nil && current != nil {
+	switch {
+	case loadErr == nil && current != nil:
 		next = *current
-	} else {
+	case loadErr != nil && errors.Is(loadErr, os.ErrNotExist):
+		// Fresh node never initialized — synthesize baseline from config.
 		next = NodeState{
 			Name:      e.node.config.Name,
 			Mode:      "endpoint",
 			OverlayIP: e.node.config.OverlayIP,
 		}
+	default:
+		// Corrupt state, permission denied, or any other read failure.
+		// Refuse to overwrite — operator must resolve the on-disk problem.
+		return fmt.Errorf("load existing node state: %w", loadErr)
 	}
 
 	next.PrivateKey = priv.String()
@@ -226,4 +242,17 @@ func (e *EndpointRunner) PersistKeypair(priv wg.Key, pub wg.Key) error {
 		Str("new_pub_prefix", pub.String()[:8]).
 		Msg("endpoint keypair persisted to node.yml")
 	return nil
+}
+
+// LockRotation acquires the per-endpoint rotation mutex and returns an unlock
+// closure. Callers MUST defer the closure. Implements
+// grpcserver.NodeStatePersister.
+//
+// Held by grpcserver.RotateKeypair across the entire Load → Persist → Apply →
+// optional rollback sequence. Without this serialization, concurrent rotation
+// requests could interleave the read-modify-write steps and leave the on-disk
+// keypair inconsistent with the live UAPI state.
+func (e *EndpointRunner) LockRotation() func() {
+	e.rotateMu.Lock()
+	return e.rotateMu.Unlock
 }

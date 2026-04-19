@@ -78,9 +78,15 @@ type NodeStateProvider interface {
 //   - On success the on-disk state has the new PrivateKey and PublicKey; other
 //     fields (Name, Mode, OverlayIP) are preserved.
 //   - On error the on-disk state is unchanged (caller relies on this for rollback).
+//   - LockRotation serializes the entire rotation sequence (Load → Persist →
+//     Apply → optional rollback Persist+Apply). Returns an unlock closure that
+//     callers MUST defer. Concurrent RotateKeypair invocations interleaving the
+//     load/persist/apply steps would otherwise leave the on-disk and runtime
+//     state inconsistent.
 type NodeStatePersister interface {
 	LoadKeypair() (priv wg.Key, pub wg.Key, err error)
 	PersistKeypair(priv wg.Key, pub wg.Key) error
+	LockRotation() (unlock func())
 }
 
 // CaptureFunc performs capture using a network interface and returns how many

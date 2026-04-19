@@ -723,6 +723,12 @@ func (h *AgentHandler) RotateKeypair(_ context.Context, req *proto.RotateKeypair
 		return nil, status.Error(codes.Unimplemented, "keypair rotation not available in this mode")
 	}
 
+	// Serialize the entire rotation sequence: concurrent RotateKeypair calls
+	// could otherwise interleave Load → Persist → Apply steps, leaving disk and
+	// runtime state inconsistent (CodeRabbit finding on PR #66).
+	unlock := persister.LockRotation()
+	defer unlock()
+
 	// Load current keypair for rollback if subsequent UAPI apply fails.
 	oldPriv, oldPub, loadErr := persister.LoadKeypair()
 	if loadErr != nil {
