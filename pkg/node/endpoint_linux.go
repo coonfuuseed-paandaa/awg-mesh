@@ -155,11 +155,28 @@ func (e *EndpointRunner) listIfaces() []string {
 }
 
 // closeIface closes and removes the interface for masterName. Acquires write lock.
+// Also removes overlay routes installed by installOverlayRoutesForMaster.
 func (e *EndpointRunner) closeIface(masterName string) error {
 	e.platformState.mu.Lock()
 	iface := e.platformState.ifaces[masterName]
 	delete(e.platformState.ifaces, masterName)
 	e.platformState.mu.Unlock()
+
+	// Remove overlay routes before the interface disappears from the kernel.
+	if e.node != nil && e.node.topology != nil {
+		if routeErr := removeOverlayRoutesForMaster(
+			e.node.topology,
+			e.node.config.Name,
+			masterName,
+			routing.NewNetlinkRouter(),
+			e.node.logger,
+		); routeErr != nil {
+			e.node.logger.Warn().
+				Err(routeErr).
+				Str("master", masterName).
+				Msg("endpoint overlay routes: partial remove failure on iface close")
+		}
+	}
 
 	if iface == nil {
 		return nil
@@ -298,6 +315,24 @@ func (e *EndpointRunner) createMasterInterface(
 		Int("listen_port", listenPort).
 		Msg("endpoint master interface created")
 
+	// Install overlay routes so this endpoint can reach peers via this master iface.
+	// Topology may be nil for first-boot scenarios; skip silently in that case.
+	if e.node.topology != nil {
+		if routeErr := installOverlayRoutesForMaster(
+			e.node.topology,
+			e.node.config.Name,
+			master.Name,
+			ifaceName,
+			routing.NewNetlinkRouter(),
+			e.node.logger,
+		); routeErr != nil {
+			e.node.logger.Warn().
+				Err(routeErr).
+				Str("master", master.Name).
+				Msg("endpoint overlay routes: partial install failure")
+		}
+	}
+
 	return nil
 }
 
@@ -358,6 +393,13 @@ func (e *EndpointRunner) createInterface() error {
 				}
 				if created > 0 {
 					e.setupForwarding()
+					// Reconcile overlay routes for all successfully created per-master ifaces.
+					// Non-fatal: a partial failure is logged but does not abort startup.
+					if rebuildErr := rebuildAllOverlayRoutes(e, e.node.topology); rebuildErr != nil {
+						e.node.logger.Warn().
+							Err(rebuildErr).
+							Msg("createInterface: rebuildAllOverlayRoutes had partial failures")
+					}
 					return nil
 				}
 				e.node.logger.Warn().Msg("no per-master interfaces created; falling back to legacy interface")
