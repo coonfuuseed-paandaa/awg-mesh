@@ -480,7 +480,21 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 					bs.SetBalancerIP(pubkeyHex, balancerIP)
 				}
 			}
-			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP, req.GetAllowedIps(), strings.TrimSpace(req.GetPeerName()), req.GetExtraRoutes()); err != nil {
+			// Validate extraRoutes CIDRs at the RPC boundary before passing to
+			// ConfigureTransport; malformed entries are logged and dropped.
+			validExtraRoutes := make([]string, 0, len(req.GetExtraRoutes()))
+			for _, route := range req.GetExtraRoutes() {
+				trimmed := strings.TrimSpace(route)
+				if trimmed == "" {
+					continue
+				}
+				if _, _, parseErr := net.ParseCIDR(trimmed); parseErr != nil {
+					h.logger.Warn().Str("route", route).Msg("AddPeer: invalid extra_route CIDR, skipping")
+					continue
+				}
+				validExtraRoutes = append(validExtraRoutes, trimmed)
+			}
+			if err := tc.ConfigureTransport(pubkeyHex, localIP, peerIP, req.GetAllowedIps(), strings.TrimSpace(req.GetPeerName()), validExtraRoutes); err != nil {
 				h.logger.Warn().Err(err).Msg("configure transport after AddPeer failed")
 			}
 		}

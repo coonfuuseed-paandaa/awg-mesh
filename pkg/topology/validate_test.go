@@ -87,7 +87,7 @@ func TestValidateTopologyFindings(t *testing.T) {
 		{
 			name: "master name exceeds 12 characters — warning emitted",
 			mutate: func(t *Topology) {
-				// 13 characters — one over the limit.
+				// 14 characters — one over the limit.
 				t.Masters[0].Name = "thirteen-chars"
 			},
 			wantFieldPart:   "masters[0].name",

@@ -1110,6 +1110,14 @@ else
     docker exec "${CTR_ENDPOINT_ASIA_01}" ip link show "${EP_IFACE_MASTER_RU_01}" 2>&1 | sed 's/^/    /' || true
 fi
 
+# R8.4b: The killed master's iface (wg-mst-ru-02) should still exist on endpoint-a
+# (per-master-iface design: iface persists even when master is down — kernel handles failover).
+if iface_is_up "${CTR_ENDPOINT_ASIA_01}" "${EP_IFACE_MASTER_RU_02}"; then
+    pass "R8.4b: ${EP_IFACE_MASTER_RU_02} still exists on ${ENDPOINT_ASIA_01} (idle, master down)"
+else
+    info "R8.4b: ${EP_IFACE_MASTER_RU_02} DOWN on ${ENDPOINT_ASIA_01} after ${MASTER_RU_02} killed (expected if WG drops iface)"
+fi
+
 # R8.5: Restore master-02. WireGuard on endpoint-a auto-reconnects wg-mst-ru-02
 # when the master comes back; no container restart needed on endpoint side.
 info "R8.5: restarting ${CTR_MASTER_RU_02} to restore mesh..."

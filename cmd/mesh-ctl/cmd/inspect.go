@@ -342,10 +342,11 @@ func printInspectReport(nodeName string, state *proto.TransportStateResponse, ro
 	)
 
 	// Header — IFACE sits between PEER and ADMIN_KEY.
-	fmt.Printf("%-20s %-20s %-20s %-20s %-20s %-24s %-24s %-24s %s\n",
+	header := fmt.Sprintf("%-20s %-20s %-20s %-20s %-20s %-24s %-24s %-24s %s",
 		"PEER", "IFACE", "ADMIN_KEY", "NODE_KEY", "RUNTIME_KEY",
 		"ADMIN_IPS", "DISK_IPS", "RUNTIME_IPS", "STATUS")
-	fmt.Println(strings.Repeat("-", 180))
+	fmt.Println(header)
+	fmt.Println(strings.Repeat("-", len(header)))
 
 	hasDrift := false
 	for _, r := range rows {

@@ -162,7 +162,7 @@ func TestEndpointConfigureTransportInstallsNonSelfHostRoute(t *testing.T) {
 
 type mockLinkRouter struct {
 	// replaceCalls records (dest, dev) pairs from RouteReplaceLink.
-	replaceCalls []mockRouteCall
+	replaceCalls []mockLinkRouteCall
 	// deleteCalls records dest strings from RouteDelete.
 	deleteCalls []string
 	// replaceErr is returned by RouteReplaceLink when non-nil.
@@ -171,13 +171,13 @@ type mockLinkRouter struct {
 	deleteErr error
 }
 
-type mockRouteCall struct {
+type mockLinkRouteCall struct {
 	dest string
 	dev  string
 }
 
 func (m *mockLinkRouter) RouteReplaceLink(dest *net.IPNet, dev string) error {
-	m.replaceCalls = append(m.replaceCalls, mockRouteCall{dest: dest.String(), dev: dev})
+	m.replaceCalls = append(m.replaceCalls, mockLinkRouteCall{dest: dest.String(), dev: dev})
 	return m.replaceErr
 }
 

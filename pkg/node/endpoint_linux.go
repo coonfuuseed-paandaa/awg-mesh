@@ -319,13 +319,9 @@ func (e *EndpointRunner) createMasterInterface(
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
 
-	// Interface name: "wg-" + master name, truncated so the full name fits the
-	// kernel's IFNAMSIZ limit (15 chars + NUL). "wg-" is 3 chars, leaving 12 for the name.
-	masterNamePart := master.Name
-	if len(masterNamePart) > 12 {
-		masterNamePart = masterNamePart[:12]
-	}
-	ifaceName := "wg-" + masterNamePart
+	// Interface name: "wg-" + master name, truncated to fit IFNAMSIZ.
+	// Uses the shared helper that enforces the same 12-char limit.
+	ifaceName := overlayIfaceName(master.Name)
 
 	listenPort := e.node.config.ListenPort + portOffset
 	mtu := calculateMTUFromTopology(e.node.topology, 1)
@@ -667,7 +663,10 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 			}
 		}
 	}
-	// Legacy extra_routes parameter retained for proto compatibility; same behaviour.
+	// TODO: ExtraRoutes proto field is intentionally unused here — extra /32 overlay
+	// routes are appended to AllowedIps by the CLI (cmd/mesh-ctl/cmd/endpoint.go)
+	// rather than passed via ExtraRoutes. The field is retained for proto compatibility
+	// and future use. See local tracker for the cleanup task.
 	_ = extraRoutes
 
 	e.node.logger.Info().

@@ -234,7 +234,11 @@ func (t *Topology) MastersForEndpoint(endpointName string) []MasterNode {
 	for _, master := range t.Masters {
 		for _, ep := range master.Endpoints {
 			if ep == endpointName {
-				result = append(result, master)
+				// Return a detached copy so callers cannot mutate topology state
+				// via result[i].Endpoints (shallow struct copy would alias the slice).
+				mCopy := master
+				mCopy.Endpoints = append([]string(nil), master.Endpoints...)
+				result = append(result, mCopy)
 				break
 			}
 		}

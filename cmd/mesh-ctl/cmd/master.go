@@ -251,7 +251,7 @@ func newMasterInitCommand() *cobra.Command {
 				}
 
 				epPubkeyPath := filepath.Join(nodeDir(configDir, ep.Name), "pubkey")
-				peerPublicKey, err := os.ReadFile(epPubkeyPath)
+				peerPublicKey, err := readEndpointPublicKey(epPubkeyPath)
 				if err != nil {
 					if os.IsNotExist(err) {
 						// Endpoint is not yet prepared — skip quietly. This is the

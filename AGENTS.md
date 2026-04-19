@@ -33,7 +33,7 @@ Unified node binary (`awg-mesh-node`) + CLI control plane (`mesh-ctl`).
 
 ## ARCHITECTURE
 
-```
+```text
 Control plane: mesh-ctl (Go CLI, admin PC)
   └── gRPC (mTLS + token) → awg-mesh-node instances
 
@@ -78,7 +78,7 @@ Tag is created on GitHub, then fetched locally. No manual `git tag` needed.
 - Docker image tags: `latest` (master), `v0.X.Y` (release), `<commit-sha>` (CI)
 - `go install ./cmd/mesh-ctl` always shows the latest tag reachable from HEAD
 - After `gh release create`: always `git fetch --tags` to sync local tags
-- **Every release MUST have corresponding GHCR AND Docker Hub image tags.** A release is incomplete until BOTH `docker manifest inspect ghcr.io/coonfuuseed-paandaa/awg-mesh-node:vX.Y.Z` AND `docker manifest inspect docker.io/coonfuuseedpaandaa/awg-mesh-node:vX.Y.Z` succeed (note: Docker Hub username has NO hyphen — `coonfuuseedpaandaa`, vs GHCR `coonfuuseed-paandaa`). If the pipeline failed to publish the semver tag to either registry (check `gh run list --workflow build.yml` for tag-triggered runs), dispatch the retag workflow manually: `gh workflow run build.yml -f retag_version=vX.Y.Z -f source_sha=<full-sha-from-main>`. The workflow publishes both registries in the same matrix job (see `.github/workflows/build.yml`, matrix entry `mirror_dockerhub: true`) — if one succeeded and the other failed it's a partial-publish incident and MUST be re-run. This is NON-NEGOTIABLE — a git tag without BOTH matching registry tags is a broken release.
+- **Every release MUST have corresponding GitHub Container Registry (GHCR) AND Docker Hub image tags.** A release is incomplete until BOTH `docker manifest inspect ghcr.io/coonfuuseed-paandaa/awg-mesh-node:vX.Y.Z` AND `docker manifest inspect docker.io/coonfuuseedpaandaa/awg-mesh-node:vX.Y.Z` succeed (note: Docker Hub username has NO hyphen — `coonfuuseedpaandaa`, vs GHCR `coonfuuseed-paandaa`). If the pipeline failed to publish the semver tag to either registry (check `gh run list --workflow build.yml` for tag-triggered runs), dispatch the retag workflow manually: `gh workflow run build.yml -f retag_version=vX.Y.Z -f source_sha=<full-sha-from-main>`. The workflow publishes both registries in the same matrix job (see `.github/workflows/build.yml`, matrix entry `mirror_dockerhub: true`) — if one succeeded and the other failed it's a partial-publish incident and MUST be re-run. This is NON-NEGOTIABLE — a git tag without BOTH matching registry tags is a broken release.
 - **Tag parity quick-check after any release:**
   - Docker Hub: `curl -s "https://hub.docker.com/v2/repositories/coonfuuseedpaandaa/awg-mesh-node/tags?page_size=100" | jq '[.results[].name | select(startswith("v"))] | sort | reverse'`
   - GHCR: `gh api users/coonfuuseed-paandaa/packages/container/awg-mesh-node/versions --jq '[.[] | .metadata.container.tags[]? | select(startswith("v"))] | unique | sort | reverse'`

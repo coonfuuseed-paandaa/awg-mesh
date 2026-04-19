@@ -196,7 +196,7 @@ func TestMastersForEndpoint(t *testing.T) {
 		}
 	})
 
-	t.Run("one master binds endpoint — single result", func(t *testing.T) {
+	t.Run("two masters bind endpoint — two results", func(t *testing.T) {
 		t.Parallel()
 
 		got := top.MastersForEndpoint("ep-b")

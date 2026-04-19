@@ -8,6 +8,7 @@ import (
 	"net"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -461,7 +462,7 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 	firstEntered := make(chan struct{})
 	firstResume := make(chan struct{})
 	secondReachedLock := make(chan struct{})
-	configureCount := int32(0)
+	var configureCount atomic.Int32
 	var firstInConfigure, secondInConfigure bool
 	var stateMu sync.Mutex
 
@@ -480,7 +481,7 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 			secondInConfigure = true
 			stateMu.Unlock()
 		}
-		configureCount++
+		configureCount.Add(1)
 		return nil
 	}
 
@@ -550,8 +551,8 @@ func TestAddPeerExistingLinkSerializesReconfigure(t *testing.T) {
 	}
 
 	// Both should have completed.
-	if configureCount != 2 {
-		t.Fatalf("expected 2 configure calls, got %d", configureCount)
+	if configureCount.Load() != 2 {
+		t.Fatalf("expected 2 configure calls, got %d", configureCount.Load())
 	}
 }
 

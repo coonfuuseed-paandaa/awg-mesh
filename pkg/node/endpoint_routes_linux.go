@@ -33,7 +33,8 @@ type LinkRouter interface {
 }
 
 // overlayIfaceName returns the kernel interface name for a given master name.
-// Mirrors the truncation logic in createMasterInterface.
+// Shared by createMasterInterface and overlay route logic to ensure consistency.
+// Truncates to fit IFNAMSIZ (15 chars + NUL): "wg-" (3) + name (max 12).
 func overlayIfaceName(masterName string) string {
 	part := masterName
 	if len(part) > 12 {

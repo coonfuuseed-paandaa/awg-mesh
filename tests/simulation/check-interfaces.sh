@@ -4,6 +4,13 @@ set -e
 
 CTR="test-ep-diag-$$"
 
+cleanup() {
+    docker stop "$CTR" > /dev/null 2>&1 || true
+    docker rm "$CTR" > /dev/null 2>&1 || true
+    [ -n "${TMPDIR:-}" ] && rm -rf "${TMPDIR}"
+}
+trap cleanup EXIT
+
 # Prepare node config using mesh-ctl prepare so we get a real bcrypt token.
 TMPDIR=$(mktemp -d)
 TOPO="${TMPDIR}/topo.yml"
@@ -24,15 +31,14 @@ endpoints:
     overlay_ip: 172.21.92.2
 EOF
 
-MESHCTL_BIN="${1:-mesh-ctl}"
-if ! command -v mesh-ctl >/dev/null 2>&1; then
-    MESHCTL_BIN="/mnt/d/Dev/awg-mesh-wt/v1122-hotfix/bin/mesh-ctl"
+MESHCTL_BIN="${MESHCTL_BIN:-${1:-mesh-ctl}}"
+if ! command -v "${MESHCTL_BIN}" >/dev/null 2>&1; then
+    echo "ERROR: mesh-ctl not found in PATH and no argument provided" >&2
+    exit 1
 fi
 
 "${MESHCTL_BIN}" --config-dir "${TMPDIR}" prepare endpoint test-ep --topology "${TOPO}" > /dev/null 2>&1
 TOKEN=$(cat "${TMPDIR}/nodes/test-ep/mesh.token")
-HASH=$(cat "${TMPDIR}/nodes/test-ep/mesh.token.hash" 2>/dev/null || \
-    "${MESHCTL_BIN}" --config-dir "${TMPDIR}" prepare endpoint test-ep --topology "${TOPO}" 2>&1 | grep -o '\$2[ab]\$[0-9]*\$[^ ]*' | head -1 || echo "")
 
 # Alternative: write plaintext token file inside container directly
 docker run -d --privileged --name "$CTR" awg-mesh-node:local \
@@ -46,6 +52,3 @@ docker logs "$CTR" 2>&1 | head -30 || true
 echo "=== ip link show ==="
 docker exec "$CTR" ip link show 2>&1 || echo "(container not running)"
 echo "=== done ==="
-docker stop "$CTR" > /dev/null 2>&1 || true
-docker rm "$CTR" > /dev/null 2>&1 || true
-rm -rf "${TMPDIR}"
