@@ -115,12 +115,17 @@ func writeConfig(w io.Writer, cfg Config) error {
 	}
 
 	// AWG int fields written in deterministic order for reproducible UAPI output.
+	// NOTE: amneziawg-go v1.0.4 only recognises s1 (InitPacketJunkSize) and
+	// s2 (ResponsePacketJunkSize) in its UAPI set handler. Sending s3 or s4
+	// triggers the default branch ("invalid UAPI device key") → errno=-22 (EINVAL).
+	// S3/S4 are retained in the Config struct and proto for potential future
+	// driver support but must NOT be forwarded to the UAPI socket.
 	for _, kv := range []struct {
 		key string
 		val *int
 	}{
 		{"jc", cfg.Jc}, {"jmin", cfg.Jmin}, {"jmax", cfg.Jmax},
-		{"s1", cfg.S1}, {"s2", cfg.S2}, {"s3", cfg.S3}, {"s4", cfg.S4},
+		{"s1", cfg.S1}, {"s2", cfg.S2},
 	} {
 		if kv.val != nil {
 			if err := writeKV(w, kv.key, strconv.Itoa(*kv.val)); err != nil {
