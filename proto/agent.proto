@@ -25,6 +25,7 @@ service AwgAgent {
   // Rotation
   rpc RotateParams(RotateParamsRequest) returns (RotateParamsResponse);
   rpc GetParams(GetParamsRequest) returns (AwgParams);
+  rpc RotateKeypair(RotateKeypairRequest) returns (RotateKeypairResponse);
 
   // Capture (master only)
   rpc CaptureRefresh(CaptureRequest) returns (CaptureResponse);
