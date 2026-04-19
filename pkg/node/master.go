@@ -11,6 +11,7 @@ import (
 
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
@@ -513,6 +514,15 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 		peerPublicKey = ""
 	}
 
+	// FR-1 (engram #132): persist AllowedIPs for the peer so the master's
+	// transport.yml is self-sufficient across container restart. Pre-v1.12.1
+	// this field was missing → on restart master has to re-derive runtime
+	// AllowedIPs, mesh-ctl inspect flags disk_runtime_diverge drift, and
+	// reconcile cannot heal it without the on-disk source of truth.
+	// AllowedIPs for a master-side endpoint peer = [transport_subnet, overlay_ip/32]
+	// (same layout the platform-specific peer-apply code computes for UAPI).
+	allowedIPs := computeMasterPeerAllowedIPs(tunnel.TransportSubnet, tunnel.OverlayIP)
+
 	next := append(make([]TunnelTransport, 0, len(state.Tunnels)+1),
 		state.Tunnels...)
 	updated := false
@@ -524,6 +534,7 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 		PeerPublicKey:   peerPublicKey,
 		PeerEndpoint:    tunnel.EndpointHost,
 		BalancerIP:      tunnel.BalancerIP,
+		AllowedIPs:      allowedIPs,
 	}
 	for idx, existing := range next {
 		if existing.Name == tunnel.Name {
@@ -537,7 +548,34 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 	}
 
 	return saveNodeTransportState(m.node.config.ConfigDir, NodeTransportState{
-		OverlayIP: strings.TrimSpace(m.node.config.OverlayIP),
-		Tunnels:   next,
+		SchemaVersion: transport.CurrentSchemaVersion,
+		OverlayIP:     strings.TrimSpace(m.node.config.OverlayIP),
+		Tunnels:       next,
 	})
+}
+
+// computeMasterPeerAllowedIPs returns the AllowedIPs a master persists for one
+// endpoint peer — mirrors the platform-specific buildPeerAllowedIPs used for
+// live UAPI peer configuration: [transport_subnet, overlay_ip/32]. Returns nil
+// when either input is empty so we do not produce a partial entry that would
+// mask a real misconfiguration.
+func computeMasterPeerAllowedIPs(transportSubnet, overlayIP string) []string {
+	ts := strings.TrimSpace(transportSubnet)
+	oi := strings.TrimSpace(overlayIP)
+	if ts == "" || oi == "" {
+		return nil
+	}
+	_, transportNet, err := net.ParseCIDR(ts)
+	if err != nil {
+		return nil
+	}
+	overlayCIDR := oi
+	if !strings.Contains(overlayCIDR, "/") {
+		overlayCIDR = overlayCIDR + "/32"
+	}
+	_, overlayNet, err := net.ParseCIDR(overlayCIDR)
+	if err != nil {
+		return nil
+	}
+	return []string{transportNet.String(), overlayNet.String()}
 }
