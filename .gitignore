@@ -49,3 +49,13 @@ graphify-out/
 .engram-project
 .serena/
 .aider*
+
+# local test/coverage artifacts
+.cache/
+coverage.out
+bin/*.log
+bin/race-test.sh
+bin/diag.sh
+bin/mesh-ctl
+bin/sim-*.log
+*.go.5*

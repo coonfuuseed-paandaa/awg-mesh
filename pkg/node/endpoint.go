@@ -3,12 +3,10 @@ package node
 import (
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
@@ -110,22 +108,6 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 	return nil
 }
 
-// buildMasterIndex returns a map from master name to its sorted index in the
-// masters slice. The index is used as the listen-port offset when calling
-// createMasterInterface, matching the deterministic sort order produced by
-// topology.MastersForEndpoint.
-func buildMasterIndex(masters []topology.MasterNode) map[string]int {
-	sorted := make([]topology.MasterNode, len(masters))
-	copy(sorted, masters)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Name < sorted[j].Name
-	})
-	idx := make(map[string]int, len(sorted))
-	for i, m := range sorted {
-		idx[m.Name] = i
-	}
-	return idx
-}
 
 func (e *EndpointRunner) GetNodeState() grpcserver.NodeState {
 	return grpcserver.NodeState{

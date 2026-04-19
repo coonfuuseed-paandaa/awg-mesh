@@ -194,15 +194,6 @@ func (e *EndpointRunner) getIface(masterName string) *wg.Interface {
 	return e.platformState.ifaces[masterName]
 }
 
-// deleteIface removes the map entry for masterName without closing the interface.
-// The caller is responsible for closing the interface before or after calling this.
-// Acquires write lock.
-func (e *EndpointRunner) deleteIface(masterName string) {
-	e.platformState.mu.Lock()
-	defer e.platformState.mu.Unlock()
-	delete(e.platformState.ifaces, masterName)
-}
-
 // listIfaces returns the current master names in sorted order. Acquires read lock.
 func (e *EndpointRunner) listIfaces() []string {
 	e.platformState.mu.RLock()
@@ -506,46 +497,6 @@ func (e *EndpointRunner) createInterface() error {
 	return nil
 }
 
-// createLegacyInterface is the pre-v1.12.2 single-wg0 creation path retained for
-// first-boot scenarios where no transport state is yet available.
-func (e *EndpointRunner) createLegacyInterface() error {
-	privateKey, _, err := EnsureKeypair(e.node.config.ConfigDir)
-	if err != nil {
-		return fmt.Errorf("ensure keypair: %w", err)
-	}
-
-	mtu := calculateMTUFromTopology(e.node.topology, 1)
-	iface, err := endpointCreateIfaceFn(
-		endpointLegacyIfaceName,
-		mtu,
-		device.NewLogger(device.LogLevelError, "[endpoint] "),
-	)
-	if err != nil {
-		return fmt.Errorf("create interface %q: %w", endpointLegacyIfaceName, err)
-	}
-
-	cfg := wg.Config{
-		PrivateKey: &privateKey,
-		ListenPort: wg.IntPtr(e.node.config.ListenPort),
-	}
-	if err := endpointConfigureIfaceFn(iface, cfg); err != nil {
-		_ = iface.Close()
-		return fmt.Errorf("configure interface %q: %w", endpointLegacyIfaceName, err)
-	}
-
-	if err := endpointSetIfaceUpFn(endpointLegacyIfaceName); err != nil {
-		_ = iface.Close()
-		return fmt.Errorf("bring up interface %q: %w", endpointLegacyIfaceName, err)
-	}
-
-	e.setIface(endpointLegacyIfaceName, iface)
-	e.node.logger.Info().
-		Str("interface", iface.Name()).
-		Int("mtu", mtu).
-		Msg("endpoint interface created (legacy)")
-	e.setupForwarding()
-	return nil
-}
 
 // setupForwarding enables IP forwarding and configures nftables NAT/MSS clamping.
 // Called after all interfaces are brought up. Errors are non-fatal (logged as warn/error).
@@ -710,13 +661,6 @@ func shouldSkipEndpointLinkRoute(cidrNet *net.IPNet, overlayIP net.IP) bool {
 	}
 
 	return ones == 32 && cidrNet.IP.Equal(overlayIP)
-}
-
-func (e *EndpointRunner) closeInterface() error {
-	if e == nil {
-		return nil
-	}
-	return e.closeAllIfaces()
 }
 
 // ApplyParams applies AWG parameters to the interface for the given tunnel name.

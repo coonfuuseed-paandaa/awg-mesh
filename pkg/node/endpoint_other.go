@@ -31,10 +31,6 @@ func (e *EndpointRunner) createInterface() error {
 	return nil
 }
 
-func (e *EndpointRunner) closeInterface() error {
-	return nil
-}
-
 // closeAllIfaces is a no-op on non-Linux platforms (no interfaces are created).
 func (e *EndpointRunner) closeAllIfaces() error {
 	return nil
