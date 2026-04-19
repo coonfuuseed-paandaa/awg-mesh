@@ -519,10 +519,13 @@ func TestConfigureDeviceAndDeviceOverUnixSocket(t *testing.T) {
 		}
 
 		privateKey := mustKeyForUAPI(t, filledBytesUAPI(0x90))
-		publicKey := mustKeyForUAPI(t, filledBytesUAPI(0x91))
+		// WireGuard UAPI never emits a device-side public_key= line.
+		// The response contains private_key, listen_port, fwmark, AWG params,
+		// and then peer entries (each starting with public_key=). Emitting a
+		// device-level public_key= here would violate the xplatform spec and
+		// teach readers incorrect behaviour — it was removed in T009.
 		payload := strings.Join([]string{
 			"private_key=" + hexKey(privateKey),
-			"public_key=" + hexKey(publicKey),
 			"listen_port=51820",
 			"errno=0",
 			"",
