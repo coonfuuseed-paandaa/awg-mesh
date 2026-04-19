@@ -1096,23 +1096,11 @@ mesh-ctl reconcile
 ### AWG parameter rotation
 
 ```bash
-mesh-ctl rotate --tier 1 --endpoint <name>  # rotate junk packet count/sizes
-mesh-ctl rotate --tier 2 --endpoint <name>  # rotate S1/H1/S2/H2 obfuscation headers
-mesh-ctl rotate --tier 3 --endpoint <name>  # full keypair rotation (v1.12+)
+mesh-ctl rotate --tier 1                    # rotate junk packet count/sizes
+mesh-ctl rotate --tier 2                    # rotate S1/H1/S2/H2 obfuscation headers
+mesh-ctl rotate --tier 3                    # full keypair rotation
+mesh-ctl rotate --tier 3 --node <name>     # keypair rotation on one node
 ```
-
-**Tier-3 keypair rotation (v1.12.0+):** the `--tier 3` path now performs a true
-end-to-end atomic keypair rotation — the CLI generates a new keypair, delivers
-it to the endpoint via the new `RotateKeypair` RPC, swaps the peer on every
-master via `UpdateTunnelPeer`, and commits the new pubkey to admin-state. Data
-plane reconverges within ~2-5s.
-
-**Version requirements:** the **CLI and the target endpoint** MUST be v1.12+
-(both sides need `RotateKeypair`). **Masters** only need v1.10+ (which
-introduced `UpdateTunnelPeer`). Mixed-version meshes surface a structured
-`Unimplemented` error from the offending endpoint; older masters are
-transparently supported. Pre-v1.12 tier-3 calls were cosmetic (keypair was not
-actually rotated — local tracker #125 — fixed in v1.12.0).
 
 ### Token management
 

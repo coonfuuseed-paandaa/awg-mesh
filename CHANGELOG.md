@@ -7,80 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.12.0] — 2026-04-19
-
-### Added
-
-- **End-to-end tier-3 keypair rotation** — `mesh-ctl rotate --tier 3 --endpoint <name>`
-  now performs a fully atomic 4-party coordinated rotation (CLI → endpoint → every
-  master → admin-state). Fixes the silent no-op documented in local tracker #125.
-  - **New `RotateKeypair` RPC** on endpoint mode — atomically updates `node.yml`
-    via `.tmp + rename` (mode 0600) and rebinds the amneziawg-go interface's
-    `PrivateKey` via UAPI. Rolls back on UAPI failure. Rejects `Unimplemented`
-    from master/client modes via `NodeStatePersister` interface gating.
-  - **`NodeStatePersister` interface** (`pkg/grpc/interfaces.go`) — `LoadKeypair`
-    + `PersistKeypair` methods, implemented only by `EndpointRunner`.
-  - **CLI rewrite (`cmd/mesh-ctl/cmd/rotate.go::executeTier3Rotation`)** — 4-party
-    flow: discovery (endpoint + per-master `GetTransportState`), idempotency check
-    ("rotation already converged"), client-side keypair generation, endpoint
-    rebind via `RotateKeypair`, fan-out `UpdateTunnelPeer` to every master,
-    atomic admin-state commit on success. On any master failure: structured
-    `NAME/STATUS/DETAIL` stderr table and best-effort revert.
-  - **Master-side code path is UNCHANGED** — v1.12 CLI calls the existing
-    `UpdateTunnelPeer` RPC (v1.10+), which already performs `Remove(old) +
-    Add(new, allowed_ips, endpoint, preshared_key, keepalive)` with automatic
-    restore-on-error. Reusing the battle-tested path avoids re-implementing
-    atomic peer swap in the `RotateParams` handler.
-- **Proto extensions (backward-compatible, additive only):**
-  - `RotateKeypairRequest{new_private_key bytes, tunnel_name string}`
-  - `RotateKeypairResponse{success bool, new_public_key bytes, message string}`
-  - `RotateParamsRequest.old_public_key` (field 5, reserved for future)
-  - `RotateParamsRequest.allowed_ips` (field 6, reserved for future)
-- **Real-UAPI integration test** — `TestUAPI_RotatePrivateKey_PreservesPeers` in
-  `pkg/wg/uapi_integration_test.go` proves amneziawg-go UAPI can rotate the
-  device private key without touching the peer table.
-- **Unit tests** — 9 new `TestRotateKeypair_*` cases in `pkg/grpc/handlers_test.go`
-  covering happy path, all validation rejections, rollback on UAPI failure, and
-  NFR-1 log hygiene (no private-key bytes in zerolog output at any level).
-
-### Fixed
-
-- **local tracker #125** — tier-3 second-layer `ApplyParams` silent no-op. Previously
-  `mesh-ctl rotate --tier 3` reported "tier 3 rotation succeeded" on every master
-  but never actually rotated the peer's cryptographic keypair. Root causes (both
-  fixed):
-  1. Master-side second `ApplyParams` call sent `wg.PeerConfig{PublicKey=newPub}`
-     with no `AllowedIPs` — amneziawg-go added a phantom peer rather than
-     replacing the existing peer's key. Fix: v1.12 CLI no longer sends
-     `new_public_key` via `RotateParams`; it calls `UpdateTunnelPeer` directly,
-     which does the correct Remove+Add.
-  2. CLI generated a fresh keypair client-side, sent `publicKey` to masters, and
-     **discarded the privateKey** — endpoint never received it and continued
-     signing handshakes with its original key. Fix: new `RotateKeypair` RPC
-     delivers the private key atomically to the endpoint.
-
-### Changed
-
-- Sim harness `tests/simulation/issue-92-rotation.sh` extended with R6/R6a/R6b/R6c/R6d
-  assertions verifying admin-state pubkey change, per-master runtime key
-  convergence, absence of old pubkey, and zero drift post-rotation.
-
-## [1.11.3] — 2026-04-19
-
-### Fixed
-
-- **local tracker #117** — `mesh-ctl rotate --tier 3` no longer fails with
-  `uapi errno=-22` (EINVAL) on the first `ApplyParams` call.
-  `pkg/wg/uapi.go::writeConfig` was emitting `s3=`/`s4=` keys that amneziawg-go
-  v1.0.4 rejects via its UAPI parser default branch. Dropped `s3`/`s4` from the
-  UAPI write loop (fields remain in `wg.Config` struct for forward compat).
-
-### Added
-
-- Real-UAPI integration test `TestUAPI_S3S4_Rejected` in
-  `pkg/wg/uapi_integration_test.go` to catch the category of UAPI-rejection
-  bugs that mock-only tests miss.
-
 ## [1.10.2] — 2026-04-18
 
 ### Added
@@ -830,13 +756,7 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...HEAD
-[1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.3...v1.12.0
-[1.11.3]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.2...v1.11.3
-[1.11.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.1...v1.11.2
-[1.11.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.0...v1.11.1
-[1.11.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.3...v1.11.0
-[1.10.3]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...v1.10.3
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...HEAD
 [1.10.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.9.2...v1.10.0

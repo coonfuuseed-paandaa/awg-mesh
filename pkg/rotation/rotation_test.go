@@ -14,18 +14,14 @@ import (
 )
 
 type mockAwgAgentClient struct {
-	mu                 sync.Mutex
-	rotateCalls        int
-	healthCalls        int
-	rotateReqs         []*proto.RotateParamsRequest
-	rotateErr          error
-	healthErr          error
-	healthResp         *proto.HealthResponse
-	rotateResp         *proto.RotateParamsResponse
-	rotateKeypairCalls int
-	rotateKeypairReqs  []*proto.RotateKeypairRequest
-	rotateKeypairErr   error
-	rotateKeypairResp  *proto.RotateKeypairResponse
+	mu           sync.Mutex
+	rotateCalls  int
+	healthCalls  int
+	rotateReqs   []*proto.RotateParamsRequest
+	rotateErr    error
+	healthErr    error
+	healthResp   *proto.HealthResponse
+	rotateResp   *proto.RotateParamsResponse
 }
 
 func (m *mockAwgAgentClient) Init(_ context.Context, _ *proto.InitRequest, _ ...grpc.CallOption) (*proto.InitResponse, error) {
@@ -78,21 +74,6 @@ func (m *mockAwgAgentClient) GetStatus(_ context.Context, _ *proto.Empty, _ ...g
 
 func (m *mockAwgAgentClient) GetRoutes(_ context.Context, _ *proto.Empty, _ ...grpc.CallOption) (*proto.RouteTable, error) {
 	return &proto.RouteTable{}, nil
-}
-
-func (m *mockAwgAgentClient) RotateKeypair(_ context.Context, req *proto.RotateKeypairRequest, _ ...grpc.CallOption) (*proto.RotateKeypairResponse, error) {
-	m.mu.Lock()
-	m.rotateKeypairCalls++
-	m.rotateKeypairReqs = append(m.rotateKeypairReqs, req)
-	m.mu.Unlock()
-
-	if m.rotateKeypairErr != nil {
-		return nil, m.rotateKeypairErr
-	}
-	if m.rotateKeypairResp != nil {
-		return m.rotateKeypairResp, nil
-	}
-	return &proto.RotateKeypairResponse{Success: true}, nil
 }
 
 func (m *mockAwgAgentClient) RotateParams(_ context.Context, req *proto.RotateParamsRequest, _ ...grpc.CallOption) (*proto.RotateParamsResponse, error) {
