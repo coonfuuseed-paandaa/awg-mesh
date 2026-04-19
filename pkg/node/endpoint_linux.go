@@ -29,6 +29,13 @@ var endpointRouteReplaceLink = func(dest *net.IPNet, dev string) error {
 	return routing.NewNetlinkRouter().RouteReplaceLink(dest, dev)
 }
 
+// endpointRouteReplaceLinkWithSrc is the test seam for the src-hinted /32 route
+// installs in ConfigureTransport. Unit tests replace this to capture route calls
+// without kernel access (the production path requires a real netlink socket).
+var endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, dev string, src net.IP) error {
+	return routing.NewNetlinkRouter().RouteReplaceLinkWithSrc(dest, dev, src)
+}
+
 // endpointCreateIfaceFn is the test seam for wg.NewInterface. Unit tests
 // replace this with a factory that returns a mock without touching the kernel.
 var endpointCreateIfaceFn = func(name string, mtu int, logger *device.Logger) (*wg.Interface, error) {
@@ -654,8 +661,7 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 			if shouldSkipEndpointLinkRoute(cidrNet, overlayIP) {
 				continue
 			}
-			router := routing.NewNetlinkRouter()
-			if err := router.RouteReplaceLinkWithSrc(cidrNet, ifaceName, overlayIP); err != nil {
+			if err := endpointRouteReplaceLinkWithSrc(cidrNet, ifaceName, overlayIP); err != nil {
 				e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Str("src", overlayIP.String()).
 					Msg("failed to install overlay route with src hint")
 			}

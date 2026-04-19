@@ -254,7 +254,7 @@ func rebuildAllOverlayRoutes(e *EndpointRunner, topo *topology.Topology) error {
 	}
 
 	selfName := e.node.config.Name
-	router := routing.NewNetlinkRouter()
+	router := overlayRouterFn()
 	logger := e.node.logger
 
 	masterNames := e.listIfaces()

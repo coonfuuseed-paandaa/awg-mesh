@@ -45,6 +45,7 @@ func TestEndpointConfigureTransportInstallsRoutesFromAllowedIPs(t *testing.T) {
 			"10.66.0.0/27",  // overlay range (install)
 		},
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
@@ -87,6 +88,7 @@ func TestEndpointConfigureTransportSkipsOnlyOwnHostRoute(t *testing.T) {
 			"10.50.0.0/24",  // containing network (must install)
 		},
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
@@ -101,21 +103,31 @@ func TestEndpointConfigureTransportSkipsOnlyOwnHostRoute(t *testing.T) {
 func TestEndpointConfigureTransportInstallsNonSelfHostRoute(t *testing.T) {
 	originalAddInterfaceAddress := endpointAddInterfaceAddress
 	originalRouteReplaceLink := endpointRouteReplaceLink
+	originalRouteReplaceLinkWithSrc := endpointRouteReplaceLinkWithSrc
 	t.Cleanup(func() {
 		endpointAddInterfaceAddress = originalAddInterfaceAddress
 		endpointRouteReplaceLink = originalRouteReplaceLink
+		endpointRouteReplaceLinkWithSrc = originalRouteReplaceLinkWithSrc
 	})
 
-	calls := make([]string, 0)
+	// Non-/32 routes go through endpointRouteReplaceLink.
+	// /32 routes (non-self) go through endpointRouteReplaceLinkWithSrc (src-hint path).
+	linkCalls := make([]string, 0)
+	srcCalls := make([]string, 0)
 	endpointAddInterfaceAddress = func(_ string, _ string) error { return nil }
 	endpointRouteReplaceLink = func(dest *net.IPNet, _ string) error {
-		calls = append(calls, dest.String())
+		linkCalls = append(linkCalls, dest.String())
+		return nil
+	}
+	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, _ net.IP) error {
+		srcCalls = append(srcCalls, dest.String())
 		return nil
 	}
 
 	// overlayIP = 10.44.0.9 (the endpoint's own IP)
 	// allowedIP = 10.44.0.1/32 (master's host route — a DIFFERENT /32)
-	// The route MUST be installed; the skip filter must only skip the self-/32.
+	// The route MUST be installed via the src-hint path; the skip filter only
+	// skips the self-/32 (10.44.0.9/32).
 	runner := &EndpointRunner{
 		node: &Node{
 			config: NodeConfig{OverlayIP: "10.44.0.9"},
@@ -129,13 +141,18 @@ func TestEndpointConfigureTransportInstallsNonSelfHostRoute(t *testing.T) {
 		"10.255.0.1",
 		[]string{"10.44.0.1/32"},
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
 	}
 
-	if len(calls) != 1 || calls[0] != "10.44.0.1/32" {
-		t.Fatalf("expected RouteReplaceLink called with 10.44.0.1/32, got %v", calls)
+	// The /32 must arrive via the src-hint seam, not the plain link seam.
+	if len(linkCalls) != 0 {
+		t.Errorf("expected no plain RouteReplaceLink calls for /32, got %v", linkCalls)
+	}
+	if len(srcCalls) != 1 || srcCalls[0] != "10.44.0.1/32" {
+		t.Fatalf("expected RouteReplaceLinkWithSrc called with 10.44.0.1/32, got %v", srcCalls)
 	}
 }
 
