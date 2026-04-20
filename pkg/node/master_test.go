@@ -2,6 +2,7 @@ package node
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -492,5 +493,102 @@ func TestMigrateLegacyTransportState_NoPeerTransportIP(t *testing.T) {
 	}
 	if len(state.Tunnels[0].AllowedIPs) != 0 {
 		t.Errorf("AllowedIPs should be empty when PeerTransportIP is absent, got: %v", state.Tunnels[0].AllowedIPs)
+	}
+}
+
+// TestSaveTransportState_PersistsAdminAllowedIPs (G12) verifies that
+// saveTransportState writes tunnel.AllowedIPs verbatim to transport.yml when
+// the field is non-empty, bypassing local topology recompute. Reproduces the
+// production failure where m.node.topology is nil (master container deployed
+// without --topology flag) — pre-fix, computeMasterPeerAllowedIPs returned
+// minimal [transport /30, overlay /32], overwriting admin-provided /27.
+func TestSaveTransportState_PersistsAdminAllowedIPs(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := &MasterRunner{
+		node: &Node{
+			config:   NodeConfig{ConfigDir: dir},
+			topology: nil, // explicitly nil — reproduces prod without --topology
+		},
+		tunnels: make(map[string]*MasterTunnel),
+	}
+	tunnel := &MasterTunnel{
+		Name:            "pl-01",
+		InterfaceName:   "wg-pl-01",
+		TransportSubnet: "10.255.0.24/30",
+		OverlayIP:       "172.20.70.34",
+		BalancerIP:      "172.20.70.33",
+		AllowedIPs:      []string{"10.255.0.24/30", "172.20.70.34/32", "172.20.70.32/27"},
+	}
+	if err := runner.saveTransportState(tunnel); err != nil {
+		t.Fatalf("saveTransportState: %v", err)
+	}
+	state, err := loadNodeTransportState(dir)
+	if err != nil {
+		t.Fatalf("loadNodeTransportState: %v", err)
+	}
+	var found *TunnelTransport
+	for i := range state.Tunnels {
+		if state.Tunnels[i].Name == "pl-01" {
+			found = &state.Tunnels[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("pl-01 not found in persisted state")
+	}
+	want := []string{"10.255.0.24/30", "172.20.70.34/32", "172.20.70.32/27"}
+	if !reflect.DeepEqual(found.AllowedIPs, want) {
+		t.Fatalf("AllowedIPs = %v, want %v", found.AllowedIPs, want)
+	}
+}
+
+// TestSaveTransportState_FallbackToLocalOnEmpty verifies backward-compat:
+// when tunnel.AllowedIPs is empty and topology is nil, saveTransportState
+// falls back to computeMasterPeerAllowedIPs which returns nil (not an error),
+// so the persisted entry has nil/empty AllowedIPs — no /27 injected.
+func TestSaveTransportState_FallbackToLocalOnEmpty(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := &MasterRunner{
+		node: &Node{
+			config:   NodeConfig{ConfigDir: dir},
+			topology: nil,
+		},
+		tunnels: make(map[string]*MasterTunnel),
+	}
+	tunnel := &MasterTunnel{
+		Name:            "pl-01",
+		InterfaceName:   "wg-pl-01",
+		TransportSubnet: "10.255.0.24/30",
+		OverlayIP:       "172.20.70.34",
+		AllowedIPs:      nil, // empty — triggers local fallback
+	}
+	if err := runner.saveTransportState(tunnel); err != nil {
+		t.Fatalf("saveTransportState: %v", err)
+	}
+	state, err := loadNodeTransportState(dir)
+	if err != nil {
+		t.Fatalf("loadNodeTransportState: %v", err)
+	}
+	var found *TunnelTransport
+	for i := range state.Tunnels {
+		if state.Tunnels[i].Name == "pl-01" {
+			found = &state.Tunnels[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("pl-01 not found in persisted state")
+	}
+	// With nil topology and non-empty transportSubnet+overlayIP,
+	// computeMasterPeerAllowedIPs → BuildAllowedIPsForMasterPeer(nil, ...) → nil.
+	// Assert the /27 admin-only CIDR is NOT present (fallback must not invent it).
+	for _, cidr := range found.AllowedIPs {
+		if cidr == "172.20.70.32/27" {
+			t.Fatalf("fallback path must not include /27 — got: %v", found.AllowedIPs)
+		}
 	}
 }

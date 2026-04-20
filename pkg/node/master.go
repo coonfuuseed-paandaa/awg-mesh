@@ -34,6 +34,7 @@ type MasterTunnel struct {
 	PeerPublicKey       wg.Key
 	Healthy             bool
 	Weight              int
+	AllowedIPs          []string // admin source of truth; set by AddTunnel/UpdateTunnelPeer, persisted verbatim
 	lastParams          wg.Config
 	platformState       masterTunnelPlatformState
 }
@@ -130,7 +131,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 			// migrateLegacyTransportState). Passing "" here caused the just-migrated
 			// AllowedIPs to be overwritten with nil on the same boot (CRIT fix).
 			restoredSubnet := computeTransportSubnetFromIP(tt.TransportIP)
-			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, tt.OverlayIP, tt.BalancerIP, restoredSubnet, tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
+			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, tt.OverlayIP, tt.BalancerIP, restoredSubnet, tt.TransportIP, tt.PeerTransportIP, 1, peerKey, tt.AllowedIPs); err != nil {
 				if !strings.Contains(err.Error(), "already exists") {
 					m.node.logger.Warn().
 						Str("tunnel", tt.Name).
@@ -149,7 +150,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 
 	if m.node.topology != nil {
 		for _, ep := range m.node.topology.Endpoints {
-			if addErr := m.AddTunnel(ep.Name, ep.Host, ep.OverlayIP, "", "", "", "", 1, wg.Key{}); addErr != nil {
+			if addErr := m.AddTunnel(ep.Name, ep.Host, ep.OverlayIP, "", "", "", "", 1, wg.Key{}, nil); addErr != nil {
 				m.node.logger.Warn().
 					Str("endpoint", ep.Name).
 					Err(addErr).
@@ -235,7 +236,7 @@ func (m *MasterRunner) GetPublicKey() (wg.Key, error) {
 }
 
 // AddTunnel adds a new tunnel to the managed set.
-func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, transportSubnet, masterTransportIP, endpointTransportIP string, weight int, peerPublicKey wg.Key) error {
+func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, transportSubnet, masterTransportIP, endpointTransportIP string, weight int, peerPublicKey wg.Key, allowedIPs []string) error {
 	if name == "" {
 		return fmt.Errorf("tunnel name is required")
 	}
@@ -258,6 +259,7 @@ func (m *MasterRunner) AddTunnel(name, endpointHost, overlayIP, balancerIP, tran
 		PeerPublicKey:       peerPublicKey,
 		Healthy:             false, // Set true only after interface creation succeeds (prevents ECMP race)
 		Weight:              weight,
+		AllowedIPs:          allowedIPs,
 	}
 	m.tunnels[name] = t
 	m.mu.Unlock()
@@ -368,6 +370,9 @@ func (m *MasterRunner) UpdateTunnelPeer(name string, newPubkeyBytes [32]byte, ba
 	tunnel.PeerPublicKey = newPubkey
 	if balancerIP != "" {
 		tunnel.BalancerIP = balancerIP
+	}
+	if len(allowedIPs) > 0 {
+		tunnel.AllowedIPs = allowedIPs // refresh admin intent on every reload/reconcile call
 	}
 
 	// Step 7: persist - failure is non-fatal (UAPI is authoritative)
@@ -530,14 +535,19 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 		peerPublicKey = ""
 	}
 
-	// FR-1 (engram #132): persist AllowedIPs for the peer so the master's
-	// transport.yml is self-sufficient across container restart. Pre-v1.12.1
-	// this field was missing → on restart master has to re-derive runtime
-	// AllowedIPs, mesh-ctl inspect flags disk_runtime_diverge drift, and
-	// reconcile cannot heal it without the on-disk source of truth.
-	// AllowedIPs for a master-side endpoint peer = [transport_subnet, overlay_ip/32]
-	// (same layout the platform-specific peer-apply code computes for UAPI).
-	allowedIPs := computeMasterPeerAllowedIPs(m.node.topology, tunnel.Name, tunnel.TransportSubnet, tunnel.OverlayIP)
+	// FR-4 (issue #147 layer 3): persist AllowedIPs verbatim from admin intent when set.
+	// tunnel.AllowedIPs is populated by AddTunnel (from gRPC req.AllowedIps) and
+	// UpdateTunnelPeer (from reload/reconcile). On production masters that start without
+	// --topology, m.node.topology is nil, so computeMasterPeerAllowedIPs returns minimal
+	// [transport /32] — overwriting the admin-provided /27. Verbatim path eliminates that.
+	// Fallback to local recompute only for legacy first-boot/migration (empty field).
+	var allowedIPs []string
+	if len(tunnel.AllowedIPs) > 0 {
+		allowedIPs = tunnel.AllowedIPs // admin intent — persisted verbatim
+	} else {
+		// fallback: legacy first-boot or migration path where admin intent is unknown
+		allowedIPs = computeMasterPeerAllowedIPs(m.node.topology, tunnel.Name, tunnel.TransportSubnet, tunnel.OverlayIP)
+	}
 
 	next := append(make([]TunnelTransport, 0, len(state.Tunnels)+1),
 		state.Tunnels...)

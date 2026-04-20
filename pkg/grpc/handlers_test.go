@@ -56,6 +56,7 @@ type addTunnelCall struct {
 	endpointTransportIP string
 	weight              int
 	peerKey             wg.Key
+	allowedIPs          []string
 }
 
 type updateTunnelPeerCall struct {
@@ -75,6 +76,7 @@ func (m *testTunnelManager) AddTunnel(
 	endpointTransportIP string,
 	weight int,
 	peerPublicKey wg.Key,
+	allowedIPs []string,
 ) error {
 	m.addTunnelCalls = append(m.addTunnelCalls, addTunnelCall{
 		name:                name,
@@ -86,6 +88,7 @@ func (m *testTunnelManager) AddTunnel(
 		endpointTransportIP: endpointTransportIP,
 		weight:              weight,
 		peerKey:             peerPublicKey,
+		allowedIPs:          allowedIPs,
 	})
 	return m.addErr
 }

@@ -343,6 +343,13 @@ func newMasterInitCommand() *cobra.Command {
 				endpointHost := computePeerEndpoint(epHost, ep.ListenPort, peerResp, allMasterNames, master.Name, cliLogger)
 
 				// Step 3: AddTunnel to master with the per-master endpoint host:port.
+				// Compute master-side AllowedIPs from topology so the master persists
+				// the full list (including /27) even when it starts without --topology.
+				masterAllowedIPs, maipErr := topology.BuildAllowedIPsForMasterPeer(topo, ep.Name, ep.OverlayIP, allocation.Subnet.String())
+				if maipErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: build master allowed_ips for endpoint %q / master %q: %v\n", ep.Name, master.Name, maipErr)
+					masterAllowedIPs = []string{allocation.Subnet.String(), ep.OverlayIP + "/32"}
+				}
 				addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				addResp, addErr := client.Agent().AddTunnel(addCtx, &proto.AddTunnelRequest{
 					Name:                ep.Name,
@@ -354,6 +361,7 @@ func newMasterInitCommand() *cobra.Command {
 					TransportSubnet:     allocation.Subnet.String(),
 					MasterTransportIp:   allocation.MasterIP.String(),
 					EndpointTransportIp: allocation.EndpointIP.String(),
+					AllowedIps:          masterAllowedIPs,
 				})
 				addCancel()
 				if addErr != nil {

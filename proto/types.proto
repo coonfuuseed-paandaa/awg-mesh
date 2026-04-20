@@ -82,6 +82,7 @@ message AddTunnelRequest {
   string transport_subnet = 10;
   string master_transport_ip = 11;
   string endpoint_transport_ip = 12;
+  repeated string allowed_ips = 13;  // v1.12.8: admin-source-of-truth AllowedIPs for master-side peer
 }
 
 message AddTunnelResponse {

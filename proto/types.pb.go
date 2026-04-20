@@ -620,6 +620,7 @@ type AddTunnelRequest struct {
 	TransportSubnet     string                 `protobuf:"bytes,10,opt,name=transport_subnet,json=transportSubnet,proto3" json:"transport_subnet,omitempty"`
 	MasterTransportIp   string                 `protobuf:"bytes,11,opt,name=master_transport_ip,json=masterTransportIp,proto3" json:"master_transport_ip,omitempty"`
 	EndpointTransportIp string                 `protobuf:"bytes,12,opt,name=endpoint_transport_ip,json=endpointTransportIp,proto3" json:"endpoint_transport_ip,omitempty"`
+	AllowedIps          []string               `protobuf:"bytes,13,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -736,6 +737,13 @@ func (x *AddTunnelRequest) GetEndpointTransportIp() string {
 		return x.EndpointTransportIp
 	}
 	return ""
+}
+
+func (x *AddTunnelRequest) GetAllowedIps() []string {
+	if x != nil {
+		return x.AllowedIps
+	}
+	return nil
 }
 
 type AddTunnelResponse struct {

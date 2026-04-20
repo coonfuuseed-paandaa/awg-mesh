@@ -271,6 +271,7 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 		strings.TrimSpace(req.GetEndpointTransportIp()),
 		weight,
 		peerPublicKey,
+		req.GetAllowedIps(),
 	)
 	if err != nil {
 		h.logger.Error().Err(err).Str("tunnel", tunnelName).Msg("add tunnel failed")
