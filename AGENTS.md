@@ -30,7 +30,7 @@ Unified node binary (`awg-mesh-node`) + CLI control plane (`mesh-ctl`).
 - `mesh-ctl upgrade <version>` — guided rolling upgrade with plan/confirm/execute/verify/rollback phases (v1.10.2+)
 - `mesh-ctl upgrade compose <old-file>` — docker-compose schema migration helper for v1.5.1/v1.6.0/v1.9.0 → current (v1.10.2+)
 - Endpoint per-master interface pattern (v1.12.2+): each bound master gets its own `wg-<master-name>` iface on the endpoint, avoiding WireGuard AllowedIPs dedup. Endpoint↔endpoint traffic flows via kernel policy routing. Symmetric with master-side architecture (local tracker #134).
-- Master-side `MasterTunnel.AllowedIPs` admin source of truth (v1.12.8+): CLI computes and passes `AllowedIps` in every `AddTunnelRequest`; `saveTransportState` persists verbatim — no topology needed on master daemon. Eliminates `/27` loss on prod masters without `--topology` (local tracker #147 layer 3).
+- Master-side `MasterTunnel.AllowedIPs` admin source of truth (v1.12.9+): CLI computes and passes `AllowedIps` in every `AddTunnelRequest`; `saveTransportState` persists verbatim — no topology needed on master daemon. Eliminates `/27` loss on prod masters without `--topology` (local tracker #147 layers 3+4 — v1.12.8 added the field, v1.12.9 fixed the proto descriptor so wire marshal/unmarshal actually delivers it).
 
 ## ARCHITECTURE
 
@@ -108,7 +108,8 @@ applyPeerKeyUpdate device-handle drift).
 3. `bash tests/simulation/issue-92-rotation.sh` — MUST exit 0 with all R1-R11b PASS (includes R3a-R3g, R9 persistence gate, R10 route-get src assertions and endpoint↔endpoint ping matrix, R11 master AllowedIPs endpoints-range gate, R11b no-topology master persists /27)
 4. G3 unit tests green: `go test -run 'TestReadEndpointPublicKeyFormats|TestReadAdminPubkeyRawFormats' ./...`
 5. G7 unit tests green: `go test -run 'TestPortOffset|TestComputePeerEndpoint' ./...`
-6. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
+6. G14 wire gate green: `go test -run 'TestAddTunnelRequest_AllowedIpsWireRoundtrip' ./proto/...`
+7. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,

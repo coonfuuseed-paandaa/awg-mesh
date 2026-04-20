@@ -67,6 +67,10 @@ graph TB
 
 ## What's New
 
+### v1.12.9
+
+- **Proto descriptor fix** — `AddTunnelRequest.allowed_ips` (field 13) was present in the Go struct but absent from the raw protobuf descriptor. `proto.Unmarshal` on master silently dropped it, causing `saveTransportState` to fall back to the minimal path (no /27). Corrected `file_types_proto_rawDesc` in `proto/types.pb.go`. Zero application code changes. (local tracker #147 layer 4)
+
 ### v1.12.8
 
 - **Master AllowedIPs admin source of truth** — master daemons no longer need `--topology` to persist the correct `/27` forwarding filter. The CLI now computes and passes `AllowedIps` in every `AddTunnelRequest`; the master stores it verbatim in `transport.yml` and restores it across restarts. Fixes the production failure (issue `#147` layer 3) where masters without `--topology` silently dropped the `/27` after each reconcile or restart.

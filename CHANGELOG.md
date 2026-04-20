@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.9 — 2026-04-20
+
+### Fixes
+- **proto descriptor/struct drift (local tracker #147 layer 4):** `AddTunnelRequest.allowed_ips` (field 13) was present in the Go struct and `.proto` source but absent from `file_types_proto_rawDesc` — the raw binary descriptor blob that `google.golang.org/protobuf` uses as authoritative for wire marshal/unmarshal. As a result, `proto.Unmarshal` on the master gRPC server silently discarded field 13 bytes as unknown, returning `req.GetAllowedIps() == nil` and causing `saveTransportState` to fall back to the legacy minimal path (transport /30 + endpoint /32 only, no /27). Patched `file_types_proto_rawDesc` in `proto/types.pb.go` to include field 13 with correct varint length encoding — zero application code changes.
+
+### Test Gates Added
+- G14: `TestAddTunnelRequest_AllowedIpsWireRoundtrip` (`proto/proto_test.go`) — real `proto.Marshal -> proto.Unmarshal` wire gate on `AddTunnelRequest.AllowedIps`; would have caught local tracker #147 layer 4 at CI time. Added permanently to prevent descriptor/struct drift regressions.
+
 ## v1.12.8 — 2026-04-20
 
 ### Fixes
