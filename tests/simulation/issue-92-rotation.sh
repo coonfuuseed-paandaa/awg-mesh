@@ -1152,10 +1152,10 @@ info "R9: restarting both masters..."
 docker restart "${CTR_MASTER_RU_01}" "${CTR_MASTER_RU_02}" > /dev/null 2>&1 || true
 
 for ctr in "${CTR_MASTER_RU_01}" "${CTR_MASTER_RU_02}"; do
-    if wait_for_log "${ctr}" "gRPC server ready" 60; then
-        pass "R9: ${ctr} reported gRPC server ready after restart"
+    if wait_for_log "${ctr}" "gRPC server listening" 60; then
+        pass "R9: ${ctr} reported gRPC server listening after restart"
     else
-        fail "R9: ${ctr} did not report gRPC server ready within 60s after restart"
+        fail "R9: ${ctr} did not report gRPC server listening within 60s after restart"
         docker logs "${ctr}" 2>&1 | tail -20 | sed 's/^/    /' || true
     fi
 done
@@ -1214,12 +1214,18 @@ do
     master_name="${rest%%:*}"
     master_bridge="${entry##*:}"
 
+    # Scope port extraction to the ep-us-01 tunnel block — transport.yml may
+    # carry multiple tunnels and the first peer_endpoint may belong to another.
     master_port=$(
         docker exec "${ctr}" cat /config/transport.yml 2>/dev/null \
-            | grep 'peer_endpoint:' \
-            | grep -oE ':[0-9]+$' \
-            | head -1 \
-            | tr -d ':' \
+            | awk -v ep="${ENDPOINT_US_01}" '
+                $1 == "-" && $2 == "name:" { in_block = ($3 == ep); next }
+                in_block && $1 == "peer_endpoint:" {
+                    n = split($2, parts, ":")
+                    if (n > 1) print parts[n]
+                    exit
+                }
+            ' \
             || true
     )
     ep_port=$(
