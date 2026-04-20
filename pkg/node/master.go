@@ -124,7 +124,12 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 				}
 			}
 
-			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, tt.OverlayIP, tt.BalancerIP, "", tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
+			// Derive transport subnet from the stored transport IP so saveTransportState
+			// preserves AllowedIPs correctly (including entries migrated by
+			// migrateLegacyTransportState). Passing "" here caused the just-migrated
+			// AllowedIPs to be overwritten with nil on the same boot (CRIT fix).
+			restoredSubnet := computeTransportSubnetFromIP(tt.TransportIP)
+			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, tt.OverlayIP, tt.BalancerIP, restoredSubnet, tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
 				if !strings.Contains(err.Error(), "already exists") {
 					m.node.logger.Warn().
 						Str("tunnel", tt.Name).
