@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.4 — 2026-04-20
+
+### Fixes
+- **Endpoint↔endpoint overlay broken in multi-master topologies (issue `#147`):**
+  per-master endpoint interfaces now install `src <endpointOverlayIP>` on
+  overlay `/27` and `/25` routes, not only on `/32` host routes. This prevents
+  the kernel from choosing the transport `/30` address as the packet source and
+  restores cross-endpoint overlay reachability.
+
+### Test Gates Added
+- G8: endpoint↔endpoint overlay matrix + `ip route get` src assertion (R10 in
+  `tests/simulation/issue-92-rotation.sh`)
+
 ## v1.12.3 — 2026-04-20
 
 ### What's New
