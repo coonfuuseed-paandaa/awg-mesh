@@ -223,3 +223,188 @@ func TestUpdateTunnelPeer_ApplyFails(t *testing.T) {
 		t.Error("key was NOT rolled back: tunnel holds the new key after UAPI failure")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestMigrateLegacyTransportState — 5 cases from T005 acceptance criteria
+// ---------------------------------------------------------------------------
+
+// writeMigrationState writes a NodeTransportState to configDir/transport.yml.
+func writeMigrationState(t *testing.T, configDir string, state NodeTransportState) {
+	t.Helper()
+	if err := saveNodeTransportState(configDir, state); err != nil {
+		t.Fatalf("writeMigrationState: %v", err)
+	}
+}
+
+// TestMigrateLegacyTransportState_HealthyState verifies that when all tunnels
+// already have AllowedIPs populated, the function returns nil and does NOT
+// rewrite the file (idempotent no-op path).
+func TestMigrateLegacyTransportState_HealthyState(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	writeMigrationState(t, configDir, NodeTransportState{
+		OverlayIP: "172.20.0.1",
+		Tunnels: []TunnelTransport{
+			{
+				Name:            "ep-01",
+				TransportIP:     "10.255.0.1",
+				PeerTransportIP: "10.255.0.2",
+				OverlayIP:       "172.20.0.10",
+				AllowedIPs:      []string{"10.255.0.0/30", "172.20.0.10/32"},
+			},
+		},
+	})
+
+	logger := zerolog.Nop()
+	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
+	}
+
+	// State must be unchanged.
+	state, err := loadNodeTransportState(configDir)
+	if err != nil {
+		t.Fatalf("loadNodeTransportState: %v", err)
+	}
+	if len(state.Tunnels[0].AllowedIPs) != 2 {
+		t.Errorf("AllowedIPs count = %d, want 2 (unchanged)", len(state.Tunnels[0].AllowedIPs))
+	}
+}
+
+// TestMigrateLegacyTransportState_EmptyAllowedIPs verifies that a single tunnel
+// with empty AllowedIPs and valid transport IPs is back-filled and written.
+func TestMigrateLegacyTransportState_EmptyAllowedIPs(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	writeMigrationState(t, configDir, NodeTransportState{
+		OverlayIP: "172.20.0.1",
+		Tunnels: []TunnelTransport{
+			{
+				Name:            "ep-02",
+				TransportIP:     "10.255.0.1",
+				PeerTransportIP: "10.255.0.2",
+				OverlayIP:       "172.20.0.20",
+				AllowedIPs:      nil, // empty — should be migrated
+			},
+		},
+	})
+
+	logger := zerolog.Nop()
+	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
+	}
+
+	state, err := loadNodeTransportState(configDir)
+	if err != nil {
+		t.Fatalf("loadNodeTransportState: %v", err)
+	}
+	tt := state.Tunnels[0]
+	if len(tt.AllowedIPs) != 2 {
+		t.Fatalf("AllowedIPs count = %d after migration, want 2: %v", len(tt.AllowedIPs), tt.AllowedIPs)
+	}
+	if tt.AllowedIPs[0] != "10.255.0.0/30" {
+		t.Errorf("AllowedIPs[0] = %q, want 10.255.0.0/30", tt.AllowedIPs[0])
+	}
+	if tt.AllowedIPs[1] != "172.20.0.20/32" {
+		t.Errorf("AllowedIPs[1] = %q, want 172.20.0.20/32", tt.AllowedIPs[1])
+	}
+}
+
+// TestMigrateLegacyTransportState_PartialMigration verifies that when two tunnels
+// exist — one with AllowedIPs and one without — only the empty one is migrated,
+// and the file is written exactly once.
+func TestMigrateLegacyTransportState_PartialMigration(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	writeMigrationState(t, configDir, NodeTransportState{
+		OverlayIP: "172.20.0.1",
+		Tunnels: []TunnelTransport{
+			{
+				Name:            "ep-a",
+				TransportIP:     "10.255.0.1",
+				PeerTransportIP: "10.255.0.2",
+				OverlayIP:       "172.20.0.10",
+				AllowedIPs:      []string{"10.255.0.0/30", "172.20.0.10/32"}, // populated
+			},
+			{
+				Name:            "ep-b",
+				TransportIP:     "10.255.0.5",
+				PeerTransportIP: "10.255.0.6",
+				OverlayIP:       "172.20.0.20",
+				AllowedIPs:      nil, // empty — should be migrated
+			},
+		},
+	})
+
+	logger := zerolog.Nop()
+	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
+	}
+
+	state, err := loadNodeTransportState(configDir)
+	if err != nil {
+		t.Fatalf("loadNodeTransportState: %v", err)
+	}
+
+	// ep-a must be unchanged.
+	if got := state.Tunnels[0].AllowedIPs; len(got) != 2 || got[0] != "10.255.0.0/30" {
+		t.Errorf("ep-a AllowedIPs = %v, want original [10.255.0.0/30, 172.20.0.10/32]", got)
+	}
+
+	// ep-b must have been migrated.
+	if got := state.Tunnels[1].AllowedIPs; len(got) != 2 {
+		t.Fatalf("ep-b AllowedIPs count = %d after migration, want 2: %v", len(got), got)
+	}
+	if state.Tunnels[1].AllowedIPs[0] != "10.255.0.4/30" {
+		t.Errorf("ep-b AllowedIPs[0] = %q, want 10.255.0.4/30", state.Tunnels[1].AllowedIPs[0])
+	}
+}
+
+// TestMigrateLegacyTransportState_EmptyTunnelsList verifies that an empty
+// tunnels list returns nil without writing the file.
+func TestMigrateLegacyTransportState_EmptyTunnelsList(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	// No transport.yml — LoadNodeTransportState returns zero value.
+
+	logger := zerolog.Nop()
+	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+		t.Fatalf("migrateLegacyTransportState returned error on empty list: %v", err)
+	}
+}
+
+// TestMigrateLegacyTransportState_NoPeerTransportIP verifies that a tunnel with
+// empty AllowedIPs but missing PeerTransportIP is NOT migrated (insufficient context).
+func TestMigrateLegacyTransportState_NoPeerTransportIP(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	writeMigrationState(t, configDir, NodeTransportState{
+		OverlayIP: "172.20.0.1",
+		Tunnels: []TunnelTransport{
+			{
+				Name:            "ep-noctx",
+				TransportIP:     "10.255.0.1",
+				PeerTransportIP: "", // empty — cannot derive subnet
+				OverlayIP:       "172.20.0.30",
+				AllowedIPs:      nil,
+			},
+		},
+	})
+
+	logger := zerolog.Nop()
+	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
+	}
+
+	state, err := loadNodeTransportState(configDir)
+	if err != nil {
+		t.Fatalf("loadNodeTransportState: %v", err)
+	}
+	if len(state.Tunnels[0].AllowedIPs) != 0 {
+		t.Errorf("AllowedIPs should be empty when PeerTransportIP is absent, got: %v", state.Tunnels[0].AllowedIPs)
+	}
+}
