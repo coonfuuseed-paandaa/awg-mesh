@@ -763,6 +763,9 @@ func (e *EndpointRunner) countIfacesLocked() int {
 // treat 0 as "fallback to topology base port + offset".
 // Implements grpcserver.PeerManager.
 func (e *EndpointRunner) GetListenPort(masterName string) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
 	iface := e.getIface(strings.TrimSpace(masterName))
 	if iface == nil {
 		return 0, nil

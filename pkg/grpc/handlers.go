@@ -514,6 +514,11 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 		if port, portErr := h.peerMgr.GetListenPort(masterName); portErr != nil {
 			h.logger.Warn().Err(portErr).Str("master", masterName).
 				Msg("AddPeer: could not retrieve listen port; returning 0")
+		} else if port <= 0 || port > 65535 {
+			h.logger.Warn().
+				Str("master", masterName).
+				Int("listen_port", port).
+				Msg("AddPeer: invalid listen port; returning 0")
 		} else {
 			listenPort = int32(port)
 		}
