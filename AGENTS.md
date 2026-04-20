@@ -108,7 +108,8 @@ applyPeerKeyUpdate device-handle drift).
 3. `bash tests/simulation/issue-92-rotation.sh` — MUST exit 0 with all R1-R11b PASS (includes R3a-R3g, R9 persistence gate, R10 route-get src assertions and endpoint↔endpoint ping matrix, R11 master AllowedIPs endpoints-range gate, R11b no-topology master persists /27)
 4. G3 unit tests green: `go test -run 'TestReadEndpointPublicKeyFormats|TestReadAdminPubkeyRawFormats' ./...`
 5. G7 unit tests green: `go test -run 'TestPortOffset|TestComputePeerEndpoint' ./...`
-6. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
+6. G14 wire gate green: `go test -run 'TestAddTunnelRequest_AllowedIpsWireRoundtrip' ./proto/...`
+7. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,

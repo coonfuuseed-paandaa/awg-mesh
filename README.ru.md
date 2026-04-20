@@ -67,6 +67,10 @@ graph TB
 
 ## Что нового
 
+### v1.12.9
+
+- **Исправление proto дескриптора** — `AddTunnelRequest.allowed_ips` (поле 13) присутствовало в Go-структуре и источнике `.proto`, но отсутствовало в `file_types_proto_rawDesc` — бинарном дескрипторе, который `google.golang.org/protobuf` использует как источник правды для wire marshal/unmarshal. `proto.Unmarshal` на master-сервере молча отбрасывал поле 13, возвращая `req.GetAllowedIps() == nil`, что заставляло `saveTransportState` откатываться к минимальному пути (без /27). Исправлен `file_types_proto_rawDesc` в `proto/types.pb.go`. Изменений прикладного кода нет. (local tracker #147 layer 4)
+
 ### v1.12.8
 
 - **AllowedIPs на master — источник правды на стороне admin** — master-демон больше не требует `--topology` для корректного сохранения фильтра `/27`. CLI теперь вычисляет и передаёт `AllowedIps` в каждом `AddTunnelRequest`; master сохраняет список verbatim в `transport.yml` и восстанавливает его после перезапуска. Исправляет производственный сбой (issue `#147`, уровень 3), при котором мастера без `--topology` теряли `/27` после каждого reconcile или перезапуска.

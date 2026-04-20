@@ -2470,7 +2470,7 @@ const file_types_proto_rawDesc = "" +
 	"\x12RotateTokenRequest\x12$\n" +
 	"\x0enew_token_hash\x18\x01 \x01(\tR\fnewTokenHash\"/\n" +
 	"\x13RotateTokenResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xc3\x03\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xe4\x03\n" +
 	"\x10AddTunnelRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12#\n" +
 	"\rendpoint_host\x18\x02 \x01(\tR\fendpointHost\x12\x1d\n" +
@@ -2486,7 +2486,8 @@ const file_types_proto_rawDesc = "" +
 	"\x10transport_subnet\x18\n" +
 	" \x01(\tR\x0ftransportSubnet\x12.\n" +
 	"\x13master_transport_ip\x18\v \x01(\tR\x11masterTransportIp\x122\n" +
-	"\x15endpoint_transport_ip\x18\f \x01(\tR\x13endpointTransportIp\"\xa1\x01\n" +
+	"\x15endpoint_transport_ip\x18\f \x01(\tR\x13endpointTransportIp\x12\x1f\n" +
+	"\vallowed_ips\x18\r \x03(\tR\nallowedIps\"\xa1\x01\n" +
 	"\x11AddTunnelResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
 	"\x11master_public_key\x18\x02 \x01(\fR\x0fmasterPublicKey\x12%\n" +
