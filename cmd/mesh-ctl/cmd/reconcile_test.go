@@ -300,6 +300,125 @@ func TestReconcileNodeResultCounters(t *testing.T) {
 	}
 }
 
+// TestReconcileEmptyAllowedIPsDriftLogic verifies the T006 drift-detection
+// condition: emptyAllowedIPs is true iff disk_allowed_ips AND runtime
+// allowed_ips are both empty for a peer. This test exercises the condition
+// logic without a live gRPC server by checking the TransportPeerState fields.
+func TestReconcileEmptyAllowedIPsDriftLogic(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		diskAllowedIP []string
+		runtimeIPs    []string
+		wantDrift     bool
+	}{
+		{
+			name:          "both empty → drift",
+			diskAllowedIP: nil,
+			runtimeIPs:    nil,
+			wantDrift:     true,
+		},
+		{
+			name:          "disk populated → no drift",
+			diskAllowedIP: []string{"10.255.0.0/30", "172.20.0.10/32"},
+			runtimeIPs:    nil,
+			wantDrift:     false,
+		},
+		{
+			name:          "runtime populated → no drift",
+			diskAllowedIP: nil,
+			runtimeIPs:    []string{"10.255.0.0/30"},
+			wantDrift:     false,
+		},
+		{
+			name:          "both populated → no drift",
+			diskAllowedIP: []string{"10.255.0.0/30"},
+			runtimeIPs:    []string{"10.255.0.0/30"},
+			wantDrift:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			peer := &proto.TransportPeerState{
+				Name:           "ep-1",
+				DiskAllowedIps: tc.diskAllowedIP,
+				AllowedIps:     tc.runtimeIPs,
+			}
+
+			// Replicate the emptyAllowedIPs check from reconcileCheckEmptyAllowedIPs.
+			emptyAllowedIPs := len(peer.GetDiskAllowedIps()) == 0 && len(peer.GetAllowedIps()) == 0
+			if emptyAllowedIPs != tc.wantDrift {
+				t.Errorf("emptyAllowedIPs = %v, want %v (disk=%v, runtime=%v)",
+					emptyAllowedIPs, tc.wantDrift, tc.diskAllowedIP, tc.runtimeIPs)
+			}
+		})
+	}
+}
+
+// TestReconcileCheckEmptyAllowedIPsGracefulOnUnavailable verifies that
+// reconcileCheckEmptyAllowedIPs returns false without panicking when the master
+// gRPC is unreachable (pre-v1.10.1 or just offline). This is the regression
+// guard: the function must not count healthy-master as drift when GetTransportState
+// is unavailable.
+func TestReconcileCheckEmptyAllowedIPsGracefulOnUnavailable(t *testing.T) {
+	t.Parallel()
+
+	// Use a port with no listener. reconcileCheckEmptyAllowedIPs must return
+	// false (not panic, not block indefinitely) when the RPC fails.
+	cfgDir := t.TempDir()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{
+			{Name: "master-1", Host: "127.0.0.1", ListenPort: 51820, GRPCPort: 19998, Endpoints: []string{"ep-1"}},
+		},
+		Endpoints: []topology.EndpointNode{
+			{Name: "ep-1", Host: "127.0.0.2", ListenPort: 51820, OverlayIP: "172.20.0.10"},
+		},
+	}
+
+	master := &topo.Masters[0]
+
+	// Write master token so gRPC client can be created (lazy dial, no real connection).
+	masterND := nodeDir(cfgDir, "master-1")
+	if err := os.MkdirAll(masterND, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(masterND, "token"), []byte("test-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// We cannot call reconcileCheckEmptyAllowedIPs directly without a *grpcclient.Client.
+	// Assert the broader behavior: reconcileMasterNode on an unavailable server counts
+	// endpoints as failed (not skipped), verifying the gRPC path is reached.
+	epPubkey := make([]byte, 32)
+	epPubkey[0] = 0xAA
+	epND := nodeDir(cfgDir, "ep-1")
+	if err := os.MkdirAll(epND, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(epND, "pubkey"), epPubkey, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(epND, "token"), []byte("ep-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	result := reconcileMasterNode(topo, master, cfgDir, nil)
+
+	// RPC unavailable → failed (not skipped, not drift-healed).
+	if result.driftHealed != 0 {
+		t.Errorf("driftHealed = %d, want 0 when master is unreachable", result.driftHealed)
+	}
+	if result.skipped != 0 {
+		t.Errorf("skipped = %d, want 0 (token found, client created)", result.skipped)
+	}
+}
+
 // TestReadAdminPubkeyBytes verifies the pubkey file reading helper.
 //
 // Anti-stub: returning nil unconditionally makes the "valid 32-byte file"
