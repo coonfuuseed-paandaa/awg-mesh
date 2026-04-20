@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.5 — 2026-04-20
+
+### Fixes
+- **Root fix for endpoint↔endpoint overlay (issue `#147`):** `ConfigureTransport`
+  two-loop pattern was silently overwriting the v1.12.4 `addOverlayRoutesWithSrc`
+  fix — Loop 1 re-installed /27 and /25 routes without src hint immediately after
+  AddPeer, Loop 2 re-installed only /32 with src. Fix: merged loops into single
+  pass that always installs src hint when overlay IP is assigned.
+
+### Changes
+- `ConfigureTransport` route-install logic simplified from two-loop to single-loop
+  (addresses the comment at former line 620 warning about src loss on double-install).
+- `addOverlayRoutesWithSrc` helper (v1.12.4) retained at `createMasterInterface`
+  eager path for first-boot visibility before the first AddPeer-driven
+  `ConfigureTransport` pass.
+
+Footnote: sim parity audit confirmed `deploy/Dockerfile.node` and
+`tests/simulation/issue-92-rotation.sh` already use the production
+`awg-mesh-node:local` image backed by the userspace amneziawg-go stack, so no
+driver-switch change was required for v1.12.5.
+
 ## v1.12.4 — 2026-04-20
 
 ### Fixes
@@ -1125,7 +1146,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.4...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.5...HEAD
+[1.12.5]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.4...v1.12.5
 [1.12.4]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.3...v1.12.4
 [1.12.3]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.2...v1.12.3
 [1.12.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...v1.12.2

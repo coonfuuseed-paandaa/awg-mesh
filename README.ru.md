@@ -549,10 +549,10 @@ awg-mesh работает с реверс-прокси Traefik по гибрид
 > `mesh-ctl master init` или `mesh-ctl reconcile`, чтобы каждый master сохранил корректный
 > per-master порт в `peer_endpoint`. Это закрывает проблему потери handshake у второго master (issue `#144`).
 >
-> **Примечание v1.12.4:** В multi-master endpoint-топологиях per-master интерфейсы endpoint теперь
-> ставят `src <endpointOverlayIP>` не только на `/32` host routes, но и на общие overlay-маршруты
-> `/27` и `/25`. Это устраняет потерю endpoint↔endpoint overlay-трафика, когда ядро выбирало
-> transport `/30` адрес как source на этих маршрутах (issue `#147`).
+> **Примечание v1.12.4:** Первая мера для issue `#147` добавила `src <endpointOverlayIP>` на eager
+> установку per-master overlay-маршрутов, но `ConfigureTransport` всё ещё сразу после `AddPeer`
+> переустанавливал маршруты `/27` и `/25` без src. Окончательный root fix выходит в **v1.12.5**:
+> двухпроходная установка маршрутов заменена на один корректный проход с src hint.
 
 ```yaml
 services:
