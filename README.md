@@ -726,6 +726,11 @@ entryPoints:
 > ```
 > With `network_mode: host` (the default), all host ports are accessible automatically and no
 > change is needed. Single-master endpoints are unaffected.
+>
+> **v1.12.3 note:** Upgrade endpoint containers before master containers in multi-master
+> topologies. After the rollout completes, run `mesh-ctl master init` or `mesh-ctl reconcile`
+> once so each master persists the correct per-master `peer_endpoint` port. This closes the
+> second-master handshake drop tracked in local tracker #144.
 
 ### Systemd integration (optional)
 

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.3 — 2026-04-20
+
+### What's New
+- **Port-assignment contract fix (Pattern X):** `AddPeerResponse` now carries
+  `endpoint_listen_port`; master CLI persists per-master `peer_endpoint: <host>:<port>`
+  in transport.yml. Resolves silent handshake drops for the second (and subsequent)
+  masters in multi-master topologies (local tracker #144).
+- **Self-heal migration on boot:** Master nodes now auto-heal `transport.yml` entries
+  with empty `allowed_ips` on first boot after upgrade, logging `transport_state_migrated`.
+
+### Changes
+- `reconcile` now treats empty `allowed_ips` as a drift condition and forces resync
+  even when pubkeys match.
+
+### Test Gates Added
+- G1: Persistence round-trip sim gate (R9 block in issue-92-rotation.sh)
+- G3: Pubkey format-contract unit tests (8 table rows per function)
+- G7: Port-assignment contract tests (unit + sim)
+
+### Upgrade Notes
+- Multi-master topologies: upgrade endpoint containers before master containers.
+  After all upgrades, run `mesh-ctl master init` or `mesh-ctl reconcile` to persist
+  correct per-master ports. Mixed-version clusters (pre-v1.12.3 endpoints + v1.12.3
+  masters) will still experience the port-mismatch bug for the second master until
+  endpoints are upgraded.
+
 ## [1.12.2] — 2026-04-19
 
 ### Fixed — endpoint side AllowedIPs dedup broke multi-master routing (local tracker #134)
