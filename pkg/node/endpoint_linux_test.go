@@ -3,7 +3,9 @@
 package node
 
 import (
+	"bytes"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
@@ -100,6 +102,158 @@ func TestEndpointMinimalAllowedIPs_InvalidOverlay(t *testing.T) {
 	_, err := buildEndpointPeerAllowedIPs("10.255.0.0/30", "not-an-ip")
 	if err == nil {
 		t.Fatal("expected error for invalid overlay IP, got nil")
+	}
+}
+
+type configureTransportRouteCall struct {
+	iface string
+	cidr  string
+	src   string
+}
+
+func TestConfigureTransport_InstallsOverlayRangesWithSrc(t *testing.T) {
+	originalAddInterfaceAddress := endpointAddInterfaceAddress
+	originalRouteReplaceLink := endpointRouteReplaceLink
+	originalRouteReplaceLinkWithSrc := endpointRouteReplaceLinkWithSrc
+	t.Cleanup(func() {
+		endpointAddInterfaceAddress = originalAddInterfaceAddress
+		endpointRouteReplaceLink = originalRouteReplaceLink
+		endpointRouteReplaceLinkWithSrc = originalRouteReplaceLinkWithSrc
+	})
+
+	endpointAddInterfaceAddress = func(_ string, _ string) error { return nil }
+
+	testCases := []struct {
+		name                string
+		overlayIP           string
+		allowedIPs          []string
+		wantPlainCalls      []configureTransportRouteCall
+		wantWithSrcCalls    []configureTransportRouteCall
+		wantWarningFragment string
+	}{
+		{
+			name:      "overlay IP set installs all non-skipped CIDRs with src",
+			overlayIP: "172.20.70.35",
+			allowedIPs: []string{
+				"10.255.0.20/30",
+				"172.20.70.2/32",
+				"172.20.70.0/27",
+				"172.20.70.128/25",
+			},
+			wantWithSrcCalls: []configureTransportRouteCall{
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.2/32", src: "172.20.70.35"},
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.0/27", src: "172.20.70.35"},
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.128/25", src: "172.20.70.35"},
+			},
+		},
+		{
+			name:      "missing overlay IP falls back to plain route helper",
+			overlayIP: "",
+			allowedIPs: []string{
+				"10.255.0.20/30",
+				"172.20.70.2/32",
+				"172.20.70.0/27",
+				"172.20.70.128/25",
+			},
+			wantPlainCalls: []configureTransportRouteCall{
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.2/32"},
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.0/27"},
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.128/25"},
+			},
+		},
+		{
+			name:       "transport subnet only is skipped entirely",
+			overlayIP:  "172.20.70.35",
+			allowedIPs: []string{"10.255.0.20/30"},
+		},
+		{
+			name:      "invalid CIDR logs warning and keeps valid routes",
+			overlayIP: "172.20.70.35",
+			allowedIPs: []string{
+				"172.20.70.2/32",
+				"bad-cidr",
+				"172.20.70.0/27",
+			},
+			wantWithSrcCalls: []configureTransportRouteCall{
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.2/32", src: "172.20.70.35"},
+				{iface: endpointLegacyIfaceName, cidr: "172.20.70.0/27", src: "172.20.70.35"},
+			},
+			wantWarningFragment: "skip invalid allowed_ip route",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var logBuffer bytes.Buffer
+			plainCalls := make([]configureTransportRouteCall, 0)
+			withSrcCalls := make([]configureTransportRouteCall, 0)
+
+			endpointRouteReplaceLink = func(dest *net.IPNet, dev string) error {
+				plainCalls = append(plainCalls, configureTransportRouteCall{
+					iface: dev,
+					cidr:  dest.String(),
+				})
+				return nil
+			}
+			endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, dev string, src net.IP) error {
+				withSrcCalls = append(withSrcCalls, configureTransportRouteCall{
+					iface: dev,
+					cidr:  dest.String(),
+					src:   src.String(),
+				})
+				return nil
+			}
+
+			runner := &EndpointRunner{
+				node: &Node{
+					config: NodeConfig{OverlayIP: tc.overlayIP},
+					logger: zerolog.New(&logBuffer),
+				},
+			}
+
+			err := runner.ConfigureTransport(
+				"abc",
+				"10.255.0.22",
+				"10.255.0.21",
+				tc.allowedIPs,
+				"",
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("ConfigureTransport returned error: %v", err)
+			}
+
+			if len(plainCalls) != len(tc.wantPlainCalls) {
+				t.Fatalf("plain route call count = %d, want %d; calls=%v", len(plainCalls), len(tc.wantPlainCalls), plainCalls)
+			}
+			for i := range tc.wantPlainCalls {
+				if plainCalls[i] != tc.wantPlainCalls[i] {
+					t.Fatalf("plain route call[%d] = %+v, want %+v", i, plainCalls[i], tc.wantPlainCalls[i])
+				}
+			}
+
+			if len(withSrcCalls) != len(tc.wantWithSrcCalls) {
+				t.Fatalf("src-hinted route call count = %d, want %d; calls=%v", len(withSrcCalls), len(tc.wantWithSrcCalls), withSrcCalls)
+			}
+			for i := range tc.wantWithSrcCalls {
+				if withSrcCalls[i] != tc.wantWithSrcCalls[i] {
+					t.Fatalf("src-hinted route call[%d] = %+v, want %+v", i, withSrcCalls[i], tc.wantWithSrcCalls[i])
+				}
+			}
+
+			logOutput := logBuffer.String()
+			if tc.wantWarningFragment == "" {
+				if strings.Contains(logOutput, "skip invalid allowed_ip route") {
+					t.Fatalf("unexpected warning log: %s", logOutput)
+				}
+				return
+			}
+
+			if !strings.Contains(logOutput, tc.wantWarningFragment) {
+				t.Fatalf("warning log missing %q: %s", tc.wantWarningFragment, logOutput)
+			}
+		})
 	}
 }
 
