@@ -67,6 +67,11 @@ graph TB
 
 ## Что нового
 
+### v1.12.7
+
+- **Master per-tunnel AllowedIPs expansion** — master-side endpoint peers now carry the topology endpoints range in addition to the transport `/30` and endpoint overlay `/32`. This fixes cross-endpoint forwarding through a master when WireGuard reverse-path validation checks the forwarded packet's source overlay IP.
+- **Operational repair path updated** — `mesh-ctl master reload` and `mesh-ctl reconcile` now refresh master-side `allowed_ips`, so upgraded clusters converge without requiring tunnel recreation.
+
 ### v1.8.0
 
 - **Закрытие находок внутреннего код-ревью** — 5 issues (#20, #21, #23, #24, #25) без новых runtime-зависимостей. Корректность, безопасность, наблюдаемость.

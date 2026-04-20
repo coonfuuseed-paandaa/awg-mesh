@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.7 — 2026-04-20
+
+### Fixes
+- **Master cross-endpoint forwarding restored (issue `#147`):** master-side per-tunnel `AllowedIPs` now include the topology endpoints range (resolved via the existing `overlay.ranges[].name == "endpoints"` convention), so forwarded endpoint-to-endpoint packets pass WireGuard reverse-path validation instead of being dropped on the destination tunnel.
+- **Reload and reconcile now repair existing masters:** `mesh-ctl master reload` and `mesh-ctl reconcile` actively push refreshed master-side `allowed_ips`, and same-key `UpdateTunnelPeer` calls no longer skip a requested AllowedIPs refresh.
+
+### Test Gates Added
+- G10: `TestComputeMasterPeerAllowedIPs_IncludesEndpointsRange`
+- G11: R11 in `tests/simulation/issue-92-rotation.sh` verifies cross-endpoint ping matrix plus master inspect output for the endpoints-range CIDR
+
 ## v1.12.6 — 2026-04-20
 
 ### Fixes (test + docs polish)
