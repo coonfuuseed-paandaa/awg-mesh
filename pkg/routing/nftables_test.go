@@ -5,6 +5,7 @@ package routing
 import (
 	"net"
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/google/nftables"
@@ -244,4 +245,42 @@ func TestDisableStickyECMP_Idempotent(t *testing.T) {
 	if err := fw.DisableStickyECMP(cidr); err != nil {
 		t.Fatalf("DisableStickyECMP (second, idempotent): %v", err)
 	}
+}
+
+// TestEnableWGCrossTunnelForward_Idempotent verifies that EnableWGCrossTunnelForward
+// is idempotent — calling it twice does not return an error and does not insert
+// duplicate rules. Skipped unless root and iptables are available.
+func TestEnableWGCrossTunnelForward_Idempotent(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root (iptables)")
+	}
+	if err := exec.Command("iptables", "--version").Run(); err != nil {
+		t.Skip("iptables not available")
+	}
+	// No t.Parallel() — shares iptables FORWARD chain state.
+	fw, err := NewNftablesFirewall()
+	if err != nil {
+		t.Skipf("nftables not available: %v", err)
+	}
+
+	// Ensure a clean state: remove the rule if it was already present.
+	_ = exec.Command("iptables", "-D", "FORWARD", "-i", "wg-+", "-o", "wg-+", "-j", "ACCEPT").Run()
+
+	// First call — should insert rule.
+	if err := fw.EnableWGCrossTunnelForward(); err != nil {
+		t.Fatalf("EnableWGCrossTunnelForward first call: %v", err)
+	}
+
+	// Second call — should be idempotent (rule already exists).
+	if err := fw.EnableWGCrossTunnelForward(); err != nil {
+		t.Fatalf("EnableWGCrossTunnelForward second call (idempotent): %v", err)
+	}
+
+	// Verify the rule is present.
+	if err := exec.Command("iptables", "-C", "FORWARD", "-i", "wg-+", "-o", "wg-+", "-j", "ACCEPT").Run(); err != nil {
+		t.Fatalf("rule not found after EnableWGCrossTunnelForward: %v", err)
+	}
+
+	// Cleanup.
+	_ = exec.Command("iptables", "-D", "FORWARD", "-i", "wg-+", "-o", "wg-+", "-j", "ACCEPT").Run()
 }

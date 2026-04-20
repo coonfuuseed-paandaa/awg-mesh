@@ -165,6 +165,9 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	if err := m.setupExitMode(); err != nil {
 		m.node.logger.Warn().Err(err).Msg("setup master exit mode failed (non-fatal)")
 	}
+	if err := m.enableWGCrossTunnelForward(); err != nil {
+		m.node.logger.Warn().Err(err).Msg("master: failed to enable wg-+ cross-tunnel FORWARD ACCEPT (non-fatal); endpoint↔endpoint overlay may be dropped on hosts with DROP FORWARD policy")
+	}
 
 	hcCfg := HealthConfig{
 		Interval:         defaultHealthInterval,

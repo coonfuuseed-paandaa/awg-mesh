@@ -199,6 +199,8 @@ func (f *mockFirewall) EnableStickyECMP(cidr string) error {
 	return nil
 }
 
+func (f *mockFirewall) EnableWGCrossTunnelForward() error { return nil }
+
 func (f *mockFirewall) hasEnableStickyFor(cidr string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
