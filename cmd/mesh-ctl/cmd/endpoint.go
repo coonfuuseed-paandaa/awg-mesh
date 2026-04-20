@@ -297,6 +297,11 @@ func newEndpointInitCommand() *cobra.Command {
 						continue
 					}
 
+					masterAllowedIPs, maipErr := topology.BuildAllowedIPsForMasterPeer(topo, ep.Name, ep.OverlayIP, allocation.Subnet.String())
+					if maipErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: build master allowed_ips for endpoint %q / master %q: %v\n", ep.Name, master.Name, maipErr)
+						masterAllowedIPs = []string{allocation.Subnet.String(), ep.OverlayIP + "/32"}
+					}
 					masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
 					addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
 						Name:                ep.Name,
@@ -308,6 +313,7 @@ func newEndpointInitCommand() *cobra.Command {
 						TransportSubnet:     allocation.Subnet.String(),
 						MasterTransportIp:   allocation.MasterIP.String(),
 						EndpointTransportIp: allocation.EndpointIP.String(),
+						AllowedIps:          masterAllowedIPs,
 					})
 					masterCancel()
 					if closeErr := masterClient.Close(); closeErr != nil {
@@ -360,11 +366,15 @@ func newEndpointInitCommand() *cobra.Command {
 
 						masterCtx2, masterCancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 						var updateErr error
+						// Use masterAllowedIPs (master-side view: transport/30 + endpoint_overlay/32 +
+						// endpoints/27) — NOT allowedIPs (endpoint-side view: transport/30 +
+						// master_overlay/32). This is the admin source of truth for the master tunnel;
+						// passing the wrong set would defeat the v1.12.8 fix for issue #147 layer 3.
 						updateResp, updateErr = masterClient2.Agent().UpdateTunnelPeer(masterCtx2, &proto.UpdateTunnelPeerRequest{
 							Name:          ep.Name,
 							PeerPublicKey: resp.NodePublicKey,
 							BalancerIp:    balancerIP,
-							AllowedIps:    allowedIPs,
+							AllowedIps:    masterAllowedIPs,
 						})
 						masterCancel2()
 						if closeErr := masterClient2.Close(); closeErr != nil {

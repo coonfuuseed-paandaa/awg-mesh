@@ -67,6 +67,10 @@ graph TB
 
 ## What's New
 
+### v1.12.8
+
+- **Master AllowedIPs admin source of truth** — master daemons no longer need `--topology` to persist the correct `/27` forwarding filter. The CLI now computes and passes `AllowedIps` in every `AddTunnelRequest`; the master stores it verbatim in `transport.yml` and restores it across restarts. Fixes the production failure (issue `#147` layer 3) where masters without `--topology` silently dropped the `/27` after each reconcile or restart.
+
 ### v1.12.7
 
 - **Master per-tunnel AllowedIPs expansion** — master-side endpoint peers now carry the topology endpoints range in addition to the transport `/30` and endpoint overlay `/32`. This fixes cross-endpoint forwarding through a master when WireGuard reverse-path validation checks the forwarded packet's source overlay IP.

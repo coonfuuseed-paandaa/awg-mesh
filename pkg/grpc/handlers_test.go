@@ -56,6 +56,7 @@ type addTunnelCall struct {
 	endpointTransportIP string
 	weight              int
 	peerKey             wg.Key
+	allowedIPs          []string
 }
 
 type updateTunnelPeerCall struct {
@@ -75,7 +76,11 @@ func (m *testTunnelManager) AddTunnel(
 	endpointTransportIP string,
 	weight int,
 	peerPublicKey wg.Key,
+	allowedIPs []string,
 ) error {
+	// Defensive copy so assertions are not sensitive to post-call mutations
+	// of the caller's slice (CodeRabbit nitpick PR #79).
+	allowedIPsCopy := append([]string(nil), allowedIPs...)
 	m.addTunnelCalls = append(m.addTunnelCalls, addTunnelCall{
 		name:                name,
 		host:                endpointHost,
@@ -86,6 +91,7 @@ func (m *testTunnelManager) AddTunnel(
 		endpointTransportIP: endpointTransportIP,
 		weight:              weight,
 		peerKey:             peerPublicKey,
+		allowedIPs:          allowedIPsCopy,
 	})
 	return m.addErr
 }
@@ -1272,6 +1278,48 @@ func TestAddTunnelAllowsEmptyEndpointHost(t *testing.T) {
 	}
 	if tunnelMgr.addTunnelCalls[0].host != "" {
 		t.Fatalf("expected empty endpoint host, got %q", tunnelMgr.addTunnelCalls[0].host)
+	}
+}
+
+// TestAddTunnelPassesThroughAllowedIPs verifies that AddTunnel forwards
+// req.AllowedIps verbatim to the TunnelManager. This pins the admin-source-of-truth
+// contract introduced in v1.12.8 (issue #147 layer 3): the handler must not
+// silently drop or recompute the AllowedIPs field.
+func TestAddTunnelPassesThroughAllowedIPs(t *testing.T) {
+	t.Parallel()
+
+	tunnelMgr := &testTunnelManager{}
+	handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), tunnelMgr, nil, nil, nil, nil, nil, nil, nil)
+
+	peerKey := make([]byte, 32)
+	for idx := range peerKey {
+		peerKey[idx] = byte(idx + 1)
+	}
+	wantAllowedIPs := []string{"10.255.0.24/30", "172.20.70.34/32", "172.20.70.32/27"}
+
+	resp, err := handler.AddTunnel(context.Background(), &proto.AddTunnelRequest{
+		Name:          "ep-pl-01",
+		PeerPublicKey: peerKey,
+		Weight:        1,
+		AllowedIps:    wantAllowedIPs,
+	})
+	if err != nil {
+		t.Fatalf("AddTunnel returned error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("expected success, got %#v", resp)
+	}
+	if len(tunnelMgr.addTunnelCalls) != 1 {
+		t.Fatalf("expected one AddTunnel call, got %d", len(tunnelMgr.addTunnelCalls))
+	}
+	got := tunnelMgr.addTunnelCalls[0].allowedIPs
+	if len(got) != len(wantAllowedIPs) {
+		t.Fatalf("allowedIPs length = %d, want %d; got %v", len(got), len(wantAllowedIPs), got)
+	}
+	for i, cidr := range wantAllowedIPs {
+		if got[i] != cidr {
+			t.Errorf("allowedIPs[%d] = %q, want %q", i, got[i], cidr)
+		}
 	}
 }
 

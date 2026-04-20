@@ -1354,6 +1354,119 @@ for master in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
 done
 
 # ---------------------------------------------------------------------------
+# R11b (G12): master without --topology persists admin AllowedIPs (/27)
+# Reproduces the production deployment where master compose omits TOPOLOGY_PATH.
+# Fix: CLI callers (master init/endpoint init/reconcile) pass AllowedIps in
+# AddTunnelRequest; saveTransportState persists tunnel.AllowedIPs verbatim
+# when non-empty, bypassing the nil-topology recompute path.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R11b] G12: master without --topology persists admin AllowedIPs (issue #147 layer 3)..."
+
+R11B_MASTER="r11b-mst"
+R11B_EP="ep-r11b"
+R11B_CTR="${COMPOSE_PROJECT}-${R11B_MASTER}"
+R11B_GRPC_HOST_PORT=59290
+R11B_GRPC_CTR_PORT=9090
+R11B_CTL_DIR=$(mktemp -d /tmp/r11b-ctl-XXXXXX)
+R11B_TOPO=$(mktemp /tmp/r11b-topo-XXXXXX.yml)
+
+# Write a minimal topology for the CLI side only (master daemon does NOT get this).
+cat > "${R11B_TOPO}" <<R11B_TOPO_EOF
+masters:
+  - name: ${R11B_MASTER}
+    host: 127.0.0.1
+    grpc_port: ${R11B_GRPC_HOST_PORT}
+    overlay_ip: 172.21.92.2
+
+endpoints:
+  - name: ${R11B_EP}
+    host: 127.0.0.1
+    overlay_ip: 172.21.92.34
+    listen_port: 51820
+    grpc_port: 59291
+
+overlay:
+  ranges:
+    - name: masters
+      cidr: 172.21.92.0/27
+    - name: endpoints
+      cidr: 172.21.92.32/27
+
+transport:
+  pool: 10.93.0.0/16
+  prefix_length: 30
+R11B_TOPO_EOF
+
+# Prepare master (generates token hash).
+R11B_PREP_OUT=$(${MESHCTL_BIN} --topology "${R11B_TOPO}" --config-dir "${R11B_CTL_DIR}" \
+    master prepare "${R11B_MASTER}" 2>&1) && R11B_PREP_RC=0 || R11B_PREP_RC=$?
+if [[ "${R11B_PREP_RC}" -ne 0 ]]; then
+    fail "R11b: master prepare ${R11B_MASTER} failed (rc=${R11B_PREP_RC}): ${R11B_PREP_OUT}"
+else
+    R11B_TOKEN=$(cat "${R11B_CTL_DIR}/nodes/${R11B_MASTER}/mesh.token" 2>/dev/null || true)
+    if [[ -z "${R11B_TOKEN}" ]]; then
+        fail "R11b: master prepare produced no token"
+    else
+        R11B_TOKEN_ESC="${R11B_TOKEN//\$/\$\$}"
+
+        # Prepare endpoint too (mesh-ctl master init needs the endpoint token and pubkey).
+        ${MESHCTL_BIN} --topology "${R11B_TOPO}" --config-dir "${R11B_CTL_DIR}" \
+            endpoint prepare "${R11B_EP}" > /dev/null 2>&1 || true
+
+        # Start master WITHOUT --topology (prod scenario).
+        docker run -d --rm \
+            --name "${R11B_CTR}" \
+            --privileged \
+            -p "${R11B_GRPC_HOST_PORT}:${R11B_GRPC_CTR_PORT}" \
+            -e "MESH_TOKEN_HASH=${R11B_TOKEN_ESC}" \
+            "${NODE_IMAGE}" \
+            sh -c "[ -f /config/mesh.token ] || printf '%s' \"\${MESH_TOKEN_HASH}\" > /config/mesh.token; \
+                   exec /usr/local/bin/awg-mesh-node \
+                   --mode master --name ${R11B_MASTER} \
+                   --overlay-ip 172.21.92.2 --listen-port 51820" > /dev/null 2>&1
+
+        # Wait for gRPC ready (up to 30s).
+        R11B_READY=0
+        for i in $(seq 1 30); do
+            if docker logs "${R11B_CTR}" 2>&1 | grep -q "gRPC server listening"; then
+                R11B_READY=1
+                break
+            fi
+            sleep 1
+        done
+
+        if [[ "${R11B_READY}" -eq 0 ]]; then
+            fail "R11b: master without --topology did not become gRPC ready within 30s"
+            docker logs "${R11B_CTR}" >&2 || true
+        else
+            # Run mesh-ctl master init against the no-topology master.
+            R11B_INIT_OUT=$(${MESHCTL_BIN} \
+                --topology "${R11B_TOPO}" \
+                --config-dir "${R11B_CTL_DIR}" \
+                master init "${R11B_MASTER}" 2>&1) && R11B_INIT_RC=0 || R11B_INIT_RC=$?
+
+            if [[ "${R11B_INIT_RC}" -ne 0 ]]; then
+                fail "R11b: master init ${R11B_MASTER} failed (rc=${R11B_INIT_RC}): ${R11B_INIT_OUT}"
+            else
+                # Assert transport.yml inside container contains the /27 from admin AllowedIPs.
+                if docker exec "${R11B_CTR}" sh -c "grep -F '172.21.92.32/27' /config/transport.yml" > /dev/null 2>&1; then
+                    pass "R11b: master without --topology persists /27 in transport.yml (admin AllowedIPs verbatim)"
+                else
+                    R11B_DISK=$(docker exec "${R11B_CTR}" cat /config/transport.yml 2>/dev/null || echo "<unreadable>")
+                    fail "R11b: transport.yml missing 172.21.92.32/27 — contents: ${R11B_DISK}"
+                fi
+            fi
+        fi
+
+        docker stop "${R11B_CTR}" > /dev/null 2>&1 || true
+    fi
+fi
+
+rm -rf "${R11B_CTL_DIR}"
+rm -f "${R11B_TOPO}"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

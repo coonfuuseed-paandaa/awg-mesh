@@ -8,7 +8,7 @@ import (
 
 // TunnelManager handles tunnel lifecycle operations.
 type TunnelManager interface {
-	AddTunnel(name, endpointHost, overlayIP, balancerIP, transportSubnet, masterTransportIP, endpointTransportIP string, weight int, peerPublicKey wg.Key) error
+	AddTunnel(name, endpointHost, overlayIP, balancerIP, transportSubnet, masterTransportIP, endpointTransportIP string, weight int, peerPublicKey wg.Key, allowedIPs []string) error
 	RemoveTunnel(name string) error
 	ListTunnels() []TunnelInfo
 	GetParams(tunnelName string) (wg.Config, error)
