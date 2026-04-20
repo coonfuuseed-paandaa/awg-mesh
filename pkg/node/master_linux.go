@@ -10,6 +10,7 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
