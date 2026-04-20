@@ -23,14 +23,23 @@ func TestEndpointConfigureTransportInstallsRoutesFromAllowedIPs(t *testing.T) {
 	})
 
 	linkCalls := make([]string, 0)
-	srcCalls := make([]string, 0)
+	srcCalls := make([]struct {
+		dest string
+		src  string
+	}, 0)
 	endpointAddInterfaceAddress = func(_ string, _ string) error { return nil }
 	endpointRouteReplaceLink = func(dest *net.IPNet, _ string) error {
 		linkCalls = append(linkCalls, dest.String())
 		return nil
 	}
-	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, _ net.IP) error {
-		srcCalls = append(srcCalls, dest.String())
+	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, src net.IP) error {
+		srcCalls = append(srcCalls, struct {
+			dest string
+			src  string
+		}{
+			dest: dest.String(),
+			src:  src.String(),
+		})
 		return nil
 	}
 
@@ -58,7 +67,13 @@ func TestEndpointConfigureTransportInstallsRoutesFromAllowedIPs(t *testing.T) {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
 	}
 
-	want := []string{"10.44.0.0/24", "10.66.0.0/27"}
+	want := []struct {
+		dest string
+		src  string
+	}{
+		{dest: "10.44.0.0/24", src: "10.44.0.9"},
+		{dest: "10.66.0.0/27", src: "10.44.0.9"},
+	}
 	if len(linkCalls) != 0 {
 		t.Errorf("expected no plain RouteReplaceLink calls when overlayIP is set, got %v", linkCalls)
 	}
@@ -78,14 +93,23 @@ func TestEndpointConfigureTransportSkipsOnlyOwnHostRoute(t *testing.T) {
 	})
 
 	linkCalls := make([]string, 0)
-	srcCalls := make([]string, 0)
+	srcCalls := make([]struct {
+		dest string
+		src  string
+	}, 0)
 	endpointAddInterfaceAddress = func(_ string, _ string) error { return nil }
 	endpointRouteReplaceLink = func(dest *net.IPNet, _ string) error {
 		linkCalls = append(linkCalls, dest.String())
 		return nil
 	}
-	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, _ net.IP) error {
-		srcCalls = append(srcCalls, dest.String())
+	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, src net.IP) error {
+		srcCalls = append(srcCalls, struct {
+			dest string
+			src  string
+		}{
+			dest: dest.String(),
+			src:  src.String(),
+		})
 		return nil
 	}
 
@@ -111,7 +135,12 @@ func TestEndpointConfigureTransportSkipsOnlyOwnHostRoute(t *testing.T) {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
 	}
 
-	want := []string{"10.50.0.0/24"}
+	want := []struct {
+		dest string
+		src  string
+	}{
+		{dest: "10.50.0.0/24", src: "10.50.0.10"},
+	}
 	if len(linkCalls) != 0 {
 		t.Errorf("expected no plain RouteReplaceLink calls when overlayIP is set, got %v", linkCalls)
 	}
@@ -130,17 +159,26 @@ func TestEndpointConfigureTransportInstallsNonSelfHostRoute(t *testing.T) {
 		endpointRouteReplaceLinkWithSrc = originalRouteReplaceLinkWithSrc
 	})
 
-	// Non-/32 routes go through endpointRouteReplaceLink.
-	// /32 routes (non-self) go through endpointRouteReplaceLinkWithSrc (src-hint path).
+	// With overlayIP set, all routes are installed via endpointRouteReplaceLinkWithSrc.
+	// This case verifies a non-self /32 uses the src-hint path with the correct src value.
 	linkCalls := make([]string, 0)
-	srcCalls := make([]string, 0)
+	srcCalls := make([]struct {
+		dest string
+		src  string
+	}, 0)
 	endpointAddInterfaceAddress = func(_ string, _ string) error { return nil }
 	endpointRouteReplaceLink = func(dest *net.IPNet, _ string) error {
 		linkCalls = append(linkCalls, dest.String())
 		return nil
 	}
-	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, _ net.IP) error {
-		srcCalls = append(srcCalls, dest.String())
+	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, src net.IP) error {
+		srcCalls = append(srcCalls, struct {
+			dest string
+			src  string
+		}{
+			dest: dest.String(),
+			src:  src.String(),
+		})
 		return nil
 	}
 
@@ -167,12 +205,19 @@ func TestEndpointConfigureTransportInstallsNonSelfHostRoute(t *testing.T) {
 		t.Fatalf("ConfigureTransport returned error: %v", err)
 	}
 
-	// The /32 must arrive via the src-hint seam, not the plain link seam.
+	// The /32 must arrive via the src-hint seam, not the plain link seam,
+	// and the src value must be the endpoint's own overlay IP.
+	want := []struct {
+		dest string
+		src  string
+	}{
+		{dest: "10.44.0.1/32", src: "10.44.0.9"},
+	}
 	if len(linkCalls) != 0 {
 		t.Errorf("expected no plain RouteReplaceLink calls for /32, got %v", linkCalls)
 	}
-	if len(srcCalls) != 1 || srcCalls[0] != "10.44.0.1/32" {
-		t.Fatalf("expected RouteReplaceLinkWithSrc called with 10.44.0.1/32, got %v", srcCalls)
+	if !reflect.DeepEqual(srcCalls, want) {
+		t.Fatalf("unexpected src-hinted call: want %v got %v", want, srcCalls)
 	}
 }
 

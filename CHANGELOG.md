@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.6 — 2026-04-20
+
+### Fixes (test + docs polish)
+- **Test hardening** (`pkg/node/endpoint_routes_linux_test.go`): `endpointRouteReplaceLinkWithSrc` mock now captures and asserts the actual `src` IP value, not only destination CIDRs — closes the regression gap where tests would pass with wrong source IP.
+- **CHANGELOG markdown hygiene**: removed unused link reference definitions that triggered MD053.
+
+Both findings from CodeRabbit post-merge review of PR #76 (v1.12.5).
+
 ## v1.12.5 — 2026-04-20
 
 ### Fixes
@@ -1146,10 +1154,7 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.5...HEAD
-[1.12.5]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.4...v1.12.5
-[1.12.4]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.3...v1.12.4
-[1.12.3]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.2...v1.12.3
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.6...HEAD
 [1.12.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.4...v1.12.0
