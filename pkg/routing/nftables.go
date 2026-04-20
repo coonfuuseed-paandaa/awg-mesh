@@ -390,6 +390,12 @@ func (f *NftablesFirewall) TeardownNAT() error {
 //
 // Non-fatal by design: callers should log a warning and continue if this returns
 // an error; master→endpoint traffic is unaffected by the FORWARD chain.
+//
+// Teardown: the rule is intentionally NOT removed on master shutdown. In a
+// container workload the host network namespace is torn down with the container,
+// making explicit cleanup redundant. For restarts without container removal the
+// retained rule means iptables -C finds it on the next startup and skips the
+// insert — idempotency is preserved across restarts at no extra cost.
 func (f *NftablesFirewall) EnableWGCrossTunnelForward() error {
 	// iptables -C exits 0 if the rule exists, non-zero otherwise.
 	check := exec.Command("iptables", "-C", "FORWARD", "-i", "wg-+", "-o", "wg-+", "-j", "ACCEPT")
