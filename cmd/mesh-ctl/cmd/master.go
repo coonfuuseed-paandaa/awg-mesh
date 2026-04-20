@@ -15,6 +15,7 @@ import (
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -230,6 +231,9 @@ func newMasterInitCommand() *cobra.Command {
 				}
 			}
 
+			// cliLogger writes WARN-level messages to stderr for port-assignment fallback.
+			cliLogger := zerolog.New(os.Stderr).With().Timestamp().Logger().Level(zerolog.WarnLevel)
+
 			for _, epName := range master.Endpoints {
 				ep := topo.FindEndpoint(epName)
 				if ep == nil {
@@ -260,29 +264,6 @@ func newMasterInitCommand() *cobra.Command {
 					} else {
 						fmt.Fprintf(os.Stderr, "warning: endpoint %q pubkey read for master %q: %v\n", ep.Name, master.Name, err)
 					}
-					continue
-				}
-
-				addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				addResp, addErr := client.Agent().AddTunnel(addCtx, &proto.AddTunnelRequest{
-					Name:                ep.Name,
-					EndpointHost:        ep.PeerAddr(),
-					OverlayIp:           ep.OverlayIP,
-					BalancerIp:          balancerIP,
-					PeerPublicKey:       peerPublicKey,
-					Weight:              1,
-					TransportSubnet:     allocation.Subnet.String(),
-					MasterTransportIp:   allocation.MasterIP.String(),
-					EndpointTransportIp: allocation.EndpointIP.String(),
-				})
-				addCancel()
-				if addErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: add tunnel to endpoint %q failed: %v\n", ep.Name, addErr)
-					continue
-				}
-
-				if addResp == nil || !addResp.Success {
-					fmt.Fprintf(os.Stderr, "warning: add tunnel to endpoint %q failed: %s\n", ep.Name, "[RPC failure]")
 					continue
 				}
 
@@ -321,6 +302,9 @@ func newMasterInitCommand() *cobra.Command {
 				}
 				fmt.Printf("master init: AddPeer to endpoint %q with allowed_ips=%v\n", ep.Name, allowedIPs)
 
+				// Step 1: AddPeer to endpoint FIRST so we can read the per-master
+				// listen port from the response (FR-1 / T003). The port is then used
+				// as EndpointHost in the subsequent AddTunnel call to the master.
 				peerCtx, peerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				peerResp, peerErr := peerClient.Agent().AddPeer(peerCtx, &proto.AddPeerRequest{
 					PublicKey:           resp.NodePublicKey,
@@ -345,8 +329,45 @@ func newMasterInitCommand() *cobra.Command {
 					continue
 				}
 
-				fmt.Printf("Added tunnel and peer for endpoint %q on master %q.\n", ep.Name, master.Name)
+				// Step 2: compute the correct per-master endpoint host using the port
+				// returned by AddPeer (or fallback to topology port + offset).
+				masterNodes := topo.MastersForEndpoint(ep.Name)
+				allMasterNames := make([]string, len(masterNodes))
+				for i, mn := range masterNodes {
+					allMasterNames[i] = mn.Name
+				}
+				epHost := ep.PeerHost
+				if epHost == "" {
+					epHost = ep.Host
+				}
+				endpointHost := computePeerEndpoint(epHost, ep.ListenPort, peerResp, allMasterNames, master.Name, cliLogger)
+
+				// Step 3: AddTunnel to master with the per-master endpoint host:port.
+				addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				addResp, addErr := client.Agent().AddTunnel(addCtx, &proto.AddTunnelRequest{
+					Name:                ep.Name,
+					EndpointHost:        endpointHost,
+					OverlayIp:           ep.OverlayIP,
+					BalancerIp:          balancerIP,
+					PeerPublicKey:       peerPublicKey,
+					Weight:              1,
+					TransportSubnet:     allocation.Subnet.String(),
+					MasterTransportIp:   allocation.MasterIP.String(),
+					EndpointTransportIp: allocation.EndpointIP.String(),
+				})
+				addCancel()
+				if addErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q for endpoint %q failed: %v\n", master.Name, ep.Name, addErr)
+					continue
+				}
+
+				if addResp == nil || !addResp.Success {
+					fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q for endpoint %q failed: %s\n", master.Name, ep.Name, "[RPC failure]")
+					continue
+				}
+
 				fmt.Printf("Added peer on endpoint %q for master %q.\n", ep.Name, master.Name)
+				fmt.Printf("Added tunnel for endpoint %q on master %q (endpoint: %s).\n", ep.Name, master.Name, endpointHost)
 			}
 
 			if err := saveTransportState(alloc, configDir); err != nil {
