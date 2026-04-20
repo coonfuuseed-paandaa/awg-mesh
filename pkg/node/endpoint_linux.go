@@ -36,6 +36,39 @@ var endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, dev string, src net.
 	return routing.NewNetlinkRouter().RouteReplaceLinkWithSrc(dest, dev, src)
 }
 
+func addOverlayRoutesWithSrc(ifaceName string, ranges []string, srcIP string, logger zerolog.Logger) error {
+	trimmedSrc := strings.TrimSpace(srcIP)
+	if trimmedSrc == "" {
+		logger.Debug().
+			Str("iface", ifaceName).
+			Msg("addOverlayRoutesWithSrc: empty src, skipping src-hinted overlay routes")
+		return nil
+	}
+
+	parsedSrc := parseOverlayIP(trimmedSrc)
+	if parsedSrc == nil {
+		return fmt.Errorf("parse overlay src IP %q: invalid IP", srcIP)
+	}
+
+	for _, cidr := range ranges {
+		trimmedCIDR := strings.TrimSpace(cidr)
+		if trimmedCIDR == "" {
+			continue
+		}
+
+		_, cidrNet, err := net.ParseCIDR(trimmedCIDR)
+		if err != nil {
+			return fmt.Errorf("parse overlay range %q: %w", cidr, err)
+		}
+
+		if err := endpointRouteReplaceLinkWithSrc(cidrNet, ifaceName, parsedSrc); err != nil {
+			return fmt.Errorf("add overlay route %s on %s with src %s: %w", cidrNet.String(), ifaceName, parsedSrc.String(), err)
+		}
+	}
+
+	return nil
+}
+
 // endpointCreateIfaceFn is the test seam for wg.NewInterface. Unit tests
 // replace this with a factory that returns a mock without touching the kernel.
 var endpointCreateIfaceFn = func(name string, mtu int, logger *device.Logger) (*wg.Interface, error) {
@@ -410,6 +443,18 @@ func (e *EndpointRunner) createMasterInterface(
 				Str("master", master.Name).
 				Msg("endpoint overlay routes: partial install failure")
 		}
+
+		overlayRanges := make([]string, 0, len(e.node.topology.Overlay.Ranges))
+		for _, namedRange := range e.node.topology.Overlay.Ranges {
+			if strings.TrimSpace(namedRange.CIDR) == "" {
+				continue
+			}
+			overlayRanges = append(overlayRanges, namedRange.CIDR)
+		}
+		if err := addOverlayRoutesWithSrc(ifaceName, overlayRanges, e.node.config.OverlayIP, e.node.logger); err != nil {
+			_ = e.closeIface(master.Name)
+			return fmt.Errorf("install overlay range routes on %q: %w", ifaceName, err)
+		}
 	}
 
 	return nil
@@ -496,7 +541,6 @@ func (e *EndpointRunner) createInterface() error {
 	e.setupForwarding()
 	return nil
 }
-
 
 // setupForwarding enables IP forwarding and configures nftables NAT/MSS clamping.
 // Called after all interfaces are brought up. Errors are non-fatal (logged as warn/error).

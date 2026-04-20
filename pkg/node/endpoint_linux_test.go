@@ -118,6 +118,12 @@ type testConfigRecord struct {
 	cfg wg.Config
 }
 
+type overlayRouteWithSrcCall struct {
+	iface string
+	cidr  string
+	src   string
+}
+
 // setupEndpointSeams installs mock implementations for all kernel-touching seams used
 // by createMasterInterface and restores the originals via t.Cleanup.
 //
@@ -368,6 +374,95 @@ func TestEndpointCreateMasterInterface_PortOffset(t *testing.T) {
 	if cfgRec.cfg.ListenPort == nil || *cfgRec.cfg.ListenPort != 51823 {
 		t.Errorf("listen port = %v, want 51823", cfgRec.cfg.ListenPort)
 	}
+}
+
+func TestAddOverlayRoutesWithSrc(t *testing.T) {
+	original := endpointRouteReplaceLinkWithSrc
+	t.Cleanup(func() {
+		endpointRouteReplaceLinkWithSrc = original
+	})
+
+	t.Run("multiple ranges with src", func(t *testing.T) {
+		calls := make([]overlayRouteWithSrcCall, 0)
+		endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, dev string, src net.IP) error {
+			calls = append(calls, overlayRouteWithSrcCall{
+				iface: dev,
+				cidr:  dest.String(),
+				src:   src.String(),
+			})
+			return nil
+		}
+
+		err := addOverlayRoutesWithSrc(
+			"wg-master-a",
+			[]string{"172.20.70.0/27", "172.20.70.128/25"},
+			"172.20.70.35",
+			zerolog.Nop(),
+		)
+		if err != nil {
+			t.Fatalf("addOverlayRoutesWithSrc returned error: %v", err)
+		}
+
+		if len(calls) != 2 {
+			t.Fatalf("expected 2 calls, got %d: %#v", len(calls), calls)
+		}
+		if calls[0] != (overlayRouteWithSrcCall{
+			iface: "wg-master-a",
+			cidr:  "172.20.70.0/27",
+			src:   "172.20.70.35",
+		}) {
+			t.Fatalf("unexpected first call: %#v", calls[0])
+		}
+		if calls[1] != (overlayRouteWithSrcCall{
+			iface: "wg-master-a",
+			cidr:  "172.20.70.128/25",
+			src:   "172.20.70.35",
+		}) {
+			t.Fatalf("unexpected second call: %#v", calls[1])
+		}
+	})
+
+	t.Run("empty src is noop", func(t *testing.T) {
+		callCount := 0
+		endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, dev string, src net.IP) error {
+			callCount++
+			return nil
+		}
+
+		err := addOverlayRoutesWithSrc(
+			"wg-master-a",
+			[]string{"172.20.70.0/27"},
+			"",
+			zerolog.Nop(),
+		)
+		if err != nil {
+			t.Fatalf("addOverlayRoutesWithSrc returned error: %v", err)
+		}
+		if callCount != 0 {
+			t.Fatalf("expected 0 calls, got %d", callCount)
+		}
+	})
+
+	t.Run("malformed range returns error", func(t *testing.T) {
+		callCount := 0
+		endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, dev string, src net.IP) error {
+			callCount++
+			return nil
+		}
+
+		err := addOverlayRoutesWithSrc(
+			"wg-master-a",
+			[]string{"bad-cidr"},
+			"172.20.70.35",
+			zerolog.Nop(),
+		)
+		if err == nil {
+			t.Fatal("expected error for malformed range, got nil")
+		}
+		if callCount != 0 {
+			t.Fatalf("expected 0 helper calls, got %d", callCount)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
