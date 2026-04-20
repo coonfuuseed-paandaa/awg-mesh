@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"os/exec"
 	"sync"
 
 	"github.com/google/nftables"
@@ -374,5 +375,38 @@ func (f *NftablesFirewall) TeardownNAT() error {
 		return fmt.Errorf("nftables: teardown: %w", err)
 	}
 	f.table = nil
+	return nil
+}
+
+// EnableWGCrossTunnelForward adds an iptables FORWARD ACCEPT rule for wg-+ → wg-+
+// traffic. Required on Docker/VPS hosts where the FORWARD chain default policy is
+// DROP — without this rule, endpoint↔endpoint overlay packets forwarded between
+// wg-<ep-a> and wg-<ep-b> on the master are silently discarded (local tracker #150).
+//
+// Uses the iptables CLI (already present in the container image via the iptables
+// apk package) because the go-nftables expr API does not support ifname-prefix
+// matching ("wg-+" wildcard). Shells out to iptables -C (check) then iptables -I
+// (insert at top) — idempotent: no-op if the rule already exists.
+//
+// Non-fatal by design: callers should log a warning and continue if this returns
+// an error; master→endpoint traffic is unaffected by the FORWARD chain.
+//
+// Teardown: the rule is intentionally NOT removed on master shutdown. In a
+// container workload the host network namespace is torn down with the container,
+// making explicit cleanup redundant. For restarts without container removal the
+// retained rule means iptables -C finds it on the next startup and skips the
+// insert — idempotency is preserved across restarts at no extra cost.
+func (f *NftablesFirewall) EnableWGCrossTunnelForward() error {
+	// iptables -C exits 0 if the rule exists, non-zero otherwise.
+	check := exec.Command("iptables", "-C", "FORWARD", "-i", "wg-+", "-o", "wg-+", "-j", "ACCEPT")
+	if err := check.Run(); err == nil {
+		return nil // rule already present — idempotent
+	}
+
+	insert := exec.Command("iptables", "-I", "FORWARD", "-i", "wg-+", "-o", "wg-+", "-j", "ACCEPT")
+	out, err := insert.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables -I FORWARD wg-+ wg-+ ACCEPT: %w: %s", err, bytes.TrimSpace(out))
+	}
 	return nil
 }

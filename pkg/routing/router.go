@@ -28,6 +28,7 @@ type Firewall interface {
 	ClampMSSToPMTU() error
 	EnableStickyECMP(balancerCIDR string) error
 	DisableStickyECMP(balancerCIDR string) error
+	EnableWGCrossTunnelForward() error
 }
 
 // Sysctl abstracts kernel parameter management.

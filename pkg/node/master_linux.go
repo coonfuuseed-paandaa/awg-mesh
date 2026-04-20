@@ -445,6 +445,22 @@ func (m *MasterRunner) masterHandshakeChecker() HandshakeChecker {
 	}
 }
 
+// enableWGCrossTunnelForward installs an iptables rule that accepts packets
+// forwarded between any pair of wg-* interfaces. Required on masters running on
+// Docker hosts where the FORWARD chain default policy is DROP (local tracker #150).
+// Non-fatal: callers log a warning and continue if this returns an error.
+func (m *MasterRunner) enableWGCrossTunnelForward() error {
+	fw, err := routing.NewNftablesFirewall()
+	if err != nil {
+		return fmt.Errorf("create firewall for cross-tunnel forward: %w", err)
+	}
+	if err := fw.EnableWGCrossTunnelForward(); err != nil {
+		return err
+	}
+	m.node.logger.Info().Msg("master: enabled wg-+ cross-tunnel FORWARD ACCEPT (iptables)")
+	return nil
+}
+
 // setupExitMode enables masquerade on eth0 if this master has exit: true in topology.
 func (m *MasterRunner) setupExitMode() error {
 	if m.node.topology == nil {

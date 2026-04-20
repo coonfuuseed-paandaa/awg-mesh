@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.10 — 2026-04-20
+
+### Fixes
+- **Auto-insert wg-+ FORWARD ACCEPT on master startup (local tracker #150):** Masters running on Docker hosts where the kernel FORWARD chain default policy is DROP were silently dropping endpoint↔endpoint overlay packets forwarded between wg-<ep-a> and wg-<ep-b> interfaces. The master now calls `iptables -I FORWARD -i wg-+ -o wg-+ -j ACCEPT` at startup (idempotent via `-C` check first) via `NftablesFirewall.EnableWGCrossTunnelForward`. Non-fatal: if iptables is unavailable the master logs a warning and continues; master↔endpoint traffic is unaffected. NET_ADMIN capability (already required by the master container) is sufficient for this operation.
+
+### Test Gates Added
+- G15: `TestEnableWGCrossTunnelForward_Idempotent` (`pkg/routing/nftables_test.go`) — skip unless root+iptables; validates idempotent insert via iptables -C / -I.
+- R12: `tests/simulation/issue-92-rotation.sh` — verifies both master containers have the FORWARD rule installed after startup.
+
 ## v1.12.9 — 2026-04-20
 
 ### Fixes

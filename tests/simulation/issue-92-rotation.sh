@@ -1467,6 +1467,21 @@ rm -rf "${R11B_CTL_DIR}"
 rm -f "${R11B_TOPO}"
 
 # ---------------------------------------------------------------------------
+# R12 (G15): master auto-installs wg-+ → wg-+ FORWARD ACCEPT rule on startup.
+# Validates local tracker #150 fix: endpoint↔endpoint overlay forwarding works
+# even on Docker hosts where default FORWARD policy is DROP.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R12] G15: master containers have wg-+ → wg-+ FORWARD ACCEPT rule installed..."
+for CTR in "${CTR_MASTER_RU_01}" "${CTR_MASTER_RU_02}"; do
+    if docker exec "${CTR}" iptables -C FORWARD -i 'wg-+' -o 'wg-+' -j ACCEPT 2>/dev/null; then
+        pass "R12: ${CTR}: iptables FORWARD wg-+ → wg-+ ACCEPT rule present"
+    else
+        fail "R12: ${CTR}: FORWARD wg-+ → wg-+ ACCEPT rule MISSING — endpoint↔endpoint forwarding will break on DROP FORWARD hosts"
+    fi
+done
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

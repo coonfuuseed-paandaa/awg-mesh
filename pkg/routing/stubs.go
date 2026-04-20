@@ -48,8 +48,9 @@ func NewNftablesFirewall() (*NftablesFirewall, error)        { return nil, errNo
 func (f *NftablesFirewall) SetupNAT(_ string) error          { return errNotSupported }
 func (f *NftablesFirewall) TeardownNAT() error               { return errNotSupported }
 func (f *NftablesFirewall) ClampMSSToPMTU() error            { return errNotSupported }
-func (f *NftablesFirewall) EnableStickyECMP(_ string) error  { return errNotSupported }
-func (f *NftablesFirewall) DisableStickyECMP(_ string) error { return errNotSupported }
+func (f *NftablesFirewall) EnableStickyECMP(_ string) error         { return errNotSupported }
+func (f *NftablesFirewall) DisableStickyECMP(_ string) error        { return errNotSupported }
+func (f *NftablesFirewall) EnableWGCrossTunnelForward() error       { return errNotSupported }
 
 // DSCPPolicy stub for non-Linux platforms.
 type DSCPPolicy struct {
