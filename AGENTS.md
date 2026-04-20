@@ -30,7 +30,7 @@ Unified node binary (`awg-mesh-node`) + CLI control plane (`mesh-ctl`).
 - `mesh-ctl upgrade <version>` — guided rolling upgrade with plan/confirm/execute/verify/rollback phases (v1.10.2+)
 - `mesh-ctl upgrade compose <old-file>` — docker-compose schema migration helper for v1.5.1/v1.6.0/v1.9.0 → current (v1.10.2+)
 - Endpoint per-master interface pattern (v1.12.2+): each bound master gets its own `wg-<master-name>` iface on the endpoint, avoiding WireGuard AllowedIPs dedup. Endpoint↔endpoint traffic flows via kernel policy routing. Symmetric with master-side architecture (local tracker #134).
-- Master-side `MasterTunnel.AllowedIPs` admin source of truth (v1.12.8+): CLI computes and passes `AllowedIps` in every `AddTunnelRequest`; `saveTransportState` persists verbatim — no topology needed on master daemon. Eliminates `/27` loss on prod masters without `--topology` (local tracker #147 layer 3).
+- Master-side `MasterTunnel.AllowedIPs` admin source of truth (v1.12.9+): CLI computes and passes `AllowedIps` in every `AddTunnelRequest`; `saveTransportState` persists verbatim — no topology needed on master daemon. Eliminates `/27` loss on prod masters without `--topology` (local tracker #147 layers 3+4 — v1.12.8 added the field, v1.12.9 fixed the proto descriptor so wire marshal/unmarshal actually delivers it).
 
 ## ARCHITECTURE
 
