@@ -5,6 +5,8 @@ package node
 import (
 	"net"
 	"testing"
+
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 )
 
 // mockRouteReplaceLink captures calls to RouteReplaceLink for testing.
@@ -40,12 +42,18 @@ func TestNormalizeTransportOverlayRoute(t *testing.T) {
 func TestBuildPeerAllowedIPs_TransportAndOverlay(t *testing.T) {
 	t.Parallel()
 
-	got, err := buildPeerAllowedIPs("10.255.0.24/30", "172.20.70.34")
+	got, err := buildPeerAllowedIPs(&topology.Topology{
+		Overlay: topology.OverlayConfig{
+			Ranges: []topology.NamedRange{
+				{Name: "endpoints", CIDR: "172.20.70.32/27"},
+			},
+		},
+	}, "pl-01", "10.255.0.24/30", "172.20.70.34")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 CIDRs, got %d: %v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 CIDRs, got %d: %v", len(got), got)
 	}
 
 	// First entry must be the /30 transport subnet.
@@ -59,6 +67,10 @@ func TestBuildPeerAllowedIPs_TransportAndOverlay(t *testing.T) {
 	if got[1].String() != wantOverlay.String() {
 		t.Errorf("got[1]=%s, want %s", got[1].String(), wantOverlay.String())
 	}
+	_, wantEndpointsRange, _ := net.ParseCIDR("172.20.70.32/27")
+	if got[2].String() != wantEndpointsRange.String() {
+		t.Errorf("got[2]=%s, want %s", got[2].String(), wantEndpointsRange.String())
+	}
 }
 
 // TestBuildPeerAllowedIPs_EmptyOverlay verifies that an empty overlayIP
@@ -66,7 +78,7 @@ func TestBuildPeerAllowedIPs_TransportAndOverlay(t *testing.T) {
 func TestBuildPeerAllowedIPs_EmptyOverlay(t *testing.T) {
 	t.Parallel()
 
-	_, err := buildPeerAllowedIPs("10.255.0.24/30", "")
+	_, err := buildPeerAllowedIPs(nil, "pl-01", "10.255.0.24/30", "")
 	if err == nil {
 		t.Fatal("expected error for empty overlayIP, got nil")
 	}
@@ -77,7 +89,7 @@ func TestBuildPeerAllowedIPs_EmptyOverlay(t *testing.T) {
 func TestBuildPeerAllowedIPs_InvalidTransport(t *testing.T) {
 	t.Parallel()
 
-	_, err := buildPeerAllowedIPs("not-a-cidr", "172.20.70.34")
+	_, err := buildPeerAllowedIPs(nil, "pl-01", "not-a-cidr", "172.20.70.34")
 	if err == nil {
 		t.Fatal("expected error for invalid transport CIDR, got nil")
 	}

@@ -11,6 +11,7 @@ import (
 
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	"github.com/rs/zerolog"
@@ -91,7 +92,7 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	// Self-heal: migrate legacy transport.yml entries that are missing AllowedIPs.
 	// Must run before startGRPCServer so the repaired state is visible to the
 	// tunnel-restore loop that follows immediately after.
-	if migrateErr := migrateLegacyTransportState(m.node.config.ConfigDir, m.node.logger); migrateErr != nil {
+	if migrateErr := migrateLegacyTransportState(m.node.config.ConfigDir, m.node.topology, m.node.logger); migrateErr != nil {
 		m.node.logger.Error().Err(migrateErr).Msg("transport state migration failed; continuing with existing state")
 	}
 
@@ -341,8 +342,10 @@ func (m *MasterRunner) UpdateTunnelPeer(name string, newPubkeyBytes [32]byte, ba
 	var newPubkey wg.Key
 	copy(newPubkey[:], newPubkeyBytes[:])
 
-	// Step 2: same-key idempotency check - NO UAPI call, NO persist
-	if tunnel.PeerPublicKey == newPubkey {
+	// Step 2: same-key idempotency check - only skip when there is no other
+	// state to refresh. Reload/reconcile may send AllowedIPs and balancer state
+	// for an already-matching key.
+	if tunnel.PeerPublicKey == newPubkey && len(allowedIPs) == 0 && strings.TrimSpace(balancerIP) == "" {
 		return true, nil
 	}
 
@@ -534,7 +537,7 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 	// reconcile cannot heal it without the on-disk source of truth.
 	// AllowedIPs for a master-side endpoint peer = [transport_subnet, overlay_ip/32]
 	// (same layout the platform-specific peer-apply code computes for UAPI).
-	allowedIPs := computeMasterPeerAllowedIPs(tunnel.TransportSubnet, tunnel.OverlayIP)
+	allowedIPs := computeMasterPeerAllowedIPs(m.node.topology, tunnel.Name, tunnel.TransportSubnet, tunnel.OverlayIP)
 
 	next := append(make([]TunnelTransport, 0, len(state.Tunnels)+1),
 		state.Tunnels...)
@@ -572,25 +575,18 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 // live UAPI peer configuration: [transport_subnet, overlay_ip/32]. Returns nil
 // when either input is empty so we do not produce a partial entry that would
 // mask a real misconfiguration.
-func computeMasterPeerAllowedIPs(transportSubnet, overlayIP string) []string {
+func computeMasterPeerAllowedIPs(topo *topology.Topology, endpointName, transportSubnet, overlayIP string) []string {
 	ts := strings.TrimSpace(transportSubnet)
 	oi := strings.TrimSpace(overlayIP)
 	if ts == "" || oi == "" {
 		return nil
 	}
-	_, transportNet, err := net.ParseCIDR(ts)
+
+	allowedIPs, err := topology.BuildAllowedIPsForMasterPeer(topo, endpointName, oi, ts)
 	if err != nil {
 		return nil
 	}
-	overlayCIDR := oi
-	if !strings.Contains(overlayCIDR, "/") {
-		overlayCIDR = overlayCIDR + "/32"
-	}
-	_, overlayNet, err := net.ParseCIDR(overlayCIDR)
-	if err != nil {
-		return nil
-	}
-	return []string{transportNet.String(), overlayNet.String()}
+	return allowedIPs
 }
 
 // computeTransportSubnetFromIP derives the /30 subnet CIDR from a transport IP.
@@ -627,7 +623,7 @@ func computeTransportSubnetFromIP(ip string) string {
 //
 // Migration is idempotent: if all tunnels already have AllowedIPs, the function
 // returns nil without writing the file.
-func migrateLegacyTransportState(configDir string, logger zerolog.Logger) error {
+func migrateLegacyTransportState(configDir string, topo *topology.Topology, logger zerolog.Logger) error {
 	state, err := loadNodeTransportState(configDir)
 	if err != nil {
 		return fmt.Errorf("load transport state: %w", err)
@@ -656,7 +652,7 @@ func migrateLegacyTransportState(configDir string, logger zerolog.Logger) error 
 			continue
 		}
 		// OverlayIP on the tunnel entry is the endpoint's overlay IP.
-		computed := computeMasterPeerAllowedIPs(transportSubnet, tt.OverlayIP)
+		computed := computeMasterPeerAllowedIPs(topo, tt.Name, transportSubnet, tt.OverlayIP)
 		if len(computed) == 0 {
 			continue
 		}

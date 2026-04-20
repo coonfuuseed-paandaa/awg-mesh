@@ -207,11 +207,25 @@ func reconcileMasterNode(
 			}
 		}
 
+		var allowedIPs []string
+		if allocErr == nil {
+			if allocation, aErr := alloc.Allocate(master.Name, ep.Name); aErr == nil {
+				if aips, aipErr := topology.BuildAllowedIPsForMasterPeer(topo, ep.Name, ep.OverlayIP, allocation.Subnet.String()); aipErr == nil {
+					allowedIPs = aips
+				} else {
+					fmt.Fprintf(os.Stderr, "master %s: endpoint %s: build master-side allowed_ips: %v\n", master.Name, epName, aipErr)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "master %s: endpoint %s: allocate transport for allowed_ips: %v\n", master.Name, epName, aErr)
+			}
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, rpcErr := client.Agent().UpdateTunnelPeer(ctx, &proto.UpdateTunnelPeerRequest{
 			Name:          epName,
 			PeerPublicKey: pubkeyBytes,
 			BalancerIp:    balancerIP,
+			AllowedIps:    allowedIPs,
 		})
 		cancel()
 
@@ -393,9 +407,10 @@ func reconcileCheckEmptyAllowedIPs(
 		fmt.Fprintf(os.Stderr, "master %s: endpoint %s: compute AllowedIPs for resync: %v\n", master.Name, ep.Name, allocateErr)
 		return false
 	}
-	allowedIPs := []string{
-		allocation.Subnet.String(),
-		ep.OverlayIP + "/32",
+	allowedIPs, buildErr := topology.BuildAllowedIPsForMasterPeer(topo, ep.Name, ep.OverlayIP, allocation.Subnet.String())
+	if buildErr != nil {
+		fmt.Fprintf(os.Stderr, "master %s: endpoint %s: build AllowedIPs for resync: %v\n", master.Name, ep.Name, buildErr)
+		return false
 	}
 
 	syncCtx, syncCancel := context.WithTimeout(context.Background(), 30*time.Second)

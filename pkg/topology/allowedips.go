@@ -3,6 +3,7 @@ package topology
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 // BuildAllowedIPsForEndpoint returns the allowed_ips list that a master
@@ -82,6 +83,96 @@ func BuildMinimalAllowedIPsForEndpointPeer(masterOverlayIP, transportSubnet stri
 	}
 
 	return []string{transportSubnet, masterOverlayIP + "/32"}, nil
+}
+
+// BuildAllowedIPsForMasterPeer returns the AllowedIPs a master should install for
+// one endpoint peer: transport /30, the endpoint overlay /32, and either the
+// topology "endpoints" range or explicit overlay /32s for the other endpoints.
+//
+// The topology currently identifies the endpoints range by name ("endpoints"),
+// not by a dedicated kind field.
+func BuildAllowedIPsForMasterPeer(topo *Topology, endpointName, endpointOverlayIP, transportSubnet string) ([]string, error) {
+	if endpointOverlayIP == "" {
+		return nil, fmt.Errorf("endpoint overlay IP is required")
+	}
+	if transportSubnet == "" {
+		return nil, fmt.Errorf("transport subnet is required")
+	}
+
+	_, transport, err := net.ParseCIDR(strings.TrimSpace(transportSubnet))
+	if err != nil {
+		return nil, fmt.Errorf("invalid transport subnet %q: %w", transportSubnet, err)
+	}
+
+	// Normalize endpointOverlayIP to a host /32 CIDR. When the caller passes a
+	// CIDR-form value (e.g. "172.20.70.34/27"), net.ParseCIDR would widen it to
+	// the network prefix ("172.20.70.32/27"), which would install an overly broad
+	// AllowedIPs entry. Extract the host address and force /32 instead.
+	overlayCIDR := strings.TrimSpace(endpointOverlayIP)
+	if strings.Contains(overlayCIDR, "/") {
+		hostIP, _, parseErr := net.ParseCIDR(overlayCIDR)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid endpoint overlay IP %q: %w", endpointOverlayIP, parseErr)
+		}
+		overlayCIDR = hostIP.String() + "/32"
+	} else {
+		overlayCIDR += "/32"
+	}
+	_, overlay, err := net.ParseCIDR(overlayCIDR)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endpoint overlay IP %q: %w", endpointOverlayIP, err)
+	}
+
+	out := []string{transport.String(), overlay.String()}
+	if topo == nil {
+		return out, nil
+	}
+
+	for _, namedRange := range topo.Overlay.Ranges {
+		if !strings.EqualFold(strings.TrimSpace(namedRange.Name), "endpoints") {
+			continue
+		}
+		if strings.TrimSpace(namedRange.CIDR) == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(namedRange.CIDR); err != nil {
+			return nil, fmt.Errorf("invalid endpoints range CIDR %q: %w", namedRange.CIDR, err)
+		}
+		return dedup(append(out, namedRange.CIDR)), nil
+	}
+
+	selfName := strings.TrimSpace(endpointName)
+	selfOverlay := overlay.String()
+	for _, endpoint := range topo.Endpoints {
+		if selfName != "" && endpoint.Name == selfName {
+			continue
+		}
+		peerOverlayCIDR := strings.TrimSpace(endpoint.OverlayIP)
+		if peerOverlayCIDR == "" {
+			continue
+		}
+		// Same host-extraction normalization as above: CIDR-form inputs must be
+		// reduced to a host /32 to avoid broadening to the network prefix.
+		if strings.Contains(peerOverlayCIDR, "/") {
+			hostIP, _, parseErr := net.ParseCIDR(peerOverlayCIDR)
+			if parseErr != nil {
+				return nil, fmt.Errorf("invalid endpoint overlay IP %q for endpoint %q: %w", endpoint.OverlayIP, endpoint.Name, parseErr)
+			}
+			peerOverlayCIDR = hostIP.String() + "/32"
+		} else {
+			peerOverlayCIDR += "/32"
+		}
+		_, peerOverlay, err := net.ParseCIDR(peerOverlayCIDR)
+		if err != nil {
+			return nil, fmt.Errorf("invalid endpoint overlay IP %q for endpoint %q: %w", endpoint.OverlayIP, endpoint.Name, err)
+		}
+		if peerOverlay.String() == selfOverlay {
+			continue
+		}
+		out = append(out, peerOverlay.String())
+	}
+
+	return dedup(out), nil
 }
 
 // dedup returns a new slice with duplicate strings removed, preserving order.

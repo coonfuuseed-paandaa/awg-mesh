@@ -114,6 +114,7 @@ MASTER_RU_02_OVERLAY="172.21.92.3"
 ENDPOINT_US_01_OVERLAY="172.21.92.34"
 ENDPOINT_ASIA_01_OVERLAY="172.21.92.35"
 ENDPOINT_ASIA_02_OVERLAY="172.21.92.36"
+ENDPOINTS_RANGE_CIDR="172.21.92.32/27"
 
 MASTER_RU_01_BRIDGE="192.168.92.10"
 MASTER_RU_02_BRIDGE="192.168.92.11"
@@ -313,7 +314,7 @@ overlay:
       cidr: 172.21.92.0/27
       balancer_ip: 172.21.92.1
     - name: endpoints
-      cidr: 172.21.92.32/27
+      cidr: ${ENDPOINTS_RANGE_CIDR}
       balancer_ip: 172.21.92.33
     - name: clients
       cidr: 172.21.92.128/25
@@ -1292,6 +1293,62 @@ do
             pass "R10: ${src_ctr} -> ${dst_overlay} ping 2/2"
         else
             fail "R10: ${src_ctr} -> ${dst_overlay} ping FAILED"
+        fi
+    done
+done
+
+# ---------------------------------------------------------------------------
+# R11 (G11): Master per-tunnel AllowedIPs must include the endpoints range so
+# cross-endpoint forwarding survives WireGuard reverse-path validation.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R11] G11: master per-tunnel AllowedIPs include endpoints range..."
+
+for src_entry in \
+    "${CTR_ENDPOINT_US_01}:${ENDPOINT_US_01_OVERLAY}" \
+    "${CTR_ENDPOINT_ASIA_01}:${ENDPOINT_ASIA_01_OVERLAY}" \
+    "${CTR_ENDPOINT_ASIA_02}:${ENDPOINT_ASIA_02_OVERLAY}"
+do
+    src_ctr="${src_entry%%:*}"
+    src_overlay="${src_entry##*:}"
+
+    for dst_overlay in \
+        "${ENDPOINT_US_01_OVERLAY}" \
+        "${ENDPOINT_ASIA_01_OVERLAY}" \
+        "${ENDPOINT_ASIA_02_OVERLAY}"
+    do
+        if [[ "${dst_overlay}" == "${src_overlay}" ]]; then
+            continue
+        fi
+
+        if docker exec "${src_ctr}" ping -c 2 -W 2 "${dst_overlay}" > /dev/null 2>&1; then
+            pass "R11: ${src_ctr} -> ${dst_overlay} ping 2/2 after master AllowedIPs expansion"
+        else
+            fail "R11: ${src_ctr} -> ${dst_overlay} ping FAILED after master AllowedIPs expansion"
+        fi
+    done
+done
+
+for master in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
+    inspect_out=$(meshctl inspect "${master}" 2>&1 || true)
+    for endpoint in "${ENDPOINT_US_01}" "${ENDPOINT_ASIA_01}" "${ENDPOINT_ASIA_02}"; do
+        row=$(echo "${inspect_out}" | grep -E "^${endpoint}[[:space:]]+" | head -1 || true)
+        if [[ -z "${row}" ]]; then
+            fail "R11: ${master} inspect has no row for ${endpoint}"
+            continue
+        fi
+
+        # Assert ENDPOINTS_RANGE_CIDR is present in both DISK_IPS (col 7) and
+        # RUNTIME_IPS (col 8) columns, not just anywhere in the row (which would
+        # falsely pass if the CIDR appears only in ADMIN_IPS).
+        disk_ips=$(echo "${row}" | awk '{print $7}')
+        runtime_ips=$(echo "${row}" | awk '{print $8}')
+        if echo "${disk_ips}" | grep -qF "${ENDPOINTS_RANGE_CIDR}" \
+            && echo "${runtime_ips}" | grep -qF "${ENDPOINTS_RANGE_CIDR}"; then
+            pass "R11: ${master}/${endpoint} disk+runtime include ${ENDPOINTS_RANGE_CIDR}"
+        else
+            fail "R11: ${master}/${endpoint} missing ${ENDPOINTS_RANGE_CIDR} in disk/runtime (disk=${disk_ips}, runtime=${runtime_ips})"
+            echo "${row}" | sed 's/^/    /'
         fi
     done
 done

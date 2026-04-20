@@ -10,6 +10,7 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
@@ -62,11 +63,11 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 				peerCfg.Endpoint = addr
 			}
 		}
-		if transportSubnet != "" && endpointTransportIP != "" {
-			allowedIPs, err := buildPeerAllowedIPs(transportSubnet, tunnel.OverlayIP)
+		if transportSubnet != "" && strings.TrimSpace(tunnel.OverlayIP) != "" {
+			allowedIPs, err := buildPeerAllowedIPs(m.node.topology, tunnel.Name, transportSubnet, tunnel.OverlayIP)
 			if err != nil {
 				_ = iface.Close()
-				return err
+				return fmt.Errorf("build peer allowed IPs for tunnel %q: %w", tunnel.Name, err)
 			}
 			peerCfg.AllowedIPs = allowedIPs
 		}
@@ -235,23 +236,20 @@ func addInterfaceAddress(interfaceName, address string) error {
 	return router.AddrAdd(interfaceName, addr)
 }
 
-func buildPeerAllowedIPs(transportSubnet, overlayIP string) ([]net.IPNet, error) {
-	peerAllowed := make([]net.IPNet, 0, 2)
-	_, transport, err := net.ParseCIDR(strings.TrimSpace(transportSubnet))
+func buildPeerAllowedIPs(topo *topology.Topology, endpointName, transportSubnet, overlayIP string) ([]net.IPNet, error) {
+	allowedIPStrings, err := topology.BuildAllowedIPsForMasterPeer(topo, endpointName, overlayIP, transportSubnet)
 	if err != nil {
-		return nil, fmt.Errorf("parse transport subnet %q: %w", transportSubnet, err)
+		return nil, err
 	}
-	peerAllowed = append(peerAllowed, *transport)
 
-	if strings.TrimSpace(overlayIP) == "" {
-		return nil, fmt.Errorf("overlay IP is required for peer allowed IPs")
+	peerAllowed := make([]net.IPNet, 0, len(allowedIPStrings))
+	for _, cidr := range allowedIPStrings {
+		_, parsed, parseErr := net.ParseCIDR(cidr)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse peer allowed IP %q: %w", cidr, parseErr)
+		}
+		peerAllowed = append(peerAllowed, *parsed)
 	}
-	normalizedOverlay := normalizeTransportOverlayRoute(overlayIP)
-	_, parsedOverlay, err := net.ParseCIDR(normalizedOverlay)
-	if err != nil {
-		return nil, fmt.Errorf("parse overlay IP %q: %w", normalizedOverlay, err)
-	}
-	peerAllowed = append(peerAllowed, *parsedOverlay)
 	return peerAllowed, nil
 }
 

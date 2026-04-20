@@ -67,6 +67,11 @@ graph TB
 
 ## Что нового
 
+### v1.12.7
+
+- **Расширение AllowedIPs для master per-tunnel** — на стороне master для endpoint-пиров теперь добавляется CIDR диапазона `endpoints` из топологии в дополнение к транспортному `/30` и overlay `/32` endpoint-а. Это исправляет cross-endpoint forwarding через master при проверке исходного overlay IP в WireGuard (reverse-path validation).
+- **Обновлён путь операционного восстановления** — `mesh-ctl master reload` и `mesh-ctl reconcile` теперь обновляют master-side `allowed_ips`, поэтому после апгрейда кластер сходится без пересоздания туннелей.
+
 ### v1.8.0
 
 - **Закрытие находок внутреннего код-ревью** — 5 issues (#20, #21, #23, #24, #25) без новых runtime-зависимостей. Корректность, безопасность, наблюдаемость.
