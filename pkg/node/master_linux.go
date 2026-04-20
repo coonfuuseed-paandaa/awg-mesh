@@ -63,11 +63,11 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 				peerCfg.Endpoint = addr
 			}
 		}
-		if transportSubnet != "" && endpointTransportIP != "" {
+		if transportSubnet != "" && strings.TrimSpace(tunnel.OverlayIP) != "" {
 			allowedIPs, err := buildPeerAllowedIPs(m.node.topology, tunnel.Name, transportSubnet, tunnel.OverlayIP)
 			if err != nil {
 				_ = iface.Close()
-				return err
+				return fmt.Errorf("build peer allowed IPs for tunnel %q: %w", tunnel.Name, err)
 			}
 			peerCfg.AllowedIPs = allowedIPs
 		}

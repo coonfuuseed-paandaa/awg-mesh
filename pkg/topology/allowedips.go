@@ -104,8 +104,18 @@ func BuildAllowedIPsForMasterPeer(topo *Topology, endpointName, endpointOverlayI
 		return nil, fmt.Errorf("invalid transport subnet %q: %w", transportSubnet, err)
 	}
 
+	// Normalize endpointOverlayIP to a host /32 CIDR. When the caller passes a
+	// CIDR-form value (e.g. "172.20.70.34/27"), net.ParseCIDR would widen it to
+	// the network prefix ("172.20.70.32/27"), which would install an overly broad
+	// AllowedIPs entry. Extract the host address and force /32 instead.
 	overlayCIDR := strings.TrimSpace(endpointOverlayIP)
-	if !strings.Contains(overlayCIDR, "/") {
+	if strings.Contains(overlayCIDR, "/") {
+		hostIP, _, parseErr := net.ParseCIDR(overlayCIDR)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid endpoint overlay IP %q: %w", endpointOverlayIP, parseErr)
+		}
+		overlayCIDR = hostIP.String() + "/32"
+	} else {
 		overlayCIDR += "/32"
 	}
 	_, overlay, err := net.ParseCIDR(overlayCIDR)
@@ -141,7 +151,15 @@ func BuildAllowedIPsForMasterPeer(topo *Topology, endpointName, endpointOverlayI
 		if peerOverlayCIDR == "" {
 			continue
 		}
-		if !strings.Contains(peerOverlayCIDR, "/") {
+		// Same host-extraction normalization as above: CIDR-form inputs must be
+		// reduced to a host /32 to avoid broadening to the network prefix.
+		if strings.Contains(peerOverlayCIDR, "/") {
+			hostIP, _, parseErr := net.ParseCIDR(peerOverlayCIDR)
+			if parseErr != nil {
+				return nil, fmt.Errorf("invalid endpoint overlay IP %q for endpoint %q: %w", endpoint.OverlayIP, endpoint.Name, parseErr)
+			}
+			peerOverlayCIDR = hostIP.String() + "/32"
+		} else {
 			peerOverlayCIDR += "/32"
 		}
 		_, peerOverlay, err := net.ParseCIDR(peerOverlayCIDR)

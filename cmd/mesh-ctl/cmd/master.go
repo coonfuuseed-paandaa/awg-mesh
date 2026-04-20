@@ -507,7 +507,10 @@ Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
 					parsedRanges = append(parsedRanges, r)
 				}
 			}
-			alloc, allocErr := loadOrCreateAllocator(configDir, topo)
+			alloc, err := loadOrCreateAllocator(configDir, topo)
+			if err != nil {
+				return fmt.Errorf("load transport allocator for allowed_ips refresh: %w", err)
+			}
 
 			endpointsTotal := 0
 			endpointsOk := 0
@@ -540,16 +543,14 @@ Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
 				}
 
 				var allowedIPs []string
-				if allocErr == nil {
-					if allocation, aErr := alloc.Allocate(master.Name, ep.Name); aErr == nil {
-						if aips, aipErr := topology.BuildAllowedIPsForMasterPeer(topo, ep.Name, ep.OverlayIP, allocation.Subnet.String()); aipErr == nil {
-							allowedIPs = aips
-						} else {
-							fmt.Fprintf(os.Stderr, "warning: master %s endpoint %s: build master-side allowed_ips: %v\n", name, ep.Name, aipErr)
-						}
+				if allocation, aErr := alloc.Allocate(master.Name, ep.Name); aErr == nil {
+					if aips, aipErr := topology.BuildAllowedIPsForMasterPeer(topo, ep.Name, ep.OverlayIP, allocation.Subnet.String()); aipErr == nil {
+						allowedIPs = aips
 					} else {
-						fmt.Fprintf(os.Stderr, "warning: master %s endpoint %s: allocate transport for allowed_ips: %v\n", name, ep.Name, aErr)
+						fmt.Fprintf(os.Stderr, "warning: master %s endpoint %s: build master-side allowed_ips: %v\n", name, ep.Name, aipErr)
 					}
+				} else {
+					fmt.Fprintf(os.Stderr, "warning: master %s endpoint %s: allocate transport for allowed_ips: %v\n", name, ep.Name, aErr)
 				}
 
 				reloadCtx, reloadCancel := context.WithTimeout(context.Background(), 30*time.Second)

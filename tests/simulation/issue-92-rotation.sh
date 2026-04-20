@@ -314,7 +314,7 @@ overlay:
       cidr: 172.21.92.0/27
       balancer_ip: 172.21.92.1
     - name: endpoints
-      cidr: 172.21.92.32/27
+      cidr: ${ENDPOINTS_RANGE_CIDR}
       balancer_ip: 172.21.92.33
     - name: clients
       cidr: 172.21.92.128/25
@@ -1338,10 +1338,16 @@ for master in "${MASTER_RU_01}" "${MASTER_RU_02}"; do
             continue
         fi
 
-        if echo "${row}" | grep -qF "${ENDPOINTS_RANGE_CIDR}"; then
-            pass "R11: ${master} row for ${endpoint} includes endpoints range ${ENDPOINTS_RANGE_CIDR}"
+        # Assert ENDPOINTS_RANGE_CIDR is present in both DISK_IPS (col 7) and
+        # RUNTIME_IPS (col 8) columns, not just anywhere in the row (which would
+        # falsely pass if the CIDR appears only in ADMIN_IPS).
+        disk_ips=$(echo "${row}" | awk '{print $7}')
+        runtime_ips=$(echo "${row}" | awk '{print $8}')
+        if echo "${disk_ips}" | grep -qF "${ENDPOINTS_RANGE_CIDR}" \
+            && echo "${runtime_ips}" | grep -qF "${ENDPOINTS_RANGE_CIDR}"; then
+            pass "R11: ${master}/${endpoint} disk+runtime include ${ENDPOINTS_RANGE_CIDR}"
         else
-            fail "R11: ${master} row for ${endpoint} missing endpoints range ${ENDPOINTS_RANGE_CIDR}"
+            fail "R11: ${master}/${endpoint} missing ${ENDPOINTS_RANGE_CIDR} in disk/runtime (disk=${disk_ips}, runtime=${runtime_ips})"
             echo "${row}" | sed 's/^/    /'
         fi
     done
