@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.8 — 2026-04-20
+
+### Fixes
+- **Master AllowedIPs admin source of truth (issue `#147` layer 3):** `MasterTunnel` gains an `AllowedIPs []string` field populated on `AddTunnel` (gRPC handler passes `req.GetAllowedIps()`) and refreshed on `UpdateTunnelPeer`. `saveTransportState` now persists `tunnel.AllowedIPs` verbatim when non-empty, falling back to local topology-aware recompute only for legacy first-boot migrations. CLI callers (`master init`, `endpoint init`, `reconcile` self-heal) now compute master-side AllowedIPs via `BuildAllowedIPsForMasterPeer` and include them in `AddTunnelRequest.AllowedIps`. Eliminates the production failure where master nodes started without `--topology` had `BuildAllowedIPsForMasterPeer(nil, …)` return minimal `[transport /30, overlay /32]` on every `saveTransportState` call, overwriting the admin-provided `/27` forwarding filter.
+
+### Test Gates Added
+- G12: `TestSaveTransportState_PersistsAdminAllowedIPs` + `TestSaveTransportState_FallbackToLocalOnEmpty` (`pkg/node/master_test.go`)
+- R11b: `tests/simulation/issue-92-rotation.sh` — ephemeral master without `--topology` flag, verifies `/27` present in `transport.yml` after `mesh-ctl master init`
+
 ## v1.12.7 — 2026-04-20
 
 ### Fixes

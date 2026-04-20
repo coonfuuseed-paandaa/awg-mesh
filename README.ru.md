@@ -67,6 +67,10 @@ graph TB
 
 ## Что нового
 
+### v1.12.8
+
+- **AllowedIPs на master — источник правды на стороне admin** — master-демон больше не требует `--topology` для корректного сохранения фильтра `/27`. CLI теперь вычисляет и передаёт `AllowedIps` в каждом `AddTunnelRequest`; master сохраняет список verbatim в `transport.yml` и восстанавливает его после перезапуска. Исправляет производственный сбой (issue `#147`, уровень 3), при котором мастера без `--topology` теряли `/27` после каждого reconcile или перезапуска.
+
 ### v1.12.7
 
 - **Расширение AllowedIPs для master per-tunnel** — на стороне master для endpoint-пиров теперь добавляется CIDR диапазона `endpoints` из топологии в дополнение к транспортному `/30` и overlay `/32` endpoint-а. Это исправляет cross-endpoint forwarding через master при проверке исходного overlay IP в WireGuard (reverse-path validation).
