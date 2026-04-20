@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.3 — 2026-04-20
+
+### What's New
+- **Port-assignment contract fix (Pattern X):** `AddPeerResponse` now carries
+  `endpoint_listen_port`; master CLI persists per-master `peer_endpoint: <host>:<port>`
+  in transport.yml. Issue `#144`.
+- **Self-heal migration on boot:** Master nodes now auto-heal `transport.yml` entries
+  with empty `allowed_ips` on first boot after upgrade, logging `transport_state_migrated`.
+
+### Changes
+- `reconcile` now treats empty `allowed_ips` as a drift condition and forces resync
+  even when pubkeys match.
+
+### Fixes
+- **Multi-master data plane dead after rolling upgrade (issue `#144`):** Second
+  (and subsequent) masters silently dropped traffic because endpoint-side per-master
+  interfaces bound sequential UDP ports (`:443`, `:444`, ...) while master
+  `transport.yml` hardcoded `peer_endpoint: <host>:443`. The new proto field + CLI
+  capture + per-master persistence fix the port contract end-to-end.
+- **`allowed_ips` wiped from master `transport.yml` on image swap:** Rolling
+  upgrade from v1.12.1 did not trigger `AddPeer`/`UpdateTunnelPeer`, and the
+  restart path pushed empty `AllowedIPs` into runtime WireGuard state. The
+  self-heal migration + `reconcile` drift detection now repair this on first
+  boot and on the next admin-side reconcile.
+
+### Test Gates Added
+- G1: Persistence round-trip sim gate (R9 block in issue-92-rotation.sh)
+- G3: Pubkey format-contract unit tests (8 table rows per function)
+- G7: Port-assignment contract tests (unit + sim)
+
+### Upgrade Notes
+- Multi-master topologies: upgrade endpoint containers before master containers.
+  After all upgrades, run `mesh-ctl master init` or `mesh-ctl reconcile` to persist
+  correct per-master ports. Mixed-version clusters (pre-v1.12.3 endpoints + v1.12.3
+  masters) will still experience the port-mismatch bug for the second master until
+  endpoints are upgraded.
+
 ## [1.12.2] — 2026-04-19
 
 ### Fixed — endpoint side AllowedIPs dedup broke multi-master routing (local tracker #134)

@@ -542,6 +542,12 @@ services:
 awg-mesh работает с реверс-прокси Traefik по гибридной схеме: Traefik обрабатывает gRPC и метрики (TCP/HTTP), тогда как UDP-трафик AWG проходит напрямую через прямое связывание порта.
 
 > **Почему AWG не через Traefik?** UDP-прокси Traefik подменяет source IP на IP своего контейнера. WireGuard использует source IP для идентификации пиров — все пиры будут выглядеть как один адрес, что ломает handshake. Это фундаментальное ограничение протокола, а не проблема производительности. Подробности в [ADR-0003](docs/adr/0003-traefik-integration.md).
+>
+>
+> **Примечание v1.12.3:** В multi-master топологиях сначала обновляйте endpoint-контейнеры,
+> затем master-контейнеры. После завершения rollout один раз выполните
+> `mesh-ctl master init` или `mesh-ctl reconcile`, чтобы каждый master сохранил корректный
+> per-master порт в `peer_endpoint`. Это закрывает проблему потери handshake у второго master (issue `#144`).
 
 ```yaml
 services:

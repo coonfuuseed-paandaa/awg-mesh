@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -401,4 +403,72 @@ func TestReadEndpointPublicKey(t *testing.T) {
 			t.Errorf("error %q does not mention expected size", err)
 		}
 	})
+}
+
+func TestReadAdminPubkeyRawFormats(t *testing.T) {
+	t.Parallel()
+
+	testKey32 := [32]byte{
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+		0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+	}
+	testKeyHex := hex.EncodeToString(testKey32[:])
+	testKeyB64 := base64.StdEncoding.EncodeToString(testKey32[:])
+
+	cases := []struct {
+		name    string
+		input   []byte
+		wantErr bool
+	}{
+		{name: "32b raw", input: testKey32[:], wantErr: false},
+		{name: "64hex", input: []byte(testKeyHex), wantErr: false},
+		{name: "64hex+LF", input: []byte(testKeyHex + "\n"), wantErr: false},
+		{name: "64hex+CRLF", input: []byte(testKeyHex + "\r\n"), wantErr: false},
+		{name: "base64 44c", input: []byte(testKeyB64), wantErr: true},
+		{name: "empty", input: []byte{}, wantErr: true},
+		{name: "65b raw", input: bytesOfLen(65), wantErr: true},
+		{name: "non-hex64", input: []byte(strings.Repeat("z", 64)), wantErr: true},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			nodePath := nodeDir(tmpDir, "master-01")
+			if err := os.MkdirAll(nodePath, 0o755); err != nil {
+				t.Fatalf("mkdir node dir: %v", err)
+			}
+
+			pubkeyPath := filepath.Join(nodePath, "pubkey")
+			if err := os.WriteFile(pubkeyPath, tc.input, 0o600); err != nil {
+				t.Fatalf("write pubkey: %v", err)
+			}
+
+			got, err := readAdminPubkeyRaw(tmpDir, "master-01")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readAdminPubkeyRaw = %v, want nil", err)
+			}
+			if hex.EncodeToString(got) != testKeyHex {
+				t.Fatalf("hex.EncodeToString(got) = %q, want %q", hex.EncodeToString(got), testKeyHex)
+			}
+		})
+	}
+}
+
+func bytesOfLen(n int) []byte {
+	data := make([]byte, n)
+	for i := range data {
+		data[i] = byte(i + 1)
+	}
+	return data
 }

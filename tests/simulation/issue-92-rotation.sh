@@ -21,6 +21,10 @@
 #       minimal (1 peer line per iface). (v1.12.2 — T009)
 #   R8  Kill one master: endpoint-a still reaches endpoint-b via surviving master;
 #       surviving iface still up; mesh heals after master restart. (v1.12.2 — T010)
+#   R9  Restart both masters, wait for gRPC readiness, run reconcile, and verify
+#       persisted master transport.yml entries retain non-empty allowed_ips.
+#   R9b Port contract: persisted peer_endpoint ports match endpoint-side state
+#       and the endpoint is actually listening on those UDP ports.
 #
 # Introspection approach: amneziawg-go runs in userspace and exposes its UAPI
 # via /run/amneziawg/<iface>.sock. The kernel-targeted `wg` CLI cannot access
@@ -1136,6 +1140,121 @@ else
     fail "R8.6: ${ENDPOINT_ASIA_01} cannot reach ${ENDPOINT_ASIA_02} after ${MASTER_RU_02} restart — mesh did not heal"
     docker logs "${CTR_MASTER_RU_02}" 2>&1 | tail -20 | sed 's/^/    /' || true
 fi
+
+# ---------------------------------------------------------------------------
+# R9: Persistence round-trip — restart both masters, reconcile, and verify
+#     non-empty allowed_ips persisted in master transport.yml.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R9] Persistence round-trip: master transport.yml retains allowed_ips after restart..."
+
+info "R9: restarting both masters..."
+docker restart "${CTR_MASTER_RU_01}" "${CTR_MASTER_RU_02}" > /dev/null 2>&1 || true
+
+for ctr in "${CTR_MASTER_RU_01}" "${CTR_MASTER_RU_02}"; do
+    if wait_for_log "${ctr}" "gRPC server listening" 60; then
+        pass "R9: ${ctr} reported gRPC server listening after restart"
+    else
+        fail "R9: ${ctr} did not report gRPC server listening within 60s after restart"
+        docker logs "${ctr}" 2>&1 | tail -20 | sed 's/^/    /' || true
+    fi
+done
+
+R9_RECON_RC=0
+meshctl reconcile > /tmp/issue92rot-r9-reconcile.out 2>&1 || R9_RECON_RC=$?
+if [[ "${R9_RECON_RC}" -eq 0 ]]; then
+    pass "R9: mesh-ctl reconcile exited 0 after master restart"
+else
+    fail "R9: mesh-ctl reconcile exited ${R9_RECON_RC} after master restart"
+    sed 's/^/    /' /tmp/issue92rot-r9-reconcile.out || true
+fi
+rm -f /tmp/issue92rot-r9-reconcile.out
+
+for entry in \
+    "${CTR_MASTER_RU_01}:${MASTER_RU_01}" \
+    "${CTR_MASTER_RU_02}:${MASTER_RU_02}"
+do
+    ctr="${entry%%:*}"
+    master_name="${entry##*:}"
+    yml=$(docker exec "${ctr}" cat /config/transport.yml 2>/dev/null || true)
+    allowed_count=$(echo "${yml}" | grep -c "allowed_ips:" || true)
+    empty_allowed_count=$(echo "${yml}" | grep -c "allowed_ips: \[\]" || true)
+    if [[ "${allowed_count}" -eq 0 ]]; then
+        fail "R9: ${master_name} transport.yml has no allowed_ips entries after restart"
+        echo "${yml}" | sed 's/^/    /'
+    elif [[ "${empty_allowed_count}" -ne 0 ]]; then
+        fail "R9: ${master_name} transport.yml still has ${empty_allowed_count} empty allowed_ips array(s) after restart"
+        echo "${yml}" | sed 's/^/    /'
+    else
+        pass "R9: ${master_name} transport.yml keeps non-empty allowed_ips for all persisted tunnels"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# R9b: Port-assignment contract — persisted peer_endpoint ports match
+#      endpoint-side state and endpoint UDP listeners.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R9b] Port-assignment contract: persisted ports match endpoint state and live listeners..."
+
+ENDPOINT_R9B_PORTS=$(
+    docker exec "${CTR_ENDPOINT_US_01}" ss -ulnp 2>/dev/null \
+        | awk '{print $5}' \
+        | grep -oE ':[0-9]+$' \
+        | tr -d ':' \
+        || true
+)
+
+for entry in \
+    "${CTR_MASTER_RU_01}:${MASTER_RU_01}:${MASTER_RU_01_BRIDGE}" \
+    "${CTR_MASTER_RU_02}:${MASTER_RU_02}:${MASTER_RU_02_BRIDGE}"
+do
+    ctr="${entry%%:*}"
+    rest="${entry#*:}"
+    master_name="${rest%%:*}"
+    master_bridge="${entry##*:}"
+
+    # Scope port extraction to the ep-us-01 tunnel block — transport.yml may
+    # carry multiple tunnels and the first peer_endpoint may belong to another.
+    master_port=$(
+        docker exec "${ctr}" cat /config/transport.yml 2>/dev/null \
+            | awk -v ep="${ENDPOINT_US_01}" '
+                $1 == "-" && $2 == "name:" { in_block = ($3 == ep); next }
+                in_block && $1 == "peer_endpoint:" {
+                    n = split($2, parts, ":")
+                    if (n > 1) print parts[n]
+                    exit
+                }
+            ' \
+            || true
+    )
+    ep_port=$(
+        docker exec "${CTR_ENDPOINT_US_01}" cat /config/transport.yml 2>/dev/null \
+            | awk -v host="${master_bridge}" '
+                $1 == "-" && $2 == "name:" && $3 == host { in_block=1; next }
+                $1 == "-" && $2 == "name:" { in_block=0 }
+                in_block && $1 == "peer_endpoint:" {
+                    n = split($2, parts, ":")
+                    if (n > 1) {
+                        print parts[n]
+                    }
+                    exit
+                }
+            ' \
+            || true
+    )
+
+    if [[ "${master_port}" != "${ep_port}" ]]; then
+        fail "[R9b] FAIL: port mismatch — master ${master_name} expects :${master_port}, ep transport.yml has :${ep_port}"
+        continue
+    fi
+
+    if echo "${ENDPOINT_R9B_PORTS}" | grep -qx "${master_port}"; then
+        pass "R9b: ${master_name} peer_endpoint port :${master_port} matches persisted endpoint state and ss -ulnp"
+    else
+        fail "[R9b] FAIL: port :${ep_port} not found in endpoint ss -ulnp output"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # Summary

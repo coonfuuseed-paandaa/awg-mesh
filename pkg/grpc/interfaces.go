@@ -34,6 +34,11 @@ type PeerManager interface {
 	// Empty peerName falls back to the first available interface for backwards compatibility.
 	AddPeer(publicKey []byte, presharedKey []byte, allowedIPs []string, endpointHost string, persistentKeepalive int32, peerName string) error
 	RemovePeer(publicKey []byte) error
+	// GetListenPort returns the UDP listen port bound by the per-master WireGuard
+	// interface for masterName. Returns 0, nil when the interface is not yet
+	// initialized (first-boot case). Never returns a non-nil error for a missing
+	// interface — callers treat 0 as "fallback to topology port".
+	GetListenPort(masterName string) (int, error)
 }
 
 // TransportConfigurator configures the transport-layer WireGuard interface

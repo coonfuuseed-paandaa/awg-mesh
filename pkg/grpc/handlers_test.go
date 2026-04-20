@@ -135,11 +135,13 @@ func (m *testParamApplier) ApplyParams(tunnelName string, cfg wg.Config) error {
 }
 
 type testPeerManager struct {
-	listPeers   []PeerInfo
-	addCalls    []addPeerCall
-	removeCalls [][]byte
-	addErr      error
-	removeErr   error
+	listPeers      []PeerInfo
+	addCalls       []addPeerCall
+	removeCalls    [][]byte
+	addErr         error
+	removeErr      error
+	listenPort     int
+	listenPortErr  error
 }
 
 type testTransportPeerManager struct {
@@ -194,6 +196,10 @@ func (m *testPeerManager) AddPeer(publicKey []byte, presharedKey []byte, allowed
 func (m *testPeerManager) RemovePeer(publicKey []byte) error {
 	m.removeCalls = append(m.removeCalls, append([]byte(nil), publicKey...))
 	return m.removeErr
+}
+
+func (m *testPeerManager) GetListenPort(_ string) (int, error) {
+	return m.listenPort, m.listenPortErr
 }
 
 func (m *testTransportPeerManager) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error {
@@ -1174,6 +1180,64 @@ func TestAddPeer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAddPeerReturnsListenPort verifies that the AddPeer handler populates
+// EndpointListenPort from the peer manager's GetListenPort result.
+func TestAddPeerReturnsListenPort(t *testing.T) {
+	t.Parallel()
+
+	t.Run("port returned from peer manager", func(t *testing.T) {
+		t.Parallel()
+
+		peerMgr := &testPeerManager{listenPort: 51821}
+		handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
+		resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
+			PublicKey: []byte{1, 2, 3},
+			PeerName:  "master-a",
+		})
+		if err != nil {
+			t.Fatalf("AddPeer returned error: %v", err)
+		}
+		if resp.GetEndpointListenPort() != 51821 {
+			t.Errorf("EndpointListenPort = %d, want 51821", resp.GetEndpointListenPort())
+		}
+	})
+
+	t.Run("fallback to 0 when GetListenPort errors", func(t *testing.T) {
+		t.Parallel()
+
+		peerMgr := &testPeerManager{listenPortErr: fmt.Errorf("iface not ready")}
+		handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
+		resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
+			PublicKey: []byte{1, 2, 3},
+			PeerName:  "master-b",
+		})
+		if err != nil {
+			t.Fatalf("AddPeer must not fail on port retrieval error, got: %v", err)
+		}
+		if resp.GetEndpointListenPort() != 0 {
+			t.Errorf("EndpointListenPort = %d, want 0 (fallback)", resp.GetEndpointListenPort())
+		}
+	})
+
+	t.Run("zero port when peerName empty", func(t *testing.T) {
+		t.Parallel()
+
+		peerMgr := &testPeerManager{listenPort: 51822}
+		handler := NewAgentHandlerFull(t.TempDir(), zerolog.Nop(), nil, nil, nil, peerMgr, nil, nil, nil, nil)
+		resp, err := handler.AddPeer(context.Background(), &proto.AddPeerRequest{
+			PublicKey: []byte{1, 2, 3},
+			PeerName:  "",
+		})
+		if err != nil {
+			t.Fatalf("AddPeer returned error: %v", err)
+		}
+		// No peerName → GetListenPort is not called → 0 returned.
+		if resp.GetEndpointListenPort() != 0 {
+			t.Errorf("EndpointListenPort = %d, want 0 when peerName is empty", resp.GetEndpointListenPort())
+		}
+	})
 }
 
 func TestAddTunnelAllowsEmptyEndpointHost(t *testing.T) {

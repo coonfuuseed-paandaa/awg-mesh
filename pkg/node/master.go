@@ -13,6 +13,7 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/rs/zerolog"
 )
 
 // ErrTunnelNotFound is returned by UpdateTunnelPeer when the named tunnel
@@ -87,6 +88,13 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
+	// Self-heal: migrate legacy transport.yml entries that are missing AllowedIPs.
+	// Must run before startGRPCServer so the repaired state is visible to the
+	// tunnel-restore loop that follows immediately after.
+	if migrateErr := migrateLegacyTransportState(m.node.config.ConfigDir, m.node.logger); migrateErr != nil {
+		m.node.logger.Error().Err(migrateErr).Msg("transport state migration failed; continuing with existing state")
+	}
+
 	scheduler := newCaptureScheduler(m.node.logger, newCaptureFunc())
 	if err := startGRPCServer(ctx, m.node.config.ConfigDir, m.node.logger, m, m, nil, m, scheduler, m, nil); err != nil {
 		return fmt.Errorf("start gRPC server: %w", err)
@@ -116,7 +124,12 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 				}
 			}
 
-			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, tt.OverlayIP, tt.BalancerIP, "", tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
+			// Derive transport subnet from the stored transport IP so saveTransportState
+			// preserves AllowedIPs correctly (including entries migrated by
+			// migrateLegacyTransportState). Passing "" here caused the just-migrated
+			// AllowedIPs to be overwritten with nil on the same boot (CRIT fix).
+			restoredSubnet := computeTransportSubnetFromIP(tt.TransportIP)
+			if err := m.AddTunnel(tt.Name, tt.PeerEndpoint, tt.OverlayIP, tt.BalancerIP, restoredSubnet, tt.TransportIP, tt.PeerTransportIP, 1, peerKey); err != nil {
 				if !strings.Contains(err.Error(), "already exists") {
 					m.node.logger.Warn().
 						Str("tunnel", tt.Name).
@@ -578,4 +591,92 @@ func computeMasterPeerAllowedIPs(transportSubnet, overlayIP string) []string {
 		return nil
 	}
 	return []string{transportNet.String(), overlayNet.String()}
+}
+
+// computeTransportSubnetFromIP derives the /30 subnet CIDR from a transport IP.
+// For example, "10.255.0.1" → "10.255.0.0/30", "10.255.0.2" → "10.255.0.0/30".
+// Returns an empty string when ip is empty, not parseable, or not IPv4.
+func computeTransportSubnetFromIP(ip string) string {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return ""
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ""
+	}
+	// Transport subnets are IPv4-only /30s; reject IPv6 to avoid the
+	// "<nil>" string net.IPNet produces when Mask length disagrees with
+	// the parsed IP size.
+	ipv4 := parsed.To4()
+	if ipv4 == nil {
+		return ""
+	}
+	// Mask to /30 (standard transport subnet size for awg-mesh point-to-point links).
+	mask := net.CIDRMask(30, 32)
+	network := &net.IPNet{IP: ipv4.Mask(mask), Mask: mask}
+	return network.String()
+}
+
+// migrateLegacyTransportState inspects transport.yml and back-fills AllowedIPs
+// for tunnels that were persisted before v1.12.3 without that field. This covers
+// the Pattern X regression: master transport.yml entries written by v1.12.2 have
+// empty AllowedIPs because saveTransportState only populated the field starting
+// from when AddTunnel was called with a non-empty TransportSubnet — but the
+// tunnel-restore path on restart did not re-derive it.
+//
+// Migration is idempotent: if all tunnels already have AllowedIPs, the function
+// returns nil without writing the file.
+func migrateLegacyTransportState(configDir string, logger zerolog.Logger) error {
+	state, err := loadNodeTransportState(configDir)
+	if err != nil {
+		return fmt.Errorf("load transport state: %w", err)
+	}
+	if len(state.Tunnels) == 0 {
+		return nil
+	}
+
+	modified := false
+	migratedCount := 0
+	for i := range state.Tunnels {
+		tt := &state.Tunnels[i]
+		if len(tt.AllowedIPs) > 0 {
+			// Already populated — skip.
+			continue
+		}
+		if strings.TrimSpace(tt.PeerTransportIP) == "" {
+			// Insufficient context to recompute: no peer transport IP means we
+			// cannot derive the transport subnet reliably.
+			continue
+		}
+		// Derive transport subnet from the master's own transport IP (TransportIP).
+		transportSubnet := computeTransportSubnetFromIP(tt.TransportIP)
+		if transportSubnet == "" {
+			// TransportIP unparseable — skip without modifying.
+			continue
+		}
+		// OverlayIP on the tunnel entry is the endpoint's overlay IP.
+		computed := computeMasterPeerAllowedIPs(transportSubnet, tt.OverlayIP)
+		if len(computed) == 0 {
+			continue
+		}
+		tt.AllowedIPs = computed
+		modified = true
+		migratedCount++
+	}
+
+	if !modified {
+		return nil
+	}
+
+	if err := saveNodeTransportState(configDir, state); err != nil {
+		return fmt.Errorf("save migrated transport state: %w", err)
+	}
+
+	logger.Info().
+		Int("tunnel_count", migratedCount).
+		Str("event", "transport_state_migrated").
+		Msg("legacy transport.yml entries back-filled with AllowedIPs")
+
+	return nil
 }

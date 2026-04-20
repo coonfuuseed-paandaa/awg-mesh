@@ -758,6 +758,25 @@ func (e *EndpointRunner) countIfacesLocked() int {
 	return len(e.platformState.ifaces)
 }
 
+// GetListenPort returns the UDP listen port bound by the per-master WireGuard interface
+// for masterName. Returns 0, nil when the interface is not yet initialized — callers
+// treat 0 as "fallback to topology base port + offset".
+// Implements grpcserver.PeerManager.
+func (e *EndpointRunner) GetListenPort(masterName string) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
+	iface := e.getIface(strings.TrimSpace(masterName))
+	if iface == nil {
+		return 0, nil
+	}
+	dev, err := iface.GetDevice()
+	if err != nil {
+		return 0, fmt.Errorf("get device for master %q: %w", masterName, err)
+	}
+	return dev.ListenPort, nil
+}
+
 // AddPeer adds a master peer to the correct per-master WireGuard interface.
 //
 // When peerName is non-empty (v1.12.2+ clients), AddPeer performs a lazy

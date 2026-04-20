@@ -31,6 +31,13 @@ func (c *ClientRunner) GetPublicKey() (wg.Key, error) {
 	return pubKey, err
 }
 
+// GetListenPort is not applicable in client mode — clients connect to masters
+// as peers rather than binding per-master listen ports. Returns 0, nil so that
+// PeerManager callers treat this as a fallback case.
+func (c *ClientRunner) GetListenPort(_ string) (int, error) {
+	return 0, nil
+}
+
 // Run starts client mode and blocks until context cancellation.
 func (c *ClientRunner) Run(ctx context.Context) error {
 	if ctx == nil {

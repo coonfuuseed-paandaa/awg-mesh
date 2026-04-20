@@ -506,7 +506,25 @@ func (h *AgentHandler) AddPeer(_ context.Context, req *proto.AddPeerRequest) (*p
 		}
 	}
 
-	return &proto.AddPeerResponse{Success: true}, nil
+	// Retrieve the listen port bound by the per-master WireGuard interface so the
+	// master CLI can persist the correct peer_endpoint:<port> in transport.yml.
+	var listenPort int32
+	masterName := strings.TrimSpace(req.GetPeerName())
+	if masterName != "" {
+		if port, portErr := h.peerMgr.GetListenPort(masterName); portErr != nil {
+			h.logger.Warn().Err(portErr).Str("master", masterName).
+				Msg("AddPeer: could not retrieve listen port; returning 0")
+		} else if port <= 0 || port > 65535 {
+			h.logger.Warn().
+				Str("master", masterName).
+				Int("listen_port", port).
+				Msg("AddPeer: invalid listen port; returning 0")
+		} else {
+			listenPort = int32(port)
+		}
+	}
+
+	return &proto.AddPeerResponse{Success: true, EndpointListenPort: listenPort}, nil
 }
 
 // nodeTransportState and tunnelTransport are type aliases for the shared

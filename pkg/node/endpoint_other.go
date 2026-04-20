@@ -58,3 +58,8 @@ func (e *EndpointRunner) RemovePeer(publicKey []byte) error {
 func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, allowedIPs []string, peerName string, extraRoutes []string) error {
 	return fmt.Errorf("transport configuration not supported on this platform")
 }
+
+// GetListenPort is a no-op stub on non-Linux platforms.
+func (e *EndpointRunner) GetListenPort(_ string) (int, error) {
+	return 0, nil
+}

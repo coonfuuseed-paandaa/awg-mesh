@@ -248,6 +248,16 @@ func reconcileMasterNode(
 		}
 
 		if resp.Unchanged {
+			// T006: even when pubkeys match, check for empty AllowedIPs on the master.
+			// Empty AllowedIPs is a drift condition introduced by Pattern X
+			// (pre-v1.12.3 transport.yml written without AllowedIPs). Re-push via
+			// UpdateTunnelPeer with the correct AllowedIPs to force resync.
+			if allocErr == nil {
+				if resynced := reconcileCheckEmptyAllowedIPs(client, master, ep, pubkeyBytes, balancerIP, alloc, cfgDir, topo); resynced {
+					result.driftHealed++
+					continue
+				}
+			}
 			result.unchanged++
 		} else {
 			result.updated++
@@ -326,6 +336,86 @@ func reconcileSelfHeal(
 		fmt.Fprintf(os.Stderr, "self-heal: save transport state: %v (non-fatal)\n", saveErr)
 	}
 
+	return true
+}
+
+// reconcileCheckEmptyAllowedIPs detects empty AllowedIPs drift on a master peer
+// (T006 — Pattern X regression gate). When UpdateTunnelPeer reports Unchanged
+// (pubkeys match), this function fetches the master's transport state via
+// GetTransportState and checks whether the named peer has empty AllowedIPs.
+// If empty AllowedIPs are detected, it re-pushes via UpdateTunnelPeer with the
+// allocator-computed AllowedIPs. Returns true if a resync was performed.
+func reconcileCheckEmptyAllowedIPs(
+	client *grpcclient.Client,
+	master *topology.MasterNode,
+	ep *topology.EndpointNode,
+	pubkeyBytes []byte,
+	balancerIP string,
+	alloc *transport.Allocator,
+	cfgDir string,
+	topo *topology.Topology,
+) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	tsResp, tsErr := client.Agent().GetTransportState(ctx, &proto.Empty{})
+	cancel()
+	if tsErr != nil {
+		// Pre-v1.10.1 masters do not implement GetTransportState; ignore gracefully.
+		return false
+	}
+	if tsResp == nil {
+		return false
+	}
+
+	// Locate the peer entry for this endpoint tunnel.
+	var emptyAllowedIPs bool
+	for _, peer := range tsResp.GetPeers() {
+		if peer.GetName() != ep.Name {
+			continue
+		}
+		// disk_allowed_ips is authoritative; fall back to runtime allowed_ips.
+		diskIPs := peer.GetDiskAllowedIps()
+		runtimeIPs := peer.GetAllowedIps()
+		if len(diskIPs) == 0 || len(runtimeIPs) == 0 {
+			emptyAllowedIPs = true
+		}
+		break
+	}
+
+	if !emptyAllowedIPs {
+		return false
+	}
+
+	fmt.Fprintf(os.Stderr, "master %s: endpoint %s: drift detected (empty allowed_ips), forcing resync\n", master.Name, ep.Name)
+
+	// Compute AllowedIPs from the allocator.
+	allocation, allocateErr := alloc.Allocate(master.Name, ep.Name)
+	if allocateErr != nil {
+		fmt.Fprintf(os.Stderr, "master %s: endpoint %s: compute AllowedIPs for resync: %v\n", master.Name, ep.Name, allocateErr)
+		return false
+	}
+	allowedIPs := []string{
+		allocation.Subnet.String(),
+		ep.OverlayIP + "/32",
+	}
+
+	syncCtx, syncCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	syncResp, syncErr := client.Agent().UpdateTunnelPeer(syncCtx, &proto.UpdateTunnelPeerRequest{
+		Name:          ep.Name,
+		PeerPublicKey: pubkeyBytes,
+		BalancerIp:    balancerIP,
+		AllowedIps:    allowedIPs,
+	})
+	syncCancel()
+	if syncErr != nil {
+		fmt.Fprintf(os.Stderr, "master %s: endpoint %s: AllowedIPs resync failed: %v\n", master.Name, ep.Name, syncErr)
+		return false
+	}
+	if syncResp == nil || !syncResp.Success {
+		fmt.Fprintf(os.Stderr, "master %s: endpoint %s: AllowedIPs resync returned unsuccessful\n", master.Name, ep.Name)
+		return false
+	}
+
+	fmt.Fprintf(os.Stderr, "master %s: endpoint %s: AllowedIPs resync succeeded\n", master.Name, ep.Name)
 	return true
 }
 
