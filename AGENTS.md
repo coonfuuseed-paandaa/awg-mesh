@@ -104,12 +104,10 @@ applyPeerKeyUpdate device-handle drift).
 **Process for every release:**
 1. `go test -short -count=1 ./...` — all packages green
 2. `docker build -t awg-mesh-node:local -f deploy/Dockerfile.node .`
-3. `bash tests/simulation/issue-92-rotation.sh` — MUST exit 0 with all R1-R5 + R3a-R3g PASS
+3. `bash tests/simulation/issue-92-rotation.sh` — MUST exit 0 with all R1-R10 PASS (includes R3a-R3g, R9 persistence gate, R10 route-get src assertions and endpoint↔endpoint ping matrix)
 4. G3 unit tests green: `go test -run 'TestReadEndpointPublicKeyFormats|TestReadAdminPubkeyRawFormats' ./...`
 5. G7 unit tests green: `go test -run 'TestPortOffset|TestComputePeerEndpoint' ./...`
-6. G8 endpoint-overlay-src sim green: `bash tests/simulation/issue-92-rotation.sh` — R10 route-get src assertions and endpoint↔endpoint ping matrix must PASS
-   (G1 persistence gate is covered by step 3: issue-92-rotation.sh R9 block)
-7. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
+6. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,

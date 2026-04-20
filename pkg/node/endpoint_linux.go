@@ -892,6 +892,25 @@ func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedI
 			Str("master", masterName).
 			Int("listen_port", listenPort).
 			Msg("endpoint per-master iface created lazily from AddPeer RPC")
+
+		// Install overlay range routes with src hint, same as createMasterInterface.
+		// Without this, src-hinted routes are absent until the next reconcile pass,
+		// creating a window where endpoint↔endpoint traffic uses the transport IP as src.
+		if e.node.topology != nil {
+			overlayRanges := make([]string, 0, len(e.node.topology.Overlay.Ranges))
+			for _, namedRange := range e.node.topology.Overlay.Ranges {
+				if strings.TrimSpace(namedRange.CIDR) == "" {
+					continue
+				}
+				overlayRanges = append(overlayRanges, namedRange.CIDR)
+			}
+			if routeErr := addOverlayRoutesWithSrc(ifaceName, overlayRanges, e.node.config.OverlayIP, e.node.logger); routeErr != nil {
+				e.node.logger.Warn().
+					Err(routeErr).
+					Str("master", masterName).
+					Msg("lazy iface: overlay range routes with src hint failed; reconcile will retry")
+			}
+		}
 	}
 
 	return e.addPeerToIface(iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive)

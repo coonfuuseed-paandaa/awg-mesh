@@ -463,6 +463,27 @@ func TestAddOverlayRoutesWithSrc(t *testing.T) {
 			t.Fatalf("expected 0 helper calls, got %d", callCount)
 		}
 	})
+
+	t.Run("invalid src returns error", func(t *testing.T) {
+		callCount := 0
+		endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, dev string, src net.IP) error {
+			callCount++
+			return nil
+		}
+
+		err := addOverlayRoutesWithSrc(
+			"wg-master-a",
+			[]string{"172.20.70.0/27"},
+			"not-an-ip",
+			zerolog.Nop(),
+		)
+		if err == nil {
+			t.Fatal("expected error for invalid src, got nil")
+		}
+		if callCount != 0 {
+			t.Fatalf("expected 0 helper calls, got %d", callCount)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

@@ -1282,7 +1282,7 @@ do
         fi
 
         route_get=$(docker exec "${src_ctr}" ip route get "${dst_overlay}" 2>&1 | head -1 || true)
-        if echo "${route_get}" | grep -qE "src ${src_overlay}\b"; then
+        if echo "${route_get}" | grep -qF "src ${src_overlay}"; then
             pass "R10: ${src_ctr} route-get ${dst_overlay} src=${src_overlay}"
         else
             fail "R10: ${src_ctr} route-get ${dst_overlay} wrong src — ${route_get}"
