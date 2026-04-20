@@ -105,8 +105,8 @@ applyPeerKeyUpdate device-handle drift).
 1. `go test -short -count=1 ./...` — all packages green
 2. `docker build -t awg-mesh-node:local -f deploy/Dockerfile.node .`
 3. `bash tests/simulation/issue-92-rotation.sh` — MUST exit 0 with all R1-R5 + R3a-R3g PASS
-4. G3 unit tests green: `go test -run TestReadEndpointPublicKeyFormats -run TestReadAdminPubkeyRawFormats ./...`
-5. G7 unit tests green: `go test -run TestPortOffset -run TestComputePeerEndpoint ./...`
+4. G3 unit tests green: `go test -run 'TestReadEndpointPublicKeyFormats|TestReadAdminPubkeyRawFormats' ./...`
+5. G7 unit tests green: `go test -run 'TestPortOffset|TestComputePeerEndpoint' ./...`
    (G1 persistence gate is covered by step 3: issue-92-rotation.sh R9 block)
 6. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
