@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	"github.com/rs/zerolog"
 )
@@ -22,9 +23,94 @@ func newTestMasterRunner(t *testing.T) *MasterRunner {
 				Mode:      "master",
 				ConfigDir: configDir,
 			},
-			logger: logger,
+			topology: &topology.Topology{},
+			logger:   logger,
 		},
 		tunnels: make(map[string]*MasterTunnel),
+	}
+}
+
+func TestComputeMasterPeerAllowedIPs_IncludesEndpointsRange(t *testing.T) {
+	t.Parallel()
+
+	baseTopology := &topology.Topology{
+		Overlay: topology.OverlayConfig{
+			Ranges: []topology.NamedRange{
+				{Name: "masters", CIDR: "172.20.70.0/27"},
+				{Name: "endpoints", CIDR: "172.20.70.32/27"},
+				{Name: "clients", CIDR: "172.20.70.128/25"},
+			},
+		},
+		Endpoints: []topology.EndpointNode{
+			{Name: "pl-01", OverlayIP: "172.20.70.34"},
+			{Name: "us-01", OverlayIP: "172.20.70.35"},
+			{Name: "jp-01", OverlayIP: "172.20.70.36"},
+			{Name: "de-01", OverlayIP: "172.20.70.37"},
+		},
+	}
+
+	t.Run("uses endpoints range when present", func(t *testing.T) {
+		got := computeMasterPeerAllowedIPs(baseTopology, "pl-01", "10.255.0.24/30", "172.20.70.34")
+		want := []string{"10.255.0.24/30", "172.20.70.34/32", "172.20.70.32/27"}
+		assertStringSliceEqual(t, got, want)
+	})
+
+	t.Run("falls back to explicit peer overlays when endpoints range missing", func(t *testing.T) {
+		topo := &topology.Topology{
+			Overlay: topology.OverlayConfig{
+				Ranges: []topology.NamedRange{
+					{Name: "masters", CIDR: "172.20.70.0/27"},
+					{Name: "clients", CIDR: "172.20.70.128/25"},
+				},
+			},
+			Endpoints: append([]topology.EndpointNode(nil), baseTopology.Endpoints...),
+		}
+
+		got := computeMasterPeerAllowedIPs(topo, "pl-01", "10.255.0.24/30", "172.20.70.34")
+		want := []string{
+			"10.255.0.24/30",
+			"172.20.70.34/32",
+			"172.20.70.35/32",
+			"172.20.70.36/32",
+			"172.20.70.37/32",
+		}
+		assertStringSliceEqual(t, got, want)
+	})
+
+	t.Run("single endpoint keeps minimal pair when no endpoints range exists", func(t *testing.T) {
+		topo := &topology.Topology{
+			Endpoints: []topology.EndpointNode{
+				{Name: "pl-01", OverlayIP: "172.20.70.34"},
+			},
+		}
+
+		got := computeMasterPeerAllowedIPs(topo, "pl-01", "10.255.0.24/30", "172.20.70.34")
+		want := []string{"10.255.0.24/30", "172.20.70.34/32"}
+		assertStringSliceEqual(t, got, want)
+	})
+
+	t.Run("ignores non-endpoints ranges when endpoints range exists", func(t *testing.T) {
+		got := computeMasterPeerAllowedIPs(baseTopology, "pl-01", "10.255.0.24/30", "172.20.70.34")
+		if len(got) != 3 {
+			t.Fatalf("AllowedIPs count = %d, want 3: %v", len(got), got)
+		}
+		for _, cidr := range got {
+			if cidr == "172.20.70.0/27" || cidr == "172.20.70.128/25" {
+				t.Fatalf("unexpected non-endpoints range in AllowedIPs: %v", got)
+			}
+		}
+	})
+}
+
+func assertStringSliceEqual(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("length = %d, want %d: got=%v want=%v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("item %d = %q, want %q (got=%v want=%v)", i, got[i], want[i], got, want)
+		}
 	}
 }
 
@@ -257,7 +343,7 @@ func TestMigrateLegacyTransportState_HealthyState(t *testing.T) {
 	})
 
 	logger := zerolog.Nop()
-	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+	if err := migrateLegacyTransportState(configDir, nil, logger); err != nil {
 		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
 	}
 
@@ -291,7 +377,7 @@ func TestMigrateLegacyTransportState_EmptyAllowedIPs(t *testing.T) {
 	})
 
 	logger := zerolog.Nop()
-	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+	if err := migrateLegacyTransportState(configDir, nil, logger); err != nil {
 		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
 	}
 
@@ -339,7 +425,7 @@ func TestMigrateLegacyTransportState_PartialMigration(t *testing.T) {
 	})
 
 	logger := zerolog.Nop()
-	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+	if err := migrateLegacyTransportState(configDir, nil, logger); err != nil {
 		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
 	}
 
@@ -371,7 +457,7 @@ func TestMigrateLegacyTransportState_EmptyTunnelsList(t *testing.T) {
 	// No transport.yml — LoadNodeTransportState returns zero value.
 
 	logger := zerolog.Nop()
-	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+	if err := migrateLegacyTransportState(configDir, nil, logger); err != nil {
 		t.Fatalf("migrateLegacyTransportState returned error on empty list: %v", err)
 	}
 }
@@ -396,7 +482,7 @@ func TestMigrateLegacyTransportState_NoPeerTransportIP(t *testing.T) {
 	})
 
 	logger := zerolog.Nop()
-	if err := migrateLegacyTransportState(configDir, logger); err != nil {
+	if err := migrateLegacyTransportState(configDir, nil, logger); err != nil {
 		t.Fatalf("migrateLegacyTransportState returned error: %v", err)
 	}
 

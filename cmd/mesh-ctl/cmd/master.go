@@ -507,6 +507,7 @@ Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
 					parsedRanges = append(parsedRanges, r)
 				}
 			}
+			alloc, allocErr := loadOrCreateAllocator(configDir, topo)
 
 			endpointsTotal := 0
 			endpointsOk := 0
@@ -538,14 +539,25 @@ Read-only from admin-state: never modifies ~/.mesh-ctl/ files.`,
 					}
 				}
 
-				// AllowedIps is left empty: the proto spec says "if non-empty, replace;
-				// else keep". Preserving the master's existing allowed-IPs avoids
-				// disrupting transport subnet routing that was set up by 'endpoint init'.
+				var allowedIPs []string
+				if allocErr == nil {
+					if allocation, aErr := alloc.Allocate(master.Name, ep.Name); aErr == nil {
+						if aips, aipErr := topology.BuildAllowedIPsForMasterPeer(topo, ep.Name, ep.OverlayIP, allocation.Subnet.String()); aipErr == nil {
+							allowedIPs = aips
+						} else {
+							fmt.Fprintf(os.Stderr, "warning: master %s endpoint %s: build master-side allowed_ips: %v\n", name, ep.Name, aipErr)
+						}
+					} else {
+						fmt.Fprintf(os.Stderr, "warning: master %s endpoint %s: allocate transport for allowed_ips: %v\n", name, ep.Name, aErr)
+					}
+				}
+
 				reloadCtx, reloadCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				updateResp, updateErr := client.Agent().UpdateTunnelPeer(reloadCtx, &proto.UpdateTunnelPeerRequest{
 					Name:          ep.Name,
 					PeerPublicKey: pubkeyBytes,
 					BalancerIp:    balancerIP,
+					AllowedIps:    allowedIPs,
 				})
 				reloadCancel()
 
