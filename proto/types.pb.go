@@ -1199,10 +1199,11 @@ func (x *AddPeerRequest) GetExtraRoutes() []string {
 }
 
 type AddPeerResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Success            bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	EndpointListenPort int32                  `protobuf:"varint,2,opt,name=endpoint_listen_port,json=endpointListenPort,proto3" json:"endpoint_listen_port,omitempty"` // listen port bound by endpoint for this master's wg-<name> iface
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AddPeerResponse) Reset() {
@@ -1240,6 +1241,13 @@ func (x *AddPeerResponse) GetSuccess() bool {
 		return x.Success
 	}
 	return false
+}
+
+func (x *AddPeerResponse) GetEndpointListenPort() int32 {
+	if x != nil {
+		return x.EndpointListenPort
+	}
+	return 0
 }
 
 type RemovePeerRequest struct {
@@ -2511,9 +2519,10 @@ const file_types_proto_rawDesc = "" +
 	" \x01(\tR\n" +
 	"balancerIp\x12\x1b\n" +
 	"\tpeer_name\x18\v \x01(\tR\bpeerName\x12!\n" +
-	"\fextra_routes\x18\f \x03(\tR\vextraRoutes\"+\n" +
+	"\fextra_routes\x18\f \x03(\tR\vextraRoutes\"]\n" +
 	"\x0fAddPeerResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"2\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x120\n" +
+	"\x14endpoint_listen_port\x18\x02 \x01(\x05R\x12endpointListenPort\"2\n" +
 	"\x11RemovePeerRequest\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\".\n" +

@@ -135,6 +135,7 @@ message AddPeerRequest {
 
 message AddPeerResponse {
   bool success = 1;
+  int32 endpoint_listen_port = 2;  // listen port bound by endpoint for this master's wg-<name> iface
 }
 
 message RemovePeerRequest {
