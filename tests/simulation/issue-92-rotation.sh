@@ -25,6 +25,8 @@
 #       persisted master transport.yml entries retain non-empty allowed_ips.
 #   R9b Port contract: persisted peer_endpoint ports match endpoint-side state
 #       and the endpoint is actually listening on those UDP ports.
+#   R10 Endpoint↔endpoint overlay matrix: every endpoint reaches every other
+#       endpoint overlay IP, and `ip route get` selects `src <self-overlay-ip>`.
 #
 # Introspection approach: amneziawg-go runs in userspace and exposes its UAPI
 # via /run/amneziawg/<iface>.sock. The kernel-targeted `wg` CLI cannot access
@@ -1254,6 +1256,44 @@ do
     else
         fail "[R9b] FAIL: port :${ep_port} not found in endpoint ss -ulnp output"
     fi
+done
+
+# ---------------------------------------------------------------------------
+# R10 (G8): Endpoint↔endpoint overlay src hint + reachability matrix.
+# ---------------------------------------------------------------------------
+echo ""
+echo "[R10] G8: Endpoint↔endpoint overlay src hint + ping matrix..."
+
+for src_entry in \
+    "${CTR_ENDPOINT_US_01}:${ENDPOINT_US_01_OVERLAY}" \
+    "${CTR_ENDPOINT_ASIA_01}:${ENDPOINT_ASIA_01_OVERLAY}" \
+    "${CTR_ENDPOINT_ASIA_02}:${ENDPOINT_ASIA_02_OVERLAY}"
+do
+    src_ctr="${src_entry%%:*}"
+    src_overlay="${src_entry##*:}"
+
+    for dst_overlay in \
+        "${ENDPOINT_US_01_OVERLAY}" \
+        "${ENDPOINT_ASIA_01_OVERLAY}" \
+        "${ENDPOINT_ASIA_02_OVERLAY}"
+    do
+        if [[ "${dst_overlay}" == "${src_overlay}" ]]; then
+            continue
+        fi
+
+        route_get=$(docker exec "${src_ctr}" ip route get "${dst_overlay}" 2>&1 | head -1 || true)
+        if echo "${route_get}" | grep -qF "src ${src_overlay}"; then
+            pass "R10: ${src_ctr} route-get ${dst_overlay} src=${src_overlay}"
+        else
+            fail "R10: ${src_ctr} route-get ${dst_overlay} wrong src — ${route_get}"
+        fi
+
+        if docker exec "${src_ctr}" ping -c 2 -W 2 "${dst_overlay}" > /dev/null 2>&1; then
+            pass "R10: ${src_ctr} -> ${dst_overlay} ping 2/2"
+        else
+            fail "R10: ${src_ctr} -> ${dst_overlay} ping FAILED"
+        fi
+    done
 done
 
 # ---------------------------------------------------------------------------

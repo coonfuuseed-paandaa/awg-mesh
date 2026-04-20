@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.4 — 2026-04-20
+
+### Fixes
+- **Endpoint↔endpoint overlay broken in multi-master topologies (issue `#147`):**
+  per-master endpoint interfaces now install `src <endpointOverlayIP>` on
+  overlay `/27` and `/25` routes, not only on `/32` host routes. This prevents
+  the kernel from choosing the transport `/30` address as the packet source and
+  restores cross-endpoint overlay reachability.
+
+### Test Gates Added
+- G8: endpoint↔endpoint overlay matrix + `ip route get` src assertion (R10 in
+  `tests/simulation/issue-92-rotation.sh`)
+
 ## v1.12.3 — 2026-04-20
 
 ### What's New
@@ -1112,7 +1125,10 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.4...HEAD
+[1.12.4]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.3...v1.12.4
+[1.12.3]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.2...v1.12.3
+[1.12.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.4...v1.12.0
 [1.11.4]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.10.2...v1.11.4

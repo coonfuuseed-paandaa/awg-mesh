@@ -731,6 +731,11 @@ entryPoints:
 > topologies. After the rollout completes, run `mesh-ctl master init` or `mesh-ctl reconcile`
 > once so each master persists the correct per-master `peer_endpoint` port. This closes the
 > second-master handshake drop tracked in issue `#144`.
+>
+> **v1.12.4 note:** In multi-master endpoint deployments, per-master endpoint interfaces now
+> install `src <endpointOverlayIP>` on shared overlay ranges as well as `/32` host routes. This
+> fixes endpoint↔endpoint overlay drops caused by the kernel selecting the transport `/30` source
+> address on `/27` and `/25` routes (issue `#147`).
 
 ### Systemd integration (optional)
 
