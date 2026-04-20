@@ -595,7 +595,7 @@ func computeMasterPeerAllowedIPs(transportSubnet, overlayIP string) []string {
 
 // computeTransportSubnetFromIP derives the /30 subnet CIDR from a transport IP.
 // For example, "10.255.0.1" → "10.255.0.0/30", "10.255.0.2" → "10.255.0.0/30".
-// Returns an empty string when ip is empty or not parseable.
+// Returns an empty string when ip is empty, not parseable, or not IPv4.
 func computeTransportSubnetFromIP(ip string) string {
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
@@ -605,9 +605,16 @@ func computeTransportSubnetFromIP(ip string) string {
 	if parsed == nil {
 		return ""
 	}
+	// Transport subnets are IPv4-only /30s; reject IPv6 to avoid the
+	// "<nil>" string net.IPNet produces when Mask length disagrees with
+	// the parsed IP size.
+	ipv4 := parsed.To4()
+	if ipv4 == nil {
+		return ""
+	}
 	// Mask to /30 (standard transport subnet size for awg-mesh point-to-point links).
 	mask := net.CIDRMask(30, 32)
-	network := &net.IPNet{IP: parsed.Mask(mask), Mask: mask}
+	network := &net.IPNet{IP: ipv4.Mask(mask), Mask: mask}
 	return network.String()
 }
 
