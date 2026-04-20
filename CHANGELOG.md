@@ -14,7 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Test Gates Added
 - G12: `TestSaveTransportState_PersistsAdminAllowedIPs` + `TestSaveTransportState_FallbackToLocalOnEmpty` (`pkg/node/master_test.go`)
+- G13: `TestAddTunnelPassesThroughAllowedIPs` (`pkg/grpc/handlers_test.go`) — pins that the gRPC handler forwards `req.AllowedIps` verbatim to `TunnelManager.AddTunnel`
 - R11b: `tests/simulation/issue-92-rotation.sh` — ephemeral master without `--topology` flag, verifies `/27` present in `transport.yml` after `mesh-ctl master init`
+
+### Additional Fixes (found during PR review)
+- **`endpoint init` already-exists path used wrong AllowedIPs:** the fallback `UpdateTunnelPeer` call (taken when the master already has the tunnel) was passing endpoint-side AllowedIPs (`BuildMinimalAllowedIPsForEndpointPeer`: transport/30 + master_overlay/32) instead of master-side AllowedIPs (`BuildAllowedIPsForMasterPeer`: transport/30 + endpoint_overlay/32 + endpoints/27). This would have silently reset the master tunnel's AllowedIPs to the wrong set on any `endpoint init` re-run against an already-initialized master. Fixed to pass `masterAllowedIPs` consistently.
 
 ## v1.12.7 — 2026-04-20
 

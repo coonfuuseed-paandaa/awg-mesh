@@ -366,11 +366,15 @@ func newEndpointInitCommand() *cobra.Command {
 
 						masterCtx2, masterCancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 						var updateErr error
+						// Use masterAllowedIPs (master-side view: transport/30 + endpoint_overlay/32 +
+						// endpoints/27) — NOT allowedIPs (endpoint-side view: transport/30 +
+						// master_overlay/32). This is the admin source of truth for the master tunnel;
+						// passing the wrong set would defeat the v1.12.8 fix for issue #147 layer 3.
 						updateResp, updateErr = masterClient2.Agent().UpdateTunnelPeer(masterCtx2, &proto.UpdateTunnelPeerRequest{
 							Name:          ep.Name,
 							PeerPublicKey: resp.NodePublicKey,
 							BalancerIp:    balancerIP,
-							AllowedIps:    allowedIPs,
+							AllowedIps:    masterAllowedIPs,
 						})
 						masterCancel2()
 						if closeErr := masterClient2.Close(); closeErr != nil {
