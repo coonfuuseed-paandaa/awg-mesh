@@ -15,15 +15,22 @@ import (
 func TestEndpointConfigureTransportInstallsRoutesFromAllowedIPs(t *testing.T) {
 	originalAddInterfaceAddress := endpointAddInterfaceAddress
 	originalRouteReplaceLink := endpointRouteReplaceLink
+	originalRouteReplaceLinkWithSrc := endpointRouteReplaceLinkWithSrc
 	t.Cleanup(func() {
 		endpointAddInterfaceAddress = originalAddInterfaceAddress
 		endpointRouteReplaceLink = originalRouteReplaceLink
+		endpointRouteReplaceLinkWithSrc = originalRouteReplaceLinkWithSrc
 	})
 
-	calls := make([]string, 0)
+	linkCalls := make([]string, 0)
+	srcCalls := make([]string, 0)
 	endpointAddInterfaceAddress = func(_ string, _ string) error { return nil }
 	endpointRouteReplaceLink = func(dest *net.IPNet, _ string) error {
-		calls = append(calls, dest.String())
+		linkCalls = append(linkCalls, dest.String())
+		return nil
+	}
+	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, _ net.IP) error {
+		srcCalls = append(srcCalls, dest.String())
 		return nil
 	}
 
@@ -52,23 +59,33 @@ func TestEndpointConfigureTransportInstallsRoutesFromAllowedIPs(t *testing.T) {
 	}
 
 	want := []string{"10.44.0.0/24", "10.66.0.0/27"}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("unexpected routes installed: want %v got %v", want, calls)
+	if len(linkCalls) != 0 {
+		t.Errorf("expected no plain RouteReplaceLink calls when overlayIP is set, got %v", linkCalls)
+	}
+	if !reflect.DeepEqual(srcCalls, want) {
+		t.Fatalf("unexpected src-hinted routes: want %v got %v", want, srcCalls)
 	}
 }
 
 func TestEndpointConfigureTransportSkipsOnlyOwnHostRoute(t *testing.T) {
 	originalAddInterfaceAddress := endpointAddInterfaceAddress
 	originalRouteReplaceLink := endpointRouteReplaceLink
+	originalRouteReplaceLinkWithSrc := endpointRouteReplaceLinkWithSrc
 	t.Cleanup(func() {
 		endpointAddInterfaceAddress = originalAddInterfaceAddress
 		endpointRouteReplaceLink = originalRouteReplaceLink
+		endpointRouteReplaceLinkWithSrc = originalRouteReplaceLinkWithSrc
 	})
 
-	calls := make([]string, 0)
+	linkCalls := make([]string, 0)
+	srcCalls := make([]string, 0)
 	endpointAddInterfaceAddress = func(_ string, _ string) error { return nil }
 	endpointRouteReplaceLink = func(dest *net.IPNet, _ string) error {
-		calls = append(calls, dest.String())
+		linkCalls = append(linkCalls, dest.String())
+		return nil
+	}
+	endpointRouteReplaceLinkWithSrc = func(dest *net.IPNet, _ string, _ net.IP) error {
+		srcCalls = append(srcCalls, dest.String())
 		return nil
 	}
 
@@ -95,8 +112,11 @@ func TestEndpointConfigureTransportSkipsOnlyOwnHostRoute(t *testing.T) {
 	}
 
 	want := []string{"10.50.0.0/24"}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("unexpected routes installed: want %v got %v", want, calls)
+	if len(linkCalls) != 0 {
+		t.Errorf("expected no plain RouteReplaceLink calls when overlayIP is set, got %v", linkCalls)
+	}
+	if !reflect.DeepEqual(srcCalls, want) {
+		t.Fatalf("unexpected src-hinted routes: want %v got %v", want, srcCalls)
 	}
 }
 

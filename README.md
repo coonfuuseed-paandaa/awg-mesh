@@ -732,10 +732,10 @@ entryPoints:
 > once so each master persists the correct per-master `peer_endpoint` port. This closes the
 > second-master handshake drop tracked in issue `#144`.
 >
-> **v1.12.4 note:** In multi-master endpoint deployments, per-master endpoint interfaces now
-> install `src <endpointOverlayIP>` on shared overlay ranges as well as `/32` host routes. This
-> fixes endpoint↔endpoint overlay drops caused by the kernel selecting the transport `/30` source
-> address on `/27` and `/25` routes (issue `#147`).
+> **v1.12.4 note:** The initial issue `#147` mitigation added `src <endpointOverlayIP>` on eager
+> per-master overlay route installs, but `ConfigureTransport` still reinstalled `/27` and `/25`
+> routes without src immediately after `AddPeer`. The definitive root fix ships in **v1.12.5**,
+> which merges that two-loop route install path into one correct src-hinted pass.
 
 ### Systemd integration (optional)
 

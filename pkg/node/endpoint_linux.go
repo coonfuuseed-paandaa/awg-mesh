@@ -429,6 +429,9 @@ func (e *EndpointRunner) createMasterInterface(
 
 	// Install overlay routes so this endpoint can reach peers via this master iface.
 	// Topology may be nil for first-boot scenarios; skip silently in that case.
+	// ConfigureTransport re-installs the final AllowedIPs routes on every AddPeer
+	// pass; this eager helper remains for first-boot visibility before the first
+	// AddPeer-driven transport configuration lands.
 	if e.node.topology != nil {
 		if routeErr := installOverlayRoutesForMaster(
 			e.node.topology,
@@ -616,52 +619,29 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 			continue
 		}
 
-		// Skip /32 routes here — they are installed below with src=overlay hint
-		// in the second loop. Installing them twice (first without src, then with)
-		// causes the src attribute to be silently lost on some kernels.
-		if ones, bits := cidrNet.Mask.Size(); bits == 32 && ones == 32 && overlayIP != nil {
-			continue
-		}
-
-		if err := endpointRouteReplaceLink(cidrNet, ifaceName); err != nil {
-			e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Msg("failed to install overlay route")
-		}
-	}
-
-	// v1.12.2+: re-install endpoint-side overlay /32 routes with src=overlay IP hint.
-	// Kernel by default uses the iface's primary (transport) IP as src for outgoing
-	// packets, which makes echo-reply unroutable on the far endpoint (it has no
-	// route back to the transport IP). Setting `src` to this node's overlay IP
-	// makes outgoing pings use the overlay IP as src, which the far endpoint can
-	// reach via its symmetric overlay /32 route.
-	if overlayIP != nil {
-		for _, allowedCIDR := range allowedIPs {
-			trimmedCIDR := strings.TrimSpace(allowedCIDR)
-			if trimmedCIDR == "" {
-				continue
-			}
-			_, cidrNet, parseErr := net.ParseCIDR(trimmedCIDR)
-			if parseErr != nil {
-				continue
-			}
-			// Only re-install /32 host routes (endpoint-to-endpoint destinations).
-			ones, bits := cidrNet.Mask.Size()
-			if bits != 32 || ones != 32 {
-				continue
-			}
-			if shouldSkipEndpointLinkRoute(cidrNet, overlayIP) {
-				continue
-			}
+		// Install with src hint when overlayIP is assigned. Covers /32, /27, /25,
+		// and any other CIDR the master pushes via AllowedIPs. Without the src hint,
+		// kernel picks the iface's transport /30 address as source, which the far
+		// side rejects at the WG AllowedIPs filter.
+		if overlayIP != nil {
 			if err := endpointRouteReplaceLinkWithSrc(cidrNet, ifaceName, overlayIP); err != nil {
 				e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).Str("src", overlayIP.String()).
 					Msg("failed to install overlay route with src hint")
 			}
+			continue
+		}
+
+		// First-boot (no overlay IP yet). Install a plain route; reconcile will
+		// re-install with src once overlay IP is assigned.
+		if err := endpointRouteReplaceLink(cidrNet, ifaceName); err != nil {
+			e.node.logger.Warn().Err(err).Str("cidr", cidrNet.String()).
+				Msg("failed to install overlay route (no overlay IP yet)")
 		}
 	}
 	// TODO: ExtraRoutes proto field is intentionally unused here — extra /32 overlay
 	// routes are appended to AllowedIps by the CLI (cmd/mesh-ctl/cmd/endpoint.go)
 	// rather than passed via ExtraRoutes. The field is retained for proto compatibility
-	// and future use. See local tracker for the cleanup task.
+	// and future use. See the follow-up issue for the cleanup task.
 	_ = extraRoutes
 
 	e.node.logger.Info().
@@ -894,8 +874,10 @@ func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedI
 			Msg("endpoint per-master iface created lazily from AddPeer RPC")
 
 		// Install overlay range routes with src hint, same as createMasterInterface.
-		// Without this, src-hinted routes are absent until the next reconcile pass,
-		// creating a window where endpoint↔endpoint traffic uses the transport IP as src.
+		// ConfigureTransport runs immediately after AddPeer in the production RPC
+		// path and re-installs the final AllowedIPs routes with the correct src.
+		// This helper remains to preserve first-boot visibility before that pass and
+		// stays idempotent because both helpers use RouteReplace semantics.
 		if e.node.topology != nil {
 			overlayRanges := make([]string, 0, len(e.node.topology.Overlay.Ranges))
 			for _, namedRange := range e.node.topology.Overlay.Ranges {
