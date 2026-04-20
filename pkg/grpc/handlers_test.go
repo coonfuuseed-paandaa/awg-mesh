@@ -78,6 +78,9 @@ func (m *testTunnelManager) AddTunnel(
 	peerPublicKey wg.Key,
 	allowedIPs []string,
 ) error {
+	// Defensive copy so assertions are not sensitive to post-call mutations
+	// of the caller's slice (CodeRabbit nitpick PR #79).
+	allowedIPsCopy := append([]string(nil), allowedIPs...)
 	m.addTunnelCalls = append(m.addTunnelCalls, addTunnelCall{
 		name:                name,
 		host:                endpointHost,
@@ -88,7 +91,7 @@ func (m *testTunnelManager) AddTunnel(
 		endpointTransportIP: endpointTransportIP,
 		weight:              weight,
 		peerKey:             peerPublicKey,
-		allowedIPs:          allowedIPs,
+		allowedIPs:          allowedIPsCopy,
 	})
 	return m.addErr
 }

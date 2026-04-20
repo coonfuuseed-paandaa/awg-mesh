@@ -261,6 +261,21 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 		peerPublicKey = parsedKey
 	}
 
+	// Validate allowed_ips at the RPC boundary so malformed input returns
+	// InvalidArgument rather than bubbling up as Internal from the manager.
+	// Mirrors UpdateTunnelPeer validation for consistency.
+	normalizedAllowedIPs := make([]string, 0, len(req.GetAllowedIps()))
+	for _, cidr := range req.GetAllowedIps() {
+		trimmedCIDR := strings.TrimSpace(cidr)
+		if trimmedCIDR == "" {
+			return nil, status.Error(codes.InvalidArgument, "allowed_ips entries must be non-empty CIDRs")
+		}
+		if _, _, parseErr := net.ParseCIDR(trimmedCIDR); parseErr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "allowed_ips contains invalid CIDR %q", cidr)
+		}
+		normalizedAllowedIPs = append(normalizedAllowedIPs, trimmedCIDR)
+	}
+
 	err := h.tunnelMgr.AddTunnel(
 		tunnelName,
 		endpointHost,
@@ -271,7 +286,7 @@ func (h *AgentHandler) AddTunnel(_ context.Context, req *proto.AddTunnelRequest)
 		strings.TrimSpace(req.GetEndpointTransportIp()),
 		weight,
 		peerPublicKey,
-		req.GetAllowedIps(),
+		normalizedAllowedIPs,
 	)
 	if err != nil {
 		h.logger.Error().Err(err).Str("tunnel", tunnelName).Msg("add tunnel failed")
