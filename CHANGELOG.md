@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.11 — 2026-04-21
+
+### Fixes (mesh-ctl audit batch — local tracker #151 round 1 — 17 of 32 items)
+
+- **B1: `config show` node scanner filters `.bak.*` dirs** — backup
+  directories auto-created by `endpoint init` / `master init` were counted as
+  "initialized" nodes, inflating the configured-node count and polluting the
+  per-node listing.
+- **B2: `--topology` default resolves against `--config-dir`** — when the
+  operator leaves `--topology` at the default bare filename, the path is now
+  joined with `--config-dir` so `mesh-ctl config show` (and every other
+  topology-driven command) works from any CWD, not only from inside
+  `~/.mesh-ctl`.
+- **B3: `client prepare` / `master prepare` / `endpoint prepare` output layout** — generated
+  artefacts now live under `configDir/clients/<name>/<platform>.{rsc,sh,json}`
+  and `configDir/nodes/<name>/<name>-docker-compose.yml` respectively; no more
+  concatenated `<client>-<platform>.rsc` files in the config-dir root.
+- **B4: MikroTik veth block now overridable via topology** — `clients[].veth`
+  lets the operator reuse an existing container bridge (for example
+  BridgeDockers 172.33.23.0/24) instead of accepting the hardcoded
+  192.168.100.0/24 subnet that frequently collides with home-LAN ranges.
+- **B11: MikroTik `routing generate` per-DSCP tables** — each routing policy
+  gets its own `/routing/table`, `/routing/rule` by DSCP fwmark, and
+  `/ip/route` with a gateway resolved to the target endpoint's overlay IP.
+  Previously every DSCP class shared a single table routed through the
+  client's own overlay IP — a silent no-op. A commented CLASSIFIER TEMPLATE
+  block in the output documents the `mark-connection` rules the operator
+  must supply to activate the pipeline.
+- **B12: Linux `routing generate` resolves per-policy gateway from topology** —
+  `iptables`/`ip rule`/`ip route` output now steers each DSCP class to the
+  correct target endpoint overlay IP; previously every table pointed at the
+  same fallback gateway.
+- **B13: `--gateway` default is now the first master's overlay IP** — routing
+  packets to the client's own IP is always broken. Default matches the
+  topology-level inference and MikroTik veth other-side pattern.
+- **B14: master compose binds `TokenHash` correctly** — template now receives
+  the bcrypt hash under the variable the compose file references, eliminating
+  the `MESH_TOKEN_HASH=<no value>` literal that shipped in every admin-side
+  master compose file.
+- **B15: upgrade image tag replacement** — when the admin-side compose pins a
+  stale semver tag, `upgrade` rewrites the tag to the target version instead of
+  re-applying the pinned one. Re-running `master prepare` no longer reverts the
+  production image.
+- **B17: upgrade rollback tolerates missing `.bak`** — first-ever upgrade of a
+  node (or any case where `phasePrepare` bailed before snapshotting) no longer
+  hard-fails the rollback path. The function logs a warning and proceeds with
+  the existing live compose; `waitReady` / `reconcile` still guard
+  correctness. Automatic rollback was previously a no-op on every first
+  upgrade.
+- **B18: upgrade `verify` settle delay** — `phaseVerify` now waits a bounded
+  settle window (and retries on transient failure) before probing, replacing
+  the previous immediate probe that raced WireGuard handshake establishment
+  and `reconcile` propagation.
+- **B20: `inspect` master-side peers report no `stale_allowed_ips`** — since
+  v1.12.2 masters compute `AllowedIPs` dynamically from topology
+  (overlay ranges + transport subnet + endpoint /32) at runtime; the static
+  single-/32 admin value never matched. Admin view now leaves `allowedIPs=nil`
+  on the master side so the IP check short-circuits; pubkey drift remains
+  the meaningful master-side signal.
+- **B21: `status` counts endpoint per-master tunnels** — indexing transport
+  allocations and runtime tunnel entries by endpoint name fixes the
+  `TUNNELS=0` display for v1.12.2+ Pattern X endpoints (one `wg-<master>`
+  iface per bound master).
+- **B27: upgrade JSONL log records target version** — `UpgradeLogEntry.Version`
+  is now populated from `DriverConfig.Version` for every event. The log body
+  previously had `"version":""` on every entry, making reconstruction from the
+  JSONL content impossible.
+- **B29: `capture schedule` bare invocation shows current schedule** — instead
+  of erroring with "specify --interval or --show". `--show` is still accepted
+  for scripted use.
+- **B30: `config show` prints resolved absolute topology path** — operator now
+  always sees the actual path the topology will be read from; removes the
+  ambiguity between "mesh-topology.yml (exists)" and
+  "mesh-topology.yml (not found)" whose only difference was the CWD.
+- **B32: `capture` warns on test-pattern `domains_file`** — an operator who
+  forgets to switch back from `domains-test.txt` (5-domain debug set) to the
+  production list now sees an explicit warning instead of silently running
+  the placeholder set through the pipeline.
+
+### Notes
+
+- 14 items from the #151 audit (B5/B19 TOKEN_HASH semantics, B16 pubkey
+  format, B22 client pubkey doc, B24-B28 config root hygiene / `backups/`
+  restructure, B31 `upgrade compose` doc) are deferred to v1.12.12 — they
+  are either doc/design questions or a coherent UX restructure that deserves
+  its own review cycle.
+- Release gate unchanged (R1-R12). All fixes are behavioural, tested in the
+  Go test suite; no new simulation asserts required.
+
 ## v1.12.10 — 2026-04-20
 
 ### Fixes
