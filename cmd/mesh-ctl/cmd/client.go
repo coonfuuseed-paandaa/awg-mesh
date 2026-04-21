@@ -115,7 +115,15 @@ func newClientPrepareCommand() *cobra.Command {
 					Masters:   strings.Join(masterAddrs, ","),
 				}
 
-				outputPath := client.Name + "-docker-compose.yml"
+				// B3 fix: write output to configDir/clients/<name>/ instead of CWD.
+				// Writing to CWD caused files to scatter across wherever the operator
+				// happened to run mesh-ctl; keeping them in configDir makes them
+				// co-located with token and pubkey files for the same client.
+				clientOutDir := filepath.Join(configDir, "clients", name)
+				if err := os.MkdirAll(clientOutDir, 0700); err != nil {
+					return fmt.Errorf("create client output dir %q: %w", clientOutDir, err)
+				}
+				outputPath := filepath.Join(clientOutDir, name+"-docker-compose.yml")
 				templateName := "docker-compose.client.yml.tmpl"
 				if useTraefik {
 					templateName = "docker-compose.client.traefik.yml.tmpl"
@@ -164,11 +172,26 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("resolve masters for client %q: %w", name, err)
 				}
 
+				// B4 fix: resolve veth name and gateway from topology veth block,
+				// falling back to built-in defaults when not specified.
+				// The hardcoded "192.168.100.1/24" conflicts with common home-router
+				// subnets; operators can now override via topology clients[].veth.gateway.
+				vethName := "veth-" + name
+				vethGateway := "192.168.100.1/24"
+				if client.Veth != nil {
+					if client.Veth.Name != "" {
+						vethName = client.Veth.Name
+					}
+					if client.Veth.Gateway != "" {
+						vethGateway = client.Veth.Gateway
+					}
+				}
+
 				ds := mikrotik.DeployScript{
 					ContainerName: name,
 					Image:         resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest"),
-					Veth:          "veth-" + name,
-					VethGateway:   "192.168.100.1/24",
+					Veth:          vethName,
+					VethGateway:   vethGateway,
 					OverlayIP:     client.OverlayIP,
 					OverlayNet:    topo.Overlay.Space,
 					// ListenPort deliberately left 0: clients do not listen,
@@ -183,7 +206,14 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("generate RouterOS script: %w", err)
 				}
 
-				rscPath := name + "-mikrotik.rsc"
+				// B3/B23 fix: write .rsc to configDir/clients/<name>/ instead of CWD.
+				// Keeping output files co-located with token/pubkey prevents scatter
+				// across arbitrary working directories.
+				rscOutDir := filepath.Join(configDir, "clients", name)
+				if err := os.MkdirAll(rscOutDir, 0700); err != nil {
+					return fmt.Errorf("create client output dir %q: %w", rscOutDir, err)
+				}
+				rscPath := filepath.Join(rscOutDir, name+"-mikrotik.rsc")
 				if err := os.WriteFile(rscPath, []byte(rsc), 0644); err != nil {
 					return fmt.Errorf("write RouterOS script: %w", err)
 				}

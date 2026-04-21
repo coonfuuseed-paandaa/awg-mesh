@@ -117,7 +117,9 @@ func newMasterPrepareCommand() *cobra.Command {
 				return fmt.Errorf("load master compose template: %w", err)
 			}
 
-			outputPath := master.Name + "-docker-compose.yml"
+			// B3 fix: write compose to configDir/nodes/<name>/ (co-located with
+			// token and pubkey) instead of CWD.
+			outputPath := filepath.Join(nd, master.Name+"-docker-compose.yml")
 			if err := renderDockerCompose(masterTemplate, data, outputPath); err != nil {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}

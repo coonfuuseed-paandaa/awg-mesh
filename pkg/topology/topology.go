@@ -111,13 +111,32 @@ func (e EndpointNode) PeerAddr() string {
 	return h + ":" + strconv.Itoa(e.ListenPort)
 }
 
+// VethConfig holds the MikroTik veth bridge settings for a client node.
+// When present in the topology, these values override the built-in defaults
+// used by 'mesh-ctl client prepare' when generating the RouterOS deploy script.
+//
+// B4 fix: the previous implementation hardcoded VethGateway to "192.168.100.1/24"
+// which conflicted with common home-router subnets. Operators can now configure
+// both the veth interface name suffix and the gateway CIDR via topology YAML.
+type VethConfig struct {
+	// Name is the veth interface name on the MikroTik (default: "veth-<clientName>").
+	Name string `yaml:"name,omitempty"`
+	// Gateway is the CIDR address assigned to the veth bridge port
+	// (default: "192.168.100.1/24"). Change this when it conflicts with an
+	// existing subnet on the router (e.g. "10.99.0.1/30").
+	Gateway string `yaml:"gateway,omitempty"`
+}
+
 // ClientNode describes a client node.
 type ClientNode struct {
-	Name      string   `yaml:"name"`
-	Type      string   `yaml:"type"`
-	Host      string   `yaml:"host,omitempty"`
-	OverlayIP string   `yaml:"overlay_ip"`
-	GRPCPort  int      `yaml:"grpc_port,omitempty"`
+	Name      string      `yaml:"name"`
+	Type      string      `yaml:"type"`
+	Host      string      `yaml:"host,omitempty"`
+	OverlayIP string      `yaml:"overlay_ip"`
+	GRPCPort  int         `yaml:"grpc_port,omitempty"`
+	// Veth holds MikroTik veth bridge configuration (mikrotik type only).
+	// B4 fix: nil means use defaults (veth-<name>, 192.168.100.1/24).
+	Veth            *VethConfig     `yaml:"veth,omitempty"`
 	Masters         []string        `yaml:"masters"`
 	RoutingPolicies []RoutingPolicy `yaml:"routing_policies,omitempty"`
 	DNS             *DNSConfig      `yaml:"dns,omitempty"`

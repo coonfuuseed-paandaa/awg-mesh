@@ -115,7 +115,10 @@ func newEndpointPrepareCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load endpoint compose template: %w", err)
 			}
-			outputPath := ep.Name + "-docker-compose.yml"
+			// B3 fix: write compose to configDir/nodes/<name>/ (co-located with
+			// token and pubkey) instead of CWD, which scattered files across
+			// whichever directory the operator happened to be in.
+			outputPath := filepath.Join(nd, ep.Name+"-docker-compose.yml")
 			if err := renderDockerCompose(endpointTemplate, data, outputPath); err != nil {
 				return fmt.Errorf("render docker-compose: %w", err)
 			}
