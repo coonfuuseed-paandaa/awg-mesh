@@ -12,6 +12,12 @@
 
 Docker-native encrypted overlay mesh network built on AmneziaWG — topology-as-code, two-level ECMP load balancing, and anti-DPI obfuscation in Docker containers (42 MB node + 15 MB client).
 
+> **Operator reference:** If you need the behavioural contract for token
+> lifecycle, pubkey file formats, client admin-side state, or where
+> `mesh-ctl` does and does not write backup files, see
+> [docs/OPERATOR_FAQ.md](docs/OPERATOR_FAQ.md).
+
+
 Managing a multi-region WireGuard mesh by hand means scattered configs, manual key exchange, and no failover. awg-mesh replaces all of that with a single `mesh-topology.yml` file and three CLI commands. You describe your desired network — masters, endpoints, clients — and the system provisions keys, certificates, tunnels, firewall rules, and load balancer entries automatically using native Linux kernel interfaces (netlink, nftables, eBPF) with no subprocess forking.
 
 The traffic model is two-level ECMP: clients connect to a pool of master nodes (ingress), each master maintains AWG tunnels to a pool of endpoint nodes (egress), and traffic is distributed across all live paths with conntrack-based sticky sessions and health-checked failover.
