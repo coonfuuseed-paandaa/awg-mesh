@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v1.12.12 — 2026-04-21
+
+### Changes (mesh-ctl audit round 2 — local tracker #151 remaining 14 items)
+
+- **B26 / B28: upgrade logs moved to `<configDir>/backups/upgrade-logs/`.** New
+  logs land in the subdir; `mesh-ctl upgrade status` still surfaces pre-v1.12.12
+  logs at the config root as a fallback (operators can move them at their
+  convenience). Constants `upgrade.BackupsDirName` and `upgrade.UpgradeLogsSubdir`
+  in `pkg/upgrade/log.go` are the single source of truth for the layout.
+- **Operator FAQ** — new `docs/OPERATOR_FAQ.md` documents: token lifecycle +
+  `MESH_TOKEN_HASH` semantics identical across master/endpoint/client (#151 B5,
+  B19); pubkey file 32-raw-or-64-hex accept-both policy (#151 B16); client
+  admin-side has no pubkey by design — clients self-register via `AddPeer` RPC
+  (#151 B22); explicit list of what `mesh-ctl` does and does not write under
+  the config dir with `backups/` convention (#151 B24, B25, B28); `mesh-ctl
+  upgrade compose` stdout-is-preview contract (#151 B31).
+- **Investigation finding (no code change needed):** the `nodes/<name>.bak.<ts>/`
+  and `nodes.bak.<ts>/` directories seen by the deployer are **not created by
+  `mesh-ctl`** — they are operator-managed snapshots (e.g. PowerShell
+  `Rename-Item`). `mesh-ctl`'s only backup writers are the upgrade rollback
+  compose (`<nodeDir>/<name>-docker-compose.yml.bak`), the `upgrade compose
+  --in-place` safety copy, and the upgrade JSONL logs (now in
+  `backups/upgrade-logs/`). See FAQ for the full table.
+
+### Test Gates Added
+
+- `TestMostRecentLogPath_LegacyFallback` — pins that pre-v1.12.12 config-root
+  logs are still surfaced when no subdir logs exist.
+- `TestMostRecentLogPath_NewerLocationWins` — pins that a newer log in
+  `backups/upgrade-logs/` wins over an older legacy config-root log.
+
 ## v1.12.11 — 2026-04-21
 
 ### Fixes (mesh-ctl audit batch — local tracker #151 round 1 — 17 of 32 items)
