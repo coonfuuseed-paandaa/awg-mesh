@@ -90,8 +90,12 @@ type DriverConfig struct {
 	ProbeTimeout   time.Duration
 	DowntimeBudget time.Duration // per-node gRPC Ready poll budget (default 60 s)
 	DeployWait     time.Duration // manual-deploy gRPC poll window (default 120 s)
-	Logger         *Logger
-	SSHOpts        SSHOpts
+	// Version is the target upgrade version string (e.g. "v1.12.11").
+	// B27 fix: was hardcoded as "" in appendLog; now stored here so every log
+	// entry records the version that was being installed when the event fired.
+	Version string
+	Logger  *Logger
+	SSHOpts SSHOpts
 	// SSHDeploy executes a remote shell command when SSHOpts.Enabled is true.
 	// Must be set when SSHOpts.Enabled == true; ignored otherwise.
 	// Inject from the cmd package via upgrade.go to avoid a circular import.
@@ -220,7 +224,7 @@ func (d *Driver) appendLog(step *NodeUpgradeStep, phase, status, reason string, 
 		return nil
 	}
 	return d.cfg.Logger.Append(UpgradeLogEntry{
-		Version:    "", // filled in by upgrade command
+		Version:    d.cfg.Version, // B27 fix: was always ""; now set from DriverConfig.Version
 		NodeName:   step.Name,
 		Phase:      phase,
 		Status:     status,
@@ -402,27 +406,55 @@ func (d *Driver) phaseInit(ctx context.Context, step *NodeUpgradeStep) error {
 }
 
 // phaseVerify runs data-plane probes for all pairs involving this node.
+//
+// B18 fix: the previous implementation probed immediately after wait_ready,
+// which races with WireGuard tunnel establishment and reconcile propagation.
+// Handshakes and AllowedIPs updates require a short settle window after the
+// node reports gRPC Ready. We now wait verifySettleDelay before the first
+// probe attempt and retry up to verifyMaxAttempts times with verifyRetryDelay
+// between attempts so transient "tunnel not yet up" failures are not mistaken
+// for real data-plane failures that trigger rollback.
+const (
+	verifySettleDelay  = 5 * time.Second
+	verifyRetryDelay   = 3 * time.Second
+	verifyMaxAttempts  = 3
+)
+
 func (d *Driver) phaseVerify(_ context.Context, step *NodeUpgradeStep) error {
 	if d.cfg.Prober == nil {
 		// No prober configured — skip verification (used in tests).
 		return nil
 	}
-	results := d.cfg.Prober(d.cfg.Topology, d.cfg.ConfigDir, d.cfg.ProbeTimeout, 4)
-	var broken []string
-	for _, r := range results {
-		if r.Reason == "" {
-			continue
+
+	// Settle: give WireGuard handshakes and reconcile propagation time to
+	// complete before the first probe attempt.
+	time.Sleep(verifySettleDelay)
+
+	var lastErr error
+	for attempt := 1; attempt <= verifyMaxAttempts; attempt++ {
+		results := d.cfg.Prober(d.cfg.Topology, d.cfg.ConfigDir, d.cfg.ProbeTimeout, 4)
+		var broken []string
+		for _, r := range results {
+			if r.Reason == "" {
+				continue
+			}
+			if r.MasterName == step.Name || r.EndpointName == step.Name {
+				broken = append(broken, fmt.Sprintf("master=%s endpoint=%s reason=%s",
+					r.MasterName, r.EndpointName, r.Reason))
+			}
 		}
-		if r.MasterName == step.Name || r.EndpointName == step.Name {
-			broken = append(broken, fmt.Sprintf("master=%s endpoint=%s reason=%s",
-				r.MasterName, r.EndpointName, r.Reason))
+		if len(broken) == 0 {
+			return nil
 		}
-	}
-	if len(broken) > 0 {
-		return fmt.Errorf("data-plane verification failed for %s: %s",
+		lastErr = fmt.Errorf("data-plane verification failed for %s: %s",
 			step.Name, strings.Join(broken, "; "))
+		if attempt < verifyMaxAttempts {
+			fmt.Printf("  [%s] verify attempt %d/%d failed — retrying in %s\n",
+				step.Name, attempt, verifyMaxAttempts, verifyRetryDelay)
+			time.Sleep(verifyRetryDelay)
+		}
 	}
-	return nil
+	return lastErr
 }
 
 // loadToken reads the auth token for a node from its node directory.

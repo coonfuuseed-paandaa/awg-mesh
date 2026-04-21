@@ -9,6 +9,7 @@ import (
 	"text/template"
 	"time"
 
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/upgrade"
 	"github.com/rs/zerolog/log"
@@ -127,6 +128,7 @@ Exit code: 0 = all nodes succeeded; 1 = one or more nodes failed or rolled back.
 			cfg := upgrade.DriverConfig{
 				ConfigDir:        configDir,
 				Topology:         topo,
+				Version:          version, // B27 fix: populate so log entries record the target version
 				Logger:           logger,
 				SSHOpts:          sshOpts,
 				SSHDeploy:        buildSSHDeployer(sshOpts),
@@ -515,10 +517,23 @@ func parseHostPort(addr string) (string, string, error) {
 
 // buildComposeData constructs the template data map for compose rendering.
 // It pulls node-specific fields (overlay IP, listen port, etc.) from the topology.
+//
+// B14 fix: the previous implementation stored the raw token under "Token" but
+// the compose templates expect {{.TokenHash}} (a bcrypt hash with $ escaped for
+// Docker Compose). Missing key → text/template renders <no value> → node
+// bootstraps an empty MESH_TOKEN_HASH and rejects every auth attempt.
 func buildComposeData(topo *topology.Topology, nodeName, role, newImage, token, cfgDir string) (map[string]interface{}, error) {
+	// Hash the raw token and escape $ signs for Docker Compose interpolation.
+	hash, err := pkgtls.HashToken(token)
+	if err != nil {
+		return nil, fmt.Errorf("hash token for %s: %w", nodeName, err)
+	}
+	tokenHash := composeEscapeDollar(hash)
+
 	data := map[string]interface{}{
 		"Image":     newImage,
-		"Token":     token,
+		"Token":     token,     // kept for backward compat; templates should use TokenHash
+		"TokenHash": tokenHash, // B14 fix: what compose templates actually reference
 		"ConfigDir": cfgDir,
 	}
 
@@ -532,6 +547,7 @@ func buildComposeData(topo *topology.Topology, nodeName, role, newImage, token, 
 		data["Mode"] = "master"
 		data["OverlayIP"] = m.OverlayIP
 		data["ListenPort"] = m.ListenPort
+		data["Host"] = m.Host
 	case "endpoint":
 		e := topo.FindEndpoint(nodeName)
 		if e == nil {
@@ -541,6 +557,7 @@ func buildComposeData(topo *topology.Topology, nodeName, role, newImage, token, 
 		data["Mode"] = "endpoint"
 		data["OverlayIP"] = e.OverlayIP
 		data["ListenPort"] = e.ListenPort
+		data["Host"] = e.Host
 	}
 	return data, nil
 }
