@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"

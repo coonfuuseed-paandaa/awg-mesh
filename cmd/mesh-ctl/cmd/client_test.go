@@ -61,7 +61,7 @@ func TestClientPrepareImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			resolvedImage := resolveImage(tc.cliFlag, tc.topoImage, fallback)
+			resolvedImage := resolveImage(tc.cliFlag, tc.topoImage, fallback, "defaults.image.client")
 
 			data := struct {
 				Name      string

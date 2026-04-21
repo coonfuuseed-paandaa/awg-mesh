@@ -215,12 +215,12 @@ func TestReconcileNodeResultCounters(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name           string
-		rpcErr         error
-		rpcResp        *proto.AddPeerResponse
-		wantUpdated    int
-		wantUnchanged  int
-		wantFailed     int
+		name          string
+		rpcErr        error
+		rpcResp       *proto.AddPeerResponse
+		wantUpdated   int
+		wantUnchanged int
+		wantFailed    int
 	}{
 		{
 			name:          "success → updated",

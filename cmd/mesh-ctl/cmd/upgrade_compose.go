@@ -23,14 +23,39 @@ func newUpgradeComposeCommand() *cobra.Command {
 		Use:   "compose <old-file>",
 		Short: "Migrate an older-format docker-compose.yml to the current schema",
 		Long: `compose reads an older-format awg-mesh docker-compose file, detects
-its schema version, and migrates it to the current schema:
-  - MESH_TOKEN (v1.5.1) or MESH_TOKEN_HASH + command: (v1.6.0) → env-only
-  - MESH_CONFIG_DIR=/config volume mount added (v1.9.0 → current)
-  - Operator comments are preserved
+its schema version, and migrates it to the current schema.
 
-By default the migrated file is written to stdout.
-Use --in-place to rewrite the file in-place (original is saved as <file>.bak).
-Use --from-schema to override auto-detection when the heuristic is ambiguous.`,
+SCHEMA VERSIONS
+  v1.5.1  MESH_TOKEN environment variable (plain token, no hash)
+  v1.6.0  MESH_TOKEN_HASH + command: directive for bootstrap
+  v1.9.0  MESH_CONFIG_DIR=/config + volume mount added
+  current No command: directive; MESH_TOKEN_HASH only; MESH_CONFIG_DIR present
+
+MIGRATION RULES
+  v1.5.1 → current: MESH_TOKEN renamed to MESH_TOKEN_HASH (value hashed on read);
+                     command: removed; MESH_CONFIG_DIR=/config added.
+  v1.6.0 → current: command: removed; MESH_CONFIG_DIR=/config added.
+  v1.9.0 → current: no structural change needed (already compatible).
+
+OPERATOR COMMENTS
+  Comments in the source file are preserved in the migrated output.
+
+OUTPUT
+  By default the migrated file is written to stdout (safe for inspection).
+  Use --in-place to rewrite the file in-place; the original is saved with
+  a .bak extension (e.g. docker-compose.yml.bak) before any changes.
+  Use --from-schema to skip auto-detection when the heuristic is ambiguous
+  (e.g. because a custom image tag was used instead of the standard ones).
+
+EXAMPLES
+  # Preview migration output:
+  mesh-ctl upgrade compose /etc/docker/compose/master-01-docker-compose.yml
+
+  # Migrate in-place (original preserved as .bak):
+  mesh-ctl upgrade compose --in-place /etc/docker/compose/master-01-docker-compose.yml
+
+  # Force schema version when auto-detection is wrong:
+  mesh-ctl upgrade compose --from-schema v1.6.0 /etc/docker/compose/master-01-docker-compose.yml`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := strings.TrimSpace(args[0])

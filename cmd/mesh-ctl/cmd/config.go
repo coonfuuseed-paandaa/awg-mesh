@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -26,7 +27,14 @@ func newConfigShowCommand() *cobra.Command {
 		Short: "Display current mesh-ctl configuration paths and state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Config directory:  %s\n", configDir)
-			fmt.Printf("Topology file:    %s\n", topologyPath)
+			// B30 fix: show the resolved absolute topology path so the operator
+			// always sees where the file will actually be read from, not the
+			// bare filename that was passed on the command line.
+			absTopology, err := filepath.Abs(topologyPath)
+			if err != nil {
+				absTopology = topologyPath // fallback: show as-is
+			}
+			fmt.Printf("Topology file:    %s\n", absTopology)
 
 			// Check CA
 			caFile := filepath.Join(configDir, "ca.crt")
@@ -49,12 +57,26 @@ func newConfigShowCommand() *cobra.Command {
 			if err != nil {
 				fmt.Printf("Nodes:            none (no nodes directory)\n")
 			} else {
-				fmt.Printf("Nodes:            %d configured\n", len(entries))
+				// B1 fix: count only real node directories; skip .bak.* backup
+				// dirs created by the upgrade driver (e.g. "master-01.bak.20260418").
+				// Without this filter, backup dirs appear as phantom nodes with
+				// "incomplete" status and inflate the node count.
+				nodeCount := 0
+				for _, e := range entries {
+					if e.IsDir() && !isBackupDir(e.Name()) {
+						nodeCount++
+					}
+				}
+				fmt.Printf("Nodes:            %d configured\n", nodeCount)
 				for _, e := range entries {
 					if !e.IsDir() {
 						continue
 					}
 					name := e.Name()
+					// B1 fix: skip .bak.* dirs in the per-node listing.
+					if isBackupDir(name) {
+						continue
+					}
 					tokenFile := filepath.Join(nodesDir, name, "token")
 					pubkeyFile := filepath.Join(nodesDir, name, "pubkey")
 					hasToken := fileExists(tokenFile)
@@ -72,11 +94,11 @@ func newConfigShowCommand() *cobra.Command {
 				}
 			}
 
-			// Check topology
-			if _, err := os.Stat(topologyPath); err == nil {
-				fmt.Printf("Topology:         %s (exists)\n", topologyPath)
+			// Check topology (use the already-resolved absolute path).
+			if _, err := os.Stat(absTopology); err == nil {
+				fmt.Printf("Topology:         %s (exists)\n", absTopology)
 			} else {
-				fmt.Printf("Topology:         %s (not found)\n", topologyPath)
+				fmt.Printf("Topology:         %s (not found)\n", absTopology)
 			}
 
 			transportFile := filepath.Join(configDir, "transport.yml")
@@ -112,4 +134,11 @@ func newConfigShowCommand() *cobra.Command {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// isBackupDir reports whether name looks like an upgrade-driver backup directory
+// (e.g. "master-01.bak.20260418T182300Z"). These are created by phasePrepare in
+// pkg/upgrade/driver.go and must not be surfaced as real node entries.
+func isBackupDir(name string) bool {
+	return strings.Contains(name, ".bak.")
 }

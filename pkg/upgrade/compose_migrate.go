@@ -66,14 +66,14 @@ type composeDoc struct {
 }
 
 type composeService struct {
-	Image       string            `yaml:"image"`
-	Command     interface{}       `yaml:"command"` // may be string or []string
-	Environment interface{}       `yaml:"environment"` // may be []string or map[string]string
-	Volumes     []string          `yaml:"volumes"`
-	Restart     string            `yaml:"restart"`
-	NetworkMode string            `yaml:"network_mode"`
-	CapAdd      []string          `yaml:"cap_add"`
-	Devices     []string          `yaml:"devices"`
+	Image       string      `yaml:"image"`
+	Command     interface{} `yaml:"command"`     // may be string or []string
+	Environment interface{} `yaml:"environment"` // may be []string or map[string]string
+	Volumes     []string    `yaml:"volumes"`
+	Restart     string      `yaml:"restart"`
+	NetworkMode string      `yaml:"network_mode"`
+	CapAdd      []string    `yaml:"cap_add"`
+	Devices     []string    `yaml:"devices"`
 }
 
 // DetectSchema heuristically identifies the schema version of a docker-compose

@@ -26,12 +26,23 @@ func rollbackNode(ctx context.Context, cfg DriverConfig, step *NodeUpgradeStep) 
 	livePath := liveComposePath(cfg, step.Name)
 
 	// --- Step 1: Restore backup compose file ---
+	// B17 fix: phasePrepare creates .bak only when a live compose existed before
+	// the upgrade started. On a first-time upgrade (or if phasePrepare failed
+	// before writing the backup) the .bak file may not exist. In that case we
+	// emit a warning and continue with whatever live compose is on disk — the
+	// redeploy step below will still pull the old image and come up.
 	backup, err := os.ReadFile(backupPath)
 	if err != nil {
-		return fmt.Errorf("rollback %s: read backup compose %s: %w", step.Name, backupPath, err)
-	}
-	if err := os.WriteFile(livePath, backup, 0600); err != nil {
-		return fmt.Errorf("rollback %s: restore compose to %s: %w", step.Name, livePath, err)
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "  [%s] WARNING: backup compose not found at %s — skipping restore, using existing live compose\n",
+				step.Name, backupPath)
+		} else {
+			return fmt.Errorf("rollback %s: read backup compose %s: %w", step.Name, backupPath, err)
+		}
+	} else {
+		if err := os.WriteFile(livePath, backup, 0600); err != nil {
+			return fmt.Errorf("rollback %s: restore compose to %s: %w", step.Name, livePath, err)
+		}
 	}
 
 	// --- Step 2: Redeploy old image ---

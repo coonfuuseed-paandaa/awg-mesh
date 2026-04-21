@@ -118,7 +118,7 @@ func TestDNSServerUpdateRecords(t *testing.T) {
 	// Update records
 	newRecords := BuildZoneRecords("mesh.zone", map[string]string{
 		"node-asia-01": "172.20.70.34",
-		"node-us-01": "172.20.70.38",
+		"node-us-01":   "172.20.70.38",
 	})
 	srv.UpdateRecords(newRecords)
 

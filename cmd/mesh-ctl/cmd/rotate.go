@@ -13,7 +13,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/internal/adminstate"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
@@ -21,6 +20,7 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/spf13/cobra"
 )
 
 const (

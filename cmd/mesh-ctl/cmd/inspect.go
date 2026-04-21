@@ -21,11 +21,11 @@ import (
 // driftRow holds one row of the inspect comparison table.
 type driftRow struct {
 	peerName     string
-	ifaceName    string   // kernel interface name for this peer's tunnel (e.g. "wg-master-a")
-	adminKey     string   // hex pubkey known to admin (from disk pubkey file)
-	diskKey      string   // hex pubkey from node's transport.yml (disk state)
-	runtimeKey   string   // hex pubkey from live wg/tunnel state (runtime)
-	adminIPs     string   // allowed IPs per topology
+	ifaceName    string // kernel interface name for this peer's tunnel (e.g. "wg-master-a")
+	adminKey     string // hex pubkey known to admin (from disk pubkey file)
+	diskKey      string // hex pubkey from node's transport.yml (disk state)
+	runtimeKey   string // hex pubkey from live wg/tunnel state (runtime)
+	adminIPs     string // allowed IPs per topology
 	diskIPs      string
 	runtimeIPs   string
 	driftReasons []string
@@ -240,11 +240,19 @@ func buildAdminView(
 				continue
 			}
 			pubkeyHex := readAdminPubkey(cfgDir, epName)
+			// B20 fix: do NOT set allowedIPs for master-side peers.
+			// Since v1.12.2 masters compute AllowedIPs dynamically from topology
+			// (overlay ranges + transport subnet + endpoint overlay /32). The simple
+			// "{overlayIP}/32" value used here never matched the full runtime set,
+			// causing every master inspect to report stale_allowed_ips even when the
+			// mesh was healthy. Setting allowedIPs to nil makes ipsMatch short-circuit
+			// to true (no admin expectation → no mismatch); key comparison is the
+			// meaningful signal on the master side.
 			peers = append(peers, adminPeerView{
 				name:       epName,
 				ifaceName:  "wg-" + epName,
 				pubkeyHex:  pubkeyHex,
-				allowedIPs: []string{epNode.OverlayIP + "/32"},
+				allowedIPs: nil,
 			})
 		}
 	} else if ep != nil {
@@ -336,9 +344,9 @@ func printInspectReport(nodeName string, state *proto.TransportStateResponse, ro
 	}
 
 	const (
-		colWidth  = 18
+		colWidth   = 18
 		ifaceWidth = 20
-		ipWidth   = 22
+		ipWidth    = 22
 	)
 
 	// Header — IFACE sits between PEER and ADMIN_KEY.

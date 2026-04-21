@@ -197,6 +197,9 @@ func (f *NftablesFirewall) EnableStickyECMP(balancerCIDR string) error {
 	if err != nil {
 		return fmt.Errorf("nftables: parse balancer CIDR %q: %w", balancerCIDR, err)
 	}
+	if ip4 := ipNet.IP.To4(); ip4 == nil || len(ipNet.Mask) != net.IPv4len {
+		return fmt.Errorf("nftables: balancer CIDR %q must be IPv4", balancerCIDR)
+	}
 
 	cidrExprs := cidrFilterExprs(ipNet)
 

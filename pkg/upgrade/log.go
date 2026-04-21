@@ -152,4 +152,3 @@ func MostRecentLogPath(configDir string) (string, error) {
 	}
 	return best, nil
 }
-

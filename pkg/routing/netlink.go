@@ -108,6 +108,14 @@ func (r *NetlinkRouter) SetECMPRoute(dest *net.IPNet, nexthops []NextHop) error 
 		if err != nil {
 			return fmt.Errorf("nexthop dev %q: %w", nh.Dev, err)
 		}
+		gw := net.ParseIP(nh.Via)
+		if gw == nil {
+			return fmt.Errorf("nexthop via %q: invalid IP", nh.Via)
+		}
+		gw = gw.To4()
+		if gw == nil {
+			return fmt.Errorf("nexthop via %q: IPv6 not supported for IPv4 ECMP route", nh.Via)
+		}
 		weight := nh.Weight
 		if weight < 1 {
 			weight = 1
@@ -115,7 +123,7 @@ func (r *NetlinkRouter) SetECMPRoute(dest *net.IPNet, nexthops []NextHop) error 
 		multipath = append(multipath, &netlink.NexthopInfo{
 			LinkIndex: link.Attrs().Index,
 			Hops:      weight - 1, // netlink uses hops = weight - 1
-			Gw:        net.ParseIP(nh.Via),
+			Gw:        gw,
 		})
 	}
 

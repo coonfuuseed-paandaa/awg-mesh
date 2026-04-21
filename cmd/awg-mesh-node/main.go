@@ -17,9 +17,9 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/rs/zerolog"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/logging"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
+	"github.com/rs/zerolog"
 )
 
 const (

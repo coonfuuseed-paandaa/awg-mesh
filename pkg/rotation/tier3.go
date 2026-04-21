@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rs/zerolog/log"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/rs/zerolog/log"
 )
 
 // Tier3Rotation executes keypair rotation with a brief (~2s) reconnect expected.

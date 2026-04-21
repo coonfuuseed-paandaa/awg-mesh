@@ -102,8 +102,11 @@ func TestBuildAdminView(t *testing.T) {
 			if p.pubkeyHex == "" {
 				t.Errorf("peer %q: expected non-empty pubkeyHex", p.name)
 			}
-			if len(p.allowedIPs) == 0 {
-				t.Errorf("peer %q: expected non-empty allowedIPs", p.name)
+			// B20 fix: master-side admin view intentionally leaves allowedIPs
+			// nil so ipsMatch short-circuits and does not report
+			// stale_allowed_ips for the dynamically-computed runtime set.
+			if p.allowedIPs != nil {
+				t.Errorf("peer %q: expected nil allowedIPs on master side, got %v", p.name, p.allowedIPs)
 			}
 		}
 	})

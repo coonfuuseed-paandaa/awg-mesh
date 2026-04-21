@@ -21,11 +21,11 @@ func (r *NetlinkRouter) RouteReplaceLink(_ *net.IPNet, _ string) error       { r
 func (r *NetlinkRouter) RouteReplaceLinkWithSrc(_ *net.IPNet, _ string, _ net.IP) error {
 	return errNotSupported
 }
-func (r *NetlinkRouter) RouteDelete(_ *net.IPNet) error                      { return errNotSupported }
-func (r *NetlinkRouter) SetECMPRoute(_ *net.IPNet, _ []NextHop) error        { return errNotSupported }
-func (r *NetlinkRouter) RemoveECMPRoute(_ *net.IPNet) error                  { return errNotSupported }
-func (r *NetlinkRouter) ListRoutes() ([]RouteEntry, error)                   { return nil, errNotSupported }
-func (r *NetlinkRouter) AddrAdd(_ string, _ *net.IPNet) error                { return errNotSupported }
+func (r *NetlinkRouter) RouteDelete(_ *net.IPNet) error               { return errNotSupported }
+func (r *NetlinkRouter) SetECMPRoute(_ *net.IPNet, _ []NextHop) error { return errNotSupported }
+func (r *NetlinkRouter) RemoveECMPRoute(_ *net.IPNet) error           { return errNotSupported }
+func (r *NetlinkRouter) ListRoutes() ([]RouteEntry, error)            { return nil, errNotSupported }
+func (r *NetlinkRouter) AddrAdd(_ string, _ *net.IPNet) error         { return errNotSupported }
 func (r *NetlinkRouter) AddrExists(_ string, _ *net.IPNet) (bool, error) {
 	return false, errNotSupported
 }
@@ -44,13 +44,13 @@ func (s *ProcSysctl) EnableL4Hash() error     { return errNotSupported }
 type NftablesFirewall struct{}
 
 // NewNftablesFirewall returns an error on non-Linux platforms.
-func NewNftablesFirewall() (*NftablesFirewall, error)        { return nil, errNotSupported }
-func (f *NftablesFirewall) SetupNAT(_ string) error          { return errNotSupported }
-func (f *NftablesFirewall) TeardownNAT() error               { return errNotSupported }
-func (f *NftablesFirewall) ClampMSSToPMTU() error            { return errNotSupported }
-func (f *NftablesFirewall) EnableStickyECMP(_ string) error         { return errNotSupported }
-func (f *NftablesFirewall) DisableStickyECMP(_ string) error        { return errNotSupported }
-func (f *NftablesFirewall) EnableWGCrossTunnelForward() error       { return errNotSupported }
+func NewNftablesFirewall() (*NftablesFirewall, error)         { return nil, errNotSupported }
+func (f *NftablesFirewall) SetupNAT(_ string) error           { return errNotSupported }
+func (f *NftablesFirewall) TeardownNAT() error                { return errNotSupported }
+func (f *NftablesFirewall) ClampMSSToPMTU() error             { return errNotSupported }
+func (f *NftablesFirewall) EnableStickyECMP(_ string) error   { return errNotSupported }
+func (f *NftablesFirewall) DisableStickyECMP(_ string) error  { return errNotSupported }
+func (f *NftablesFirewall) EnableWGCrossTunnelForward() error { return errNotSupported }
 
 // DSCPPolicy stub for non-Linux platforms.
 type DSCPPolicy struct {

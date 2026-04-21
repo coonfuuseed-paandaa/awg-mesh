@@ -9,6 +9,19 @@ import (
 
 const deployScriptTemplate = `# awg-mesh RouterOS deployment script
 # Generated for container {{.ContainerName}}
+#
+# KEYPAIR NOTE (B22):
+# The awg-mesh-client container generates its own AmneziaWG keypair on first boot.
+# After running this script and starting the container, retrieve the public key with:
+#
+#   /container/shell [find where name={{.ContainerName}}]
+#   # inside the container shell:
+#   cat /config/publickey
+#
+# Then run 'mesh-ctl client init {{.ContainerName}}' from the admin workstation
+# (the init RPC reads the node's public key and registers it with all masters).
+# You do NOT need to copy/paste the public key manually — mesh-ctl init handles
+# the key exchange via gRPC.
 
 {{- range .VethCommands }}
 {{ . }}

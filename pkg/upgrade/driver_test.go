@@ -270,8 +270,13 @@ func TestRollbackNode_RestoresBackup(t *testing.T) {
 	}
 }
 
-// TestRollbackNode_MissingBackup verifies that rollbackNode returns an error
-// when the .bak file does not exist (no compose was snapshotted).
+// TestRollbackNode_MissingBackup verifies the B17 fix: rollbackNode must NOT
+// hard-fail when the .bak compose is absent (first-ever upgrade of a node, or
+// phasePrepare bailed before writing the snapshot). The function now logs a
+// warning and proceeds with whatever live compose is on disk — the downstream
+// waitReady / reconcile steps still guard correctness. The only error expected
+// here is the downtime-budget timeout from waitReady because the test harness
+// has no real gRPC server.
 func TestRollbackNode_MissingBackup(t *testing.T) {
 	topo := singleMasterTopo()
 	_, step, dir := setupDriver(t, topo)
@@ -285,10 +290,15 @@ func TestRollbackNode_MissingBackup(t *testing.T) {
 
 	err := rollbackNode(context.Background(), cfg, step)
 	if err == nil {
-		t.Fatal("expected error when backup compose is missing")
+		t.Fatal("expected waitReady timeout error (no real gRPC server in test harness)")
 	}
-	if !strings.Contains(err.Error(), "backup") && !strings.Contains(err.Error(), ".bak") {
-		t.Errorf("error should mention backup, got: %v", err)
+	// Post-B17 the error must be the downstream waitReady failure, NOT a
+	// "read backup compose" error from the removed hard-fail.
+	if strings.Contains(err.Error(), "read backup compose") {
+		t.Errorf("B17 regression: rollback still hard-fails on missing .bak, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "did not recover") && !strings.Contains(err.Error(), "not become ready") {
+		t.Errorf("expected waitReady timeout error, got: %v", err)
 	}
 }
 

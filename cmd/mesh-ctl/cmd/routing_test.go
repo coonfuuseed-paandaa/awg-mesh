@@ -89,7 +89,8 @@ func TestLinuxRoutingGenerate(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := generateLinux(client, "172.33.23.100")
+	// B12 fix: no topology passed — routes fall back to fallbackGateway.
+	err := generateLinux(client, "172.33.23.100", nil)
 	w.Close()
 	os.Stdout = origStdout
 
@@ -109,7 +110,7 @@ func TestLinuxRoutingGenerate(t *testing.T) {
 		t.Error("Linux script should contain ip rule for fwmark 10 lookup table 110")
 	}
 	if !strings.Contains(script, "ip route replace default via 172.33.23.100 table 110") {
-		t.Error("Linux script should contain route for numeric table 110 (100+DSCP)")
+		t.Error("Linux script should contain route for numeric table 110 (100+DSCP) — fallback gateway used when topo=nil")
 	}
 	if !strings.Contains(script, "set -euo pipefail") {
 		t.Error("Linux script should be idempotent with set -euo pipefail")
@@ -201,7 +202,7 @@ func TestLinuxRoutingGenerate_RejectsOutOfRangeDSCP(t *testing.T) {
 		},
 	}
 
-	err := generateLinux(client, "172.33.23.100")
+	err := generateLinux(client, "172.33.23.100", nil)
 	if err == nil {
 		t.Fatal("generateLinux with DSCP=153: expected non-nil error, got nil")
 	}

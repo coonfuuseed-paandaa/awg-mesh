@@ -14,14 +14,14 @@ import (
 )
 
 type mockAwgAgentClient struct {
-	mu           sync.Mutex
-	rotateCalls  int
-	healthCalls  int
-	rotateReqs   []*proto.RotateParamsRequest
-	rotateErr    error
-	healthErr    error
-	healthResp   *proto.HealthResponse
-	rotateResp   *proto.RotateParamsResponse
+	mu          sync.Mutex
+	rotateCalls int
+	healthCalls int
+	rotateReqs  []*proto.RotateParamsRequest
+	rotateErr   error
+	healthErr   error
+	healthResp  *proto.HealthResponse
+	rotateResp  *proto.RotateParamsResponse
 }
 
 func (m *mockAwgAgentClient) Init(_ context.Context, _ *proto.InitRequest, _ ...grpc.CallOption) (*proto.InitResponse, error) {
@@ -396,9 +396,9 @@ func TestNilContextPreventsExecution(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		execution  func() error
-		contains   string
+		name      string
+		execution func() error
+		contains  string
 	}{
 		{
 			name: "tier2 nil context",

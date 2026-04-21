@@ -20,9 +20,9 @@ func TestConnectMasterAgent_UsesTopologyGRPCPort(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name        string
-		grpcPort    int // 0 = not set → expect default 9090
-		wantPort    int
+		name     string
+		grpcPort int // 0 = not set → expect default 9090
+		wantPort int
 	}{
 		{
 			name:     "explicit non-default port 19290",

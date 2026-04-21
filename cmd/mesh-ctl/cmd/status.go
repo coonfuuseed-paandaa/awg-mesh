@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/cobra"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,13 +60,22 @@ func newStatusCommand() *cobra.Command {
 
 			transportStatePath := filepath.Join(configDir, "transport.yml")
 			transportByTunnel := make(map[string]string)
-			transportAllocByEndpointIP := make(map[string]int)
+			// B21 fix: index by endpoint name (from "master/endpoint" tunnel key) not
+			// by EndpointIP (which is a transport IP, not the overlay IP used in the
+			// GetStatus response). The old transportAllocByEndpointIP map was never
+			// populated with the overlay IP that resp.OverlayIp returns, so TUNNELS
+			// was always 0 for every endpoint node.
+			transportAllocByEndpointName := make(map[string]int)
 			if transportData, err := os.ReadFile(transportStatePath); err == nil {
 				var transportState localTransportState
 				if yaml.Unmarshal(transportData, &transportState) == nil {
 					for _, allocation := range transportState.Allocations {
 						transportByTunnel[allocation.Tunnel] = allocation.MasterIP + "->" + allocation.EndpointIP
-						transportAllocByEndpointIP[allocation.EndpointIP]++
+						// Tunnel key is "masterName/endpointName" — extract the endpoint name.
+						if idx := strings.Index(allocation.Tunnel, "/"); idx >= 0 {
+							epName := allocation.Tunnel[idx+1:]
+							transportAllocByEndpointName[epName]++
+						}
 					}
 				}
 			}
@@ -116,9 +125,14 @@ func newStatusCommand() *cobra.Command {
 					transportDisplay = strings.Join(transportPairs, ",")
 				}
 
+				// B21 fix: for endpoints, count transport allocations by endpoint name
+				// extracted from the tunnel key ("masterName/endpointName"), not by
+				// OverlayIp. The old code looked up resp.OverlayIp in a map keyed by
+				// allocation.EndpointIP (which is a transport IP, e.g. 10.200.0.6) so
+				// the lookup always returned 0 and TUNNELS was always 0 for endpoints.
 				endpointAllocations := 0
 				if n.mode == "endpoint" {
-					endpointAllocations = transportAllocByEndpointIP[resp.OverlayIp]
+					endpointAllocations = transportAllocByEndpointName[n.name]
 				}
 				tunnelCount := tunnelDisplayCount(n.mode, len(resp.Tunnels), endpointAllocations)
 

@@ -230,9 +230,9 @@ func TestSetPubkey_Concurrent(t *testing.T) {
 	const baseKey = "00000000000000000000000000000000000000000000000000000000000000%02d"
 
 	var (
-		wg          sync.WaitGroup
-		errs        = make([]error, goroutines)
-		inCallback  atomic.Int32 // how many callbacks are executing right now
+		wg            sync.WaitGroup
+		errs          = make([]error, goroutines)
+		inCallback    atomic.Int32 // how many callbacks are executing right now
 		maxConcurrent atomic.Int32 // peak observed concurrency
 	)
 

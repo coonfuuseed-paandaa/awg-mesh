@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/spf13/cobra"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/spf13/cobra"
 )
 
 func newIPCommand() *cobra.Command {
