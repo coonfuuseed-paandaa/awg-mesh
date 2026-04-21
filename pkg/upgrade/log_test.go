@@ -126,13 +126,69 @@ func TestLogger_ConcurrentAppend(t *testing.T) {
 	}
 }
 
-// TestLogPath verifies the conventional log path format.
+// TestLogPath verifies the conventional log path format (v1.12.12+: logs live
+// under <configDir>/backups/upgrade-logs/ rather than the config root).
 func TestLogPath(t *testing.T) {
 	ts := time.Date(2026, 4, 18, 18, 23, 0, 0, time.UTC)
 	got := LogPath("/home/user/.mesh-ctl", "v1.10.2", ts)
-	want := filepath.Join("/home/user/.mesh-ctl", "upgrade-v1.10.2-20260418T182300Z.log")
+	want := filepath.Join("/home/user/.mesh-ctl", BackupsDirName, UpgradeLogsSubdir, "upgrade-v1.10.2-20260418T182300Z.log")
 	if got != want {
 		t.Errorf("LogPath: got %q want %q", got, want)
+	}
+}
+
+// TestMostRecentLogPath_LegacyFallback verifies that logs written by pre-v1.12.12
+// versions at the config root are still surfaced by `mesh-ctl upgrade status`
+// when no newer logs exist in the backups/upgrade-logs/ subdir.
+func TestMostRecentLogPath_LegacyFallback(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "upgrade-v1.10.0-20260101T000000Z.log")
+	if err := os.WriteFile(legacy, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := MostRecentLogPath(dir)
+	if err != nil {
+		t.Fatalf("MostRecentLogPath: %v", err)
+	}
+	if got != legacy {
+		t.Errorf("got %q want %q (legacy config-root fallback)", got, legacy)
+	}
+}
+
+// TestMostRecentLogPath_NewerLocationWins verifies that a log in the new
+// subdir (backups/upgrade-logs/) is preferred over an older log at the legacy
+// config-root location when both exist.
+func TestMostRecentLogPath_NewerLocationWins(t *testing.T) {
+	dir := t.TempDir()
+	subdir := filepath.Join(dir, BackupsDirName, UpgradeLogsSubdir)
+	if err := os.MkdirAll(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	legacy := filepath.Join(dir, "upgrade-v1.10.0-20260101T000000Z.log")
+	newish := filepath.Join(subdir, "upgrade-v1.12.12-20260421T000000Z.log")
+	for _, p := range []string{legacy, newish} {
+		if err := os.WriteFile(p, []byte("{}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldTime := time.Now().Add(-time.Hour)
+	newTime := time.Now()
+	if err := os.Chtimes(legacy, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newish, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := MostRecentLogPath(dir)
+	if err != nil {
+		t.Fatalf("MostRecentLogPath: %v", err)
+	}
+	if got != newish {
+		t.Errorf("got %q want %q (subdir should beat legacy when mtime newer)", got, newish)
 	}
 }
 
