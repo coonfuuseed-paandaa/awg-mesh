@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,6 +57,15 @@ func newCaptureRefreshCommand() *cobra.Command {
 			var domains []string
 			domainsFile := topo.Capture.DomainsFile
 			if domainsFile != "" {
+				// B32 fix: warn when the domains file has a test-pattern name
+				// (e.g. "domains-test.txt", "capture-test.domains"). Test files
+				// contain synthetic domains that are harmless in dev but would
+				// cause spurious AWG param changes in production clusters.
+				if isTestDomainsFile(domainsFile) {
+					fmt.Fprintf(os.Stderr,
+						"warning: domains file %q looks like a test fixture — verify this is not a production cluster\n",
+						domainsFile)
+				}
 				data, readErr := os.ReadFile(domainsFile)
 				if readErr != nil {
 					return fmt.Errorf("read domains file %q: %w", domainsFile, readErr)
@@ -210,6 +220,14 @@ func newCaptureScheduleCommand() *cobra.Command {
 				return fmt.Errorf("specify only one of --interval or --show")
 			}
 
+			// B29 fix: default to --show behaviour when no flags are provided.
+			// Previously the command returned an error on bare `capture schedule`,
+			// which was confusing — the natural expectation is to see the current
+			// setting, not an error message.
+			if !show && trimmedInterval == "" {
+				show = true
+			}
+
 			if show {
 				topo, err := topology.LoadTopology(topologyPath)
 				if err != nil {
@@ -254,4 +272,26 @@ func newCaptureScheduleCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&show, "show", false, "Show current capture schedule")
 
 	return cmd
+}
+
+// isTestDomainsFile reports whether the base filename of path contains the
+// word "test" adjacent to a word boundary — patterns like "domains-test.txt",
+// "test-domains.txt", or "capture.test.domains" are all matched.
+// B32 fix: these files appear in development and CI checkouts and should never
+// be pushed to a production cluster via 'capture refresh'.
+func isTestDomainsFile(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	// Remove extension(s) for pattern matching.
+	ext := filepath.Ext(name)
+	if ext != "" {
+		name = name[:len(name)-len(ext)]
+	}
+	// Match "-test", "_test", ".test", "test-", "test_", "test." as word boundaries.
+	for _, sep := range []string{"-", "_", "."} {
+		if strings.Contains(name, sep+"test") || strings.Contains(name, "test"+sep) {
+			return true
+		}
+	}
+	// Also match bare "test" as the entire stem.
+	return name == "test"
 }

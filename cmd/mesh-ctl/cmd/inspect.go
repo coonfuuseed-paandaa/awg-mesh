@@ -240,11 +240,19 @@ func buildAdminView(
 				continue
 			}
 			pubkeyHex := readAdminPubkey(cfgDir, epName)
+			// B20 fix: do NOT set allowedIPs for master-side peers.
+			// Since v1.12.2 masters compute AllowedIPs dynamically from topology
+			// (overlay ranges + transport subnet + endpoint overlay /32). The simple
+			// "{overlayIP}/32" value used here never matched the full runtime set,
+			// causing every master inspect to report stale_allowed_ips even when the
+			// mesh was healthy. Setting allowedIPs to nil makes ipsMatch short-circuit
+			// to true (no admin expectation → no mismatch); key comparison is the
+			// meaningful signal on the master side.
 			peers = append(peers, adminPeerView{
 				name:       epName,
 				ifaceName:  "wg-" + epName,
 				pubkeyHex:  pubkeyHex,
-				allowedIPs: []string{epNode.OverlayIP + "/32"},
+				allowedIPs: nil,
 			})
 		}
 	} else if ep != nil {
