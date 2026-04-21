@@ -233,8 +233,8 @@ func TestPingICMPConcurrentDemux(t *testing.T) {
 
 	for iter := 0; iter < iterations; iter++ {
 		var (
-			wg      sync.WaitGroup
-			mu      sync.Mutex
+			wg       sync.WaitGroup
+			mu       sync.Mutex
 			failures []string
 		)
 

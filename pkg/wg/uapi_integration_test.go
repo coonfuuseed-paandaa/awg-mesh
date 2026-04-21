@@ -8,9 +8,10 @@
 // Run with: go test -tags integration ./pkg/wg/...
 //
 // Regression test for local tracker issue #117:
-//   writeConfig was emitting "s3" and "s4" keys which are not recognised by
-//   amneziawg-go v1.0.4's handleDeviceLine switch.  The default branch returns
-//   ipcErrorf(IpcErrorInvalid, "invalid UAPI device key: s3") → errno=-22 (EINVAL).
+//
+//	writeConfig was emitting "s3" and "s4" keys which are not recognised by
+//	amneziawg-go v1.0.4's handleDeviceLine switch.  The default branch returns
+//	ipcErrorf(IpcErrorInvalid, "invalid UAPI device key: s3") → errno=-22 (EINVAL).
 package wg
 
 import (
@@ -78,7 +79,8 @@ func randomPrivateKey(t *testing.T) Key {
 // Before the fix for local tracker issue #117, writeConfig also emitted s3 and
 // s4 which the driver rejects with errno=-22 (EINVAL), so this test would have
 // failed on the un-patched code with:
-//   IPC error -22: invalid UAPI device key: s3
+//
+//	IPC error -22: invalid UAPI device key: s3
 func TestIntegration_writeConfig_AWGParamsAccepted(t *testing.T) {
 	dev := newTestDevice(t)
 	privKey := randomPrivateKey(t)
@@ -161,8 +163,9 @@ func TestIntegration_writeConfig_S3S4NeverSent(t *testing.T) {
 // endpoint side until the master updates them.
 //
 // This test is the proof-of-concept for the T003 handler flow:
-//   cfg := wg.Config{PrivateKey: &newPrivKey}  // no peer changes
-//   h.paramApplier.ApplyParams(tunnelName, cfg)
+//
+//	cfg := wg.Config{PrivateKey: &newPrivKey}  // no peer changes
+//	h.paramApplier.ApplyParams(tunnelName, cfg)
 //
 // If this property did not hold, ApplyParams would silently clear all peers,
 // breaking every active tunnel session. See local tracker #125.

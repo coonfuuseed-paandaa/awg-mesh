@@ -19,10 +19,10 @@ func TestPatchImageLine(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		compose   string
-		newImage  string
-		wantImage string // substring that MUST appear in result
+		name       string
+		compose    string
+		newImage   string
+		wantImage  string // substring that MUST appear in result
 		wantAbsent string // substring that MUST NOT appear in result (empty = skip)
 	}{
 		{

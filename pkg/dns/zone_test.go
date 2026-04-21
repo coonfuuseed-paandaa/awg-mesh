@@ -7,7 +7,7 @@ import (
 func TestBuildZoneRecords(t *testing.T) {
 	nodes := map[string]string{
 		"node-asia-01": "172.20.70.34",
-		"node-us-01": "172.20.70.38",
+		"node-us-01":   "172.20.70.38",
 	}
 
 	records := BuildZoneRecords("mesh.zone", nodes)

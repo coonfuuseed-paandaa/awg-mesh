@@ -28,18 +28,18 @@ import (
 )
 
 type testTunnelManager struct {
-	addTunnelCalls []addTunnelCall
-	listTunnels    []TunnelInfo
-	removeCalls    []string
-	getParamsCalls []string
-	getParamsCfg   wg.Config
+	addTunnelCalls      []addTunnelCall
+	listTunnels         []TunnelInfo
+	removeCalls         []string
+	getParamsCalls      []string
+	getParamsCfg        wg.Config
 	updatePeerCalls     []updateTunnelPeerCall
-	addErr         error
-	removeErr      error
-	getParamsErr   error
+	addErr              error
+	removeErr           error
+	getParamsErr        error
 	updatePeerErr       error
 	updatePeerUnchanged bool
-	listenPort     int
+	listenPort          int
 }
 
 func (m *testTunnelManager) GetListenPort(_ string) (int, error) {
@@ -141,13 +141,13 @@ func (m *testParamApplier) ApplyParams(tunnelName string, cfg wg.Config) error {
 }
 
 type testPeerManager struct {
-	listPeers      []PeerInfo
-	addCalls       []addPeerCall
-	removeCalls    [][]byte
-	addErr         error
-	removeErr      error
-	listenPort     int
-	listenPortErr  error
+	listPeers     []PeerInfo
+	addCalls      []addPeerCall
+	removeCalls   [][]byte
+	addErr        error
+	removeErr     error
+	listenPort    int
+	listenPortErr error
 }
 
 type testTransportPeerManager struct {
@@ -2002,12 +2002,12 @@ func TestUpdateTunnelPeer_Idempotent_AlreadyApplied(t *testing.T) {
 type testNodeStatePersister struct {
 	mu sync.Mutex // guards fields below
 
-	loadCalls    []string // tunnelNames passed to LoadKeypair
-	loadResult   []byte
-	loadErr      error
+	loadCalls  []string // tunnelNames passed to LoadKeypair
+	loadResult []byte
+	loadErr    error
 
-	persistCalls  []persistKeypairCall
-	persistErr    error
+	persistCalls []persistKeypairCall
+	persistErr   error
 
 	lockCalls []string // tunnelNames passed to LockRotation
 	lockErr   error    // if non-nil, LockRotation returns this error

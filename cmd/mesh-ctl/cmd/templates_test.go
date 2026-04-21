@@ -50,7 +50,7 @@ func masterData() any {
 		Image:      "ghcr.io/example/awg-mesh-node:latest",
 		ListenPort: 443,
 		// Pre-escaped sample hash (production code doubles `$` before render).
-TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
+		TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
 	}
 }
 
@@ -69,7 +69,7 @@ func endpointData() any {
 		Image:      "ghcr.io/example/awg-mesh-node:latest",
 		ListenPort: 51820,
 		// Pre-escaped sample hash (production code doubles `$` before render).
-TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
+		TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
 	}
 }
 
@@ -89,8 +89,8 @@ func clientData() any {
 		Image:      "ghcr.io/example/awg-mesh-client:latest",
 		ListenPort: 51820,
 		// Pre-escaped sample hash (production code doubles `$` before render).
-TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
-		Masters:    "master-01,master-02",
+		TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
+		Masters:   "master-01,master-02",
 	}
 }
 

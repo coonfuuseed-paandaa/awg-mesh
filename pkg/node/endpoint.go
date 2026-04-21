@@ -108,7 +108,6 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 	return nil
 }
 
-
 func (e *EndpointRunner) GetNodeState() grpcserver.NodeState {
 	return grpcserver.NodeState{
 		Name:      e.node.config.Name,

@@ -129,11 +129,11 @@ type VethConfig struct {
 
 // ClientNode describes a client node.
 type ClientNode struct {
-	Name      string      `yaml:"name"`
-	Type      string      `yaml:"type"`
-	Host      string      `yaml:"host,omitempty"`
-	OverlayIP string      `yaml:"overlay_ip"`
-	GRPCPort  int         `yaml:"grpc_port,omitempty"`
+	Name      string `yaml:"name"`
+	Type      string `yaml:"type"`
+	Host      string `yaml:"host,omitempty"`
+	OverlayIP string `yaml:"overlay_ip"`
+	GRPCPort  int    `yaml:"grpc_port,omitempty"`
 	// Veth holds MikroTik veth bridge configuration (mikrotik type only).
 	// B4 fix: nil means use defaults (veth-<name>, 192.168.100.1/24).
 	Veth            *VethConfig     `yaml:"veth,omitempty"`

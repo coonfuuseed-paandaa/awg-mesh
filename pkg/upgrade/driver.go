@@ -415,9 +415,9 @@ func (d *Driver) phaseInit(ctx context.Context, step *NodeUpgradeStep) error {
 // between attempts so transient "tunnel not yet up" failures are not mistaken
 // for real data-plane failures that trigger rollback.
 const (
-	verifySettleDelay  = 5 * time.Second
-	verifyRetryDelay   = 3 * time.Second
-	verifyMaxAttempts  = 3
+	verifySettleDelay = 5 * time.Second
+	verifyRetryDelay  = 3 * time.Second
+	verifyMaxAttempts = 3
 )
 
 func (d *Driver) phaseVerify(_ context.Context, step *NodeUpgradeStep) error {
@@ -489,7 +489,7 @@ func isImageRefChar(r rune) bool {
 }
 
 // shellQuote wraps s in single quotes for safe inclusion in a remote shell command.
-// Handles embedded single quotes via the POSIX `'\''` escape sequence so any
+// Handles embedded single quotes via the POSIX `'\”` escape sequence so any
 // input (including unusual node names or compose paths) is safe.
 func shellQuote(s string) string {
 	// End the quoted string, emit an escaped single quote, resume quoting.

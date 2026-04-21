@@ -21,11 +21,11 @@ import (
 // driftRow holds one row of the inspect comparison table.
 type driftRow struct {
 	peerName     string
-	ifaceName    string   // kernel interface name for this peer's tunnel (e.g. "wg-master-a")
-	adminKey     string   // hex pubkey known to admin (from disk pubkey file)
-	diskKey      string   // hex pubkey from node's transport.yml (disk state)
-	runtimeKey   string   // hex pubkey from live wg/tunnel state (runtime)
-	adminIPs     string   // allowed IPs per topology
+	ifaceName    string // kernel interface name for this peer's tunnel (e.g. "wg-master-a")
+	adminKey     string // hex pubkey known to admin (from disk pubkey file)
+	diskKey      string // hex pubkey from node's transport.yml (disk state)
+	runtimeKey   string // hex pubkey from live wg/tunnel state (runtime)
+	adminIPs     string // allowed IPs per topology
 	diskIPs      string
 	runtimeIPs   string
 	driftReasons []string
@@ -344,9 +344,9 @@ func printInspectReport(nodeName string, state *proto.TransportStateResponse, ro
 	}
 
 	const (
-		colWidth  = 18
+		colWidth   = 18
 		ifaceWidth = 20
-		ipWidth   = 22
+		ipWidth    = 22
 	)
 
 	// Header — IFACE sits between PEER and ADMIN_KEY.

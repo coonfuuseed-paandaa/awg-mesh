@@ -105,11 +105,11 @@ func TestClassifyTunnelHealth(t *testing.T) {
 	recentMs := now.Add(-time.Second).UnixMilli()
 
 	cases := []struct {
-		name         string
-		h            *proto.TunnelHealth
+		name          string
+		h             *proto.TunnelHealth
 		masterPeerKey []byte
-		adminKeyHex  string
-		want         string
+		adminKeyHex   string
+		want          string
 	}{
 		{
 			name: "nil TunnelHealth → missing_peer",
@@ -122,18 +122,18 @@ func TestClassifyTunnelHealth(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "unhealthy + matching keys → not key_mismatch (falls through to unreachable)",
-			h:    &proto.TunnelHealth{Name: "ep-1", Healthy: false},
+			name:          "unhealthy + matching keys → not key_mismatch (falls through to unreachable)",
+			h:             &proto.TunnelHealth{Name: "ep-1", Healthy: false},
 			masterPeerKey: matchingKey,
-			adminKeyHex:  adminKeyHex,
-			want: "unreachable",
+			adminKeyHex:   adminKeyHex,
+			want:          "unreachable",
 		},
 		{
-			name: "unhealthy + key mismatch → key_mismatch",
-			h:    &proto.TunnelHealth{Name: "ep-1", Healthy: false},
+			name:          "unhealthy + key mismatch → key_mismatch",
+			h:             &proto.TunnelHealth{Name: "ep-1", Healthy: false},
 			masterPeerKey: differentKey,
-			adminKeyHex:  adminKeyHex,
-			want: "key_mismatch",
+			adminKeyHex:   adminKeyHex,
+			want:          "key_mismatch",
 		},
 		{
 			name: "unhealthy + stale last_check_ms → handshake_timeout",
@@ -156,18 +156,18 @@ func TestClassifyTunnelHealth(t *testing.T) {
 			want: "unreachable",
 		},
 		{
-			name: "unhealthy + admin key empty → key check skipped",
-			h:    &proto.TunnelHealth{Name: "ep-1", Healthy: false},
+			name:          "unhealthy + admin key empty → key check skipped",
+			h:             &proto.TunnelHealth{Name: "ep-1", Healthy: false},
 			masterPeerKey: differentKey,
-			adminKeyHex:  "", // no admin key → skip key check
-			want: "unreachable",
+			adminKeyHex:   "", // no admin key → skip key check
+			want:          "unreachable",
 		},
 		{
-			name: "unhealthy + masterPeerKey wrong length → key check skipped",
-			h:    &proto.TunnelHealth{Name: "ep-1", Healthy: false},
+			name:          "unhealthy + masterPeerKey wrong length → key check skipped",
+			h:             &proto.TunnelHealth{Name: "ep-1", Healthy: false},
 			masterPeerKey: differentKey[:16], // only 16 bytes → not a valid WG key
-			adminKeyHex:  adminKeyHex,
-			want: "unreachable",
+			adminKeyHex:   adminKeyHex,
+			want:          "unreachable",
 		},
 	}
 
@@ -230,11 +230,11 @@ func TestRunDataPlaneProbesMasterNoToken(t *testing.T) {
 	topo := &topology.Topology{
 		Masters: []topology.MasterNode{
 			{
-				Name:      "master-1",
-				Host:      "10.0.0.1",
-				OverlayIP: "10.1.0.1",
+				Name:       "master-1",
+				Host:       "10.0.0.1",
+				OverlayIP:  "10.1.0.1",
 				ListenPort: 51820,
-				Endpoints: []string{"ep-1", "ep-2"},
+				Endpoints:  []string{"ep-1", "ep-2"},
 			},
 		},
 		Endpoints: []topology.EndpointNode{
@@ -270,11 +270,11 @@ func TestTunnelDisplayCount(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name          string
-		mode          string
-		grpcCount     int
-		allocations   int
-		wantCount     int
+		name        string
+		mode        string
+		grpcCount   int
+		allocations int
+		wantCount   int
 	}{
 		{
 			name:        "master uses gRPC peer count",

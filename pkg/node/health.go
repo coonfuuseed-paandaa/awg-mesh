@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/rs/zerolog"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
@@ -58,8 +58,8 @@ type HealthChecker struct {
 
 	// Shared ICMP socket fields (FR-1.6).
 	// id is set once in NewHealthChecker and never modified.
-	id      uint16
-	socket  *icmp.PacketConn
+	id     uint16
+	socket *icmp.PacketConn
 	// socketMu guards all reads and writes of the socket field.
 	// PingICMP and demuxLoop take RLock to read; Close takes Lock to nil it out.
 	socketMu sync.RWMutex

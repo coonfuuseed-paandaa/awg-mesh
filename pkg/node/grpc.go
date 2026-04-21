@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rs/zerolog"
 	grpcserver "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
+	"github.com/rs/zerolog"
 )
 
 const defaultGRPCListenAddr = ":9090"
+
 // grpcStartupGracePeriod is a time-based heuristic for detecting server bind failure.
 // If the server fails to bind within this window, the error is returned to the caller.
 // A deterministic readiness signal (via net.Listen + passing the listener) would be

@@ -28,8 +28,8 @@ type NodeTransportState struct {
 	// SchemaVersion identifies the transport.yml schema generation.
 	// 0 means a file written by a pre-v1.6.0 release (legacy defaults apply).
 	// 1 means a file written by v1.6.0+ (AllowedIPs and PersistentKeepalive are authoritative).
-	SchemaVersion int              `yaml:"schema_version,omitempty"`
-	OverlayIP     string           `yaml:"overlay_ip"`
+	SchemaVersion int               `yaml:"schema_version,omitempty"`
+	OverlayIP     string            `yaml:"overlay_ip"`
 	Tunnels       []TunnelTransport `yaml:"tunnels"`
 }
 
