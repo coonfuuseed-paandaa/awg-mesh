@@ -40,10 +40,17 @@ radius of a leaked compose file — a compose file containing a bcrypt hash
 cannot be replayed as a valid auth token against the live node. The raw
 token is only held by the admin CLI.
 
-**Rotation:** `mesh-ctl token rotate <node>` generates a new raw token,
-bcrypt-hashes it, writes the hash to the master's admin state, and prints the
-plain value for `MESH_TOKEN_HASH` substitution on the endpoint. See
-`pkg/tls/token.go:19-44` for the authoritative docstring.
+**Rotation:** `mesh-ctl token rotate <node>` generates a fresh raw token,
+bcrypt-hashes it, sends the hash to the node via the `RotateToken` RPC (the
+node overwrites its `/config/mesh.token`), and saves both values locally —
+the raw token to `<nodeDir>/token` (for future mesh-ctl RPC calls) and the
+bcrypt hash to `<nodeDir>/mesh.token`. The `MESH_TOKEN_HASH` env var in the
+node's compose file is the bcrypt hash; re-run `mesh-ctl <role> prepare
+<node>` to regenerate the compose file with the new hash substituted, OR
+read it directly from `<nodeDir>/mesh.token`. Only pass `--show-token` when
+you actually need the raw token printed to stdout (e.g. bootstrapping a new
+node on a host that does not yet have the `<nodeDir>/token` file). See
+`pkg/tls/token.go:19-44` for the authoritative lifecycle docstring.
 
 > Related engram issue: #151 items B5 and B19.
 
@@ -124,7 +131,7 @@ config dir:
 
 **If you follow the `backups/` convention yourself**, a clean tree looks like:
 
-```
+```text
 ~/.mesh-ctl/
   ca.crt / ca.key
   mesh-topology.yml
