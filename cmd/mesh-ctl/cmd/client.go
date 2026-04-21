@@ -108,7 +108,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:      client.Name,
 					Host:      "",
 					OverlayIP: client.OverlayIP,
-					Image:     resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest"),
+					Image:     resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest", "defaults.image.client"),
 					// Escape $ → $$ to survive Docker Compose variable
 					// interpolation. Bcrypt hashes contain literal `$`.
 					TokenHash: composeEscapeDollar(hash),
@@ -189,7 +189,7 @@ func newClientPrepareCommand() *cobra.Command {
 
 				ds := mikrotik.DeployScript{
 					ContainerName: name,
-					Image:         resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest"),
+					Image:         resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest", "defaults.image.client"),
 					Veth:          vethName,
 					VethGateway:   vethGateway,
 					OverlayIP:     client.OverlayIP,
@@ -213,7 +213,8 @@ func newClientPrepareCommand() *cobra.Command {
 				if err := os.MkdirAll(rscOutDir, 0700); err != nil {
 					return fmt.Errorf("create client output dir %q: %w", rscOutDir, err)
 				}
-				rscPath := filepath.Join(rscOutDir, name+"-mikrotik.rsc")
+				rscFile := name + "-mikrotik.rsc"
+				rscPath := filepath.Join(rscOutDir, rscFile)
 				if err := os.WriteFile(rscPath, []byte(rsc), 0644); err != nil {
 					return fmt.Errorf("write RouterOS script: %w", err)
 				}
@@ -233,7 +234,7 @@ func newClientPrepareCommand() *cobra.Command {
 					tokenLine,
 					rscPath,
 					rscPath,
-					rscPath,
+					rscFile,
 					name,
 				)
 

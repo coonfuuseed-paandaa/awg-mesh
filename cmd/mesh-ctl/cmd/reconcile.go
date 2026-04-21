@@ -392,10 +392,11 @@ func reconcileCheckEmptyAllowedIPs(
 		if peer.GetName() != ep.Name {
 			continue
 		}
-		// disk_allowed_ips is authoritative; fall back to runtime allowed_ips.
+		// disk_allowed_ips is authoritative; fall back to runtime allowed_ips
+		// only when disk_allowed_ips is empty.
 		diskIPs := peer.GetDiskAllowedIps()
 		runtimeIPs := peer.GetAllowedIps()
-		if len(diskIPs) == 0 || len(runtimeIPs) == 0 {
+		if len(diskIPs) == 0 && len(runtimeIPs) == 0 {
 			emptyAllowedIPs = true
 		}
 		break

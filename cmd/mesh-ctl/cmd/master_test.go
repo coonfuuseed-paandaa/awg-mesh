@@ -72,7 +72,7 @@ func TestMasterPrepareImage(t *testing.T) {
 			}
 
 			// Replicate the exact resolveImage call from newMasterPrepareCommand.
-			got := resolveImage(tc.imageFlag, topo.Defaults.Image.Node, masterFallback)
+			got := resolveImage(tc.imageFlag, topo.Defaults.Image.Node, masterFallback, "defaults.image.node")
 			if got != tc.want {
 				t.Errorf("resolveImage(flag=%q, topo=%q, fallback=%q) = %q, want %q",
 					tc.imageFlag, tc.topoImage, masterFallback, got, tc.want)

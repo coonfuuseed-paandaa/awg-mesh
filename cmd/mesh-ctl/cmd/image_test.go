@@ -50,7 +50,7 @@ func TestResolveImage(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			got := resolveImage(tc.cliFlag, tc.topoDefault, tc.fallback)
+			got := resolveImage(tc.cliFlag, tc.topoDefault, tc.fallback, "defaults.image.node")
 			if got != tc.want {
 				t.Errorf("resolveImage(%q, %q, %q) = %q, want %q",
 					tc.cliFlag, tc.topoDefault, tc.fallback, got, tc.want)

@@ -29,7 +29,7 @@ func NewRootCommand(version string) *cobra.Command {
 		//   2. Relative path with at least one separator (./foo, ../foo) → used as-is.
 		//   3. Bare filename (e.g. "mesh-topology.yml") → resolved against configDir.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			if !filepath.IsAbs(topologyPath) && filepath.Dir(topologyPath) == "." {
+			if topologyPath != "" && !filepath.IsAbs(topologyPath) && filepath.Dir(topologyPath) == "." {
 				topologyPath = filepath.Join(configDir, topologyPath)
 			}
 			return nil

@@ -126,16 +126,25 @@ func generateLinux(client topology.ClientNode, fallbackGateway string, topo *top
 
 // resolveLinuxGateway resolves the per-policy gateway for linux iproute2 output.
 // Mirrors the logic in pkg/mikrotik/routing.go::resolveTargetGateway.
+//
+// Masters are accepted as policy targets only when they are marked as exit
+// nodes (exit: true). A non-exit master has no masquerade rule, so routing a
+// DSCP-classified flow through it would result in packets arriving at the
+// master with a source IP from the client's overlay segment and no SNAT —
+// the endpoint tunnel would drop them on reverse-path validation. Surfacing
+// the misconfiguration via "(unresolved)" is preferable to silently emitting
+// broken routing rules that fail only on the wire.
 func resolveLinuxGateway(policy topology.RoutingPolicy, fallback string, topo *topology.Topology) (gateway, targetName string) {
 	if topo != nil && len(policy.Targets) > 0 {
 		name := policy.Targets[0]
 		if ep := topo.FindEndpoint(name); ep != nil && strings.TrimSpace(ep.OverlayIP) != "" {
 			return ep.OverlayIP, name
 		}
-		if m := topo.FindMaster(name); m != nil && strings.TrimSpace(m.OverlayIP) != "" {
+		if m := topo.FindMaster(name); m != nil && m.Exit && strings.TrimSpace(m.OverlayIP) != "" {
 			return m.OverlayIP, name
 		}
-		// Target declared but not found in topology — warn via comment, use fallback.
+		// Target declared but not found in topology (or master lacks exit:true) —
+		// warn via comment, use fallback.
 		targetName = name + " (unresolved)"
 	} else {
 		targetName = "fallback"

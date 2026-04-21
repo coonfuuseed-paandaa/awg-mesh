@@ -99,7 +99,7 @@ func newEndpointPrepareCommand() *cobra.Command {
 				Name:       ep.Name,
 				Host:       ep.Host,
 				OverlayIP:  ep.OverlayIP,
-				Image:      resolveImage(imageFlag, topo.Defaults.Image.Node, "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest"),
+				Image:      resolveImage(imageFlag, topo.Defaults.Image.Node, "ghcr.io/coonfuuseed-paandaa/awg-mesh-node:latest", "defaults.image.node"),
 				ListenPort: ep.ListenPort,
 				// Escape $ → $$ to survive Docker Compose variable
 				// interpolation. Bcrypt hashes contain literal `$`.

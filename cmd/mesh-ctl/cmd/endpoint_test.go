@@ -148,7 +148,7 @@ func TestEndpointPrepareImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			image := resolveImage(tc.cliFlag, tc.topoNode, fallback)
+			image := resolveImage(tc.cliFlag, tc.topoNode, fallback, "defaults.image.node")
 			if image != tc.wantImage {
 				t.Fatalf("resolveImage(%q, %q, fallback) = %q, want %q",
 					tc.cliFlag, tc.topoNode, image, tc.wantImage)

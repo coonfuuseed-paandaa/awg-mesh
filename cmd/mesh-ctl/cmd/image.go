@@ -10,12 +10,17 @@ import (
 // and fallback, in that priority order. If all three are empty, it returns an
 // empty string; the caller is responsible for supplying a non-empty fallback.
 //
+// topoKey names the topology field the caller is pulling the default from
+// (e.g. "defaults.image.node", "defaults.image.client"). It appears only in
+// the pinned-tag warning text so the operator knows exactly which topology
+// stanza to edit.
+//
 // B15 fix: when the resolved image ends with a pinned semver tag (e.g. ":v1.10.0")
 // that is older-looking than "latest", emit a warning to stderr so operators
 // notice they are deploying from a stale pinned reference in their topology
 // defaults. The warning fires only when the tag is a semver version string —
 // bare "latest" and digest-pinned refs (containing "@sha256:") are silent.
-func resolveImage(cliFlag, topoDefault, fallback string) string {
+func resolveImage(cliFlag, topoDefault, fallback, topoKey string) string {
 	img := cliFlag
 	if img == "" {
 		img = topoDefault
@@ -28,8 +33,13 @@ func resolveImage(cliFlag, topoDefault, fallback string) string {
 	// did not override it via --image. CLI flag overrides are intentional;
 	// topology defaults with pinned versions are commonly forgotten.
 	if cliFlag == "" && img == topoDefault && isPinnedSemver(img) {
+		key := topoKey
+		if key == "" {
+			key = "topology image default"
+		}
 		fmt.Fprintf(os.Stderr,
-			"warning: topology defaults.image.node is pinned to %q — pass --image or update topology to use a newer tag\n", img)
+			"warning: topology %s is pinned to %q — pass --image or update topology to use a newer tag\n",
+			key, img)
 	}
 
 	return img

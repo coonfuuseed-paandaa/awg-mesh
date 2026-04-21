@@ -138,8 +138,9 @@ func resolveTargetGateway(policy topology.RoutingPolicy, fallback string, topo *
 		if ep := topo.FindEndpoint(targetName); ep != nil && strings.TrimSpace(ep.OverlayIP) != "" {
 			return ep.OverlayIP, targetName
 		}
-		// Try master (exit nodes only).
-		if m := topo.FindMaster(targetName); m != nil && strings.TrimSpace(m.OverlayIP) != "" {
+		// Try master (exit nodes only — non-exit masters lack the masquerade
+		// rule that makes return traffic survive the NAT boundary).
+		if m := topo.FindMaster(targetName); m != nil && m.Exit && strings.TrimSpace(m.OverlayIP) != "" {
 			return m.OverlayIP, targetName
 		}
 	}

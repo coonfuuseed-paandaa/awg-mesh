@@ -105,7 +105,7 @@ func TestBuildAdminView(t *testing.T) {
 			// B20 fix: master-side admin view intentionally leaves allowedIPs
 			// nil so ipsMatch short-circuits and does not report
 			// stale_allowed_ips for the dynamically-computed runtime set.
-			if len(p.allowedIPs) != 0 {
+			if p.allowedIPs != nil {
 				t.Errorf("peer %q: expected nil allowedIPs on master side, got %v", p.name, p.allowedIPs)
 			}
 		}

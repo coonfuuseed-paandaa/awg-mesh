@@ -243,10 +243,6 @@ func newCaptureScheduleCommand() *cobra.Command {
 				return nil
 			}
 
-			if trimmedInterval == "" {
-				return fmt.Errorf("specify --interval or --show")
-			}
-
 			topo, err := topology.LoadTopology(topologyPath)
 			if err != nil {
 				return fmt.Errorf("load topology: %w", err)

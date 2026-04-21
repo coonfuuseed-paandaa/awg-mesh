@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -139,10 +140,5 @@ func fileExists(path string) bool {
 // (e.g. "master-01.bak.20260418T182300Z"). These are created by phasePrepare in
 // pkg/upgrade/driver.go and must not be surfaced as real node entries.
 func isBackupDir(name string) bool {
-	for i := 0; i < len(name)-4; i++ {
-		if name[i:i+5] == ".bak." {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(name, ".bak.")
 }
