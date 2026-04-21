@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/spf13/cobra"
 )
 
 func newRoutingCommand() *cobra.Command {
@@ -51,16 +51,26 @@ func newRoutingGenerateCommand() *cobra.Command {
 				return fmt.Errorf("client %q has no routing_policies", clientName)
 			}
 
+			// B13 fix: default --gateway to first master overlay IP, not client self-IP.
+			// Using the client's own overlay IP as gateway creates a circular route.
 			trimmedGateway := strings.TrimSpace(gateway)
 			if trimmedGateway == "" {
-				trimmedGateway = client.OverlayIP
+				if len(client.Masters) > 0 {
+					if m := topo.FindMaster(client.Masters[0]); m != nil {
+						trimmedGateway = m.OverlayIP
+					}
+				}
+				// Last resort: fall back to client overlay IP (caller can override via --gateway).
+				if trimmedGateway == "" {
+					trimmedGateway = client.OverlayIP
+				}
 			}
 
 			switch strings.ToLower(strings.TrimSpace(platform)) {
 			case "mikrotik":
-				return generateMikrotik(*client, trimmedGateway)
+				return generateMikrotik(*client, trimmedGateway, topo)
 			case "linux":
-				return generateLinux(*client, trimmedGateway)
+				return generateLinux(*client, trimmedGateway, topo)
 			case "generic", "json":
 				return generateGeneric(topo, *client, trimmedGateway)
 			default:
@@ -71,13 +81,14 @@ func newRoutingGenerateCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&platform, "platform", "mikrotik", "Target platform (mikrotik, linux, generic)")
 	cmd.Flags().StringVar(&clientName, "client", "", "Client name (defaults to first client)")
-	cmd.Flags().StringVar(&gateway, "gateway", "", "Gateway IP (defaults to client overlay IP)")
+	cmd.Flags().StringVar(&gateway, "gateway", "", "Gateway IP (defaults to first master overlay IP; last resort: client overlay IP)")
 
 	return cmd
 }
 
-func generateMikrotik(client topology.ClientNode, gateway string) error {
-	script, err := mikrotik.GenerateRoutingRSC(client, gateway)
+func generateMikrotik(client topology.ClientNode, fallbackGateway string, topo *topology.Topology) error {
+	// B11 fix: pass topo so each policy routes to its target endpoint's overlay IP.
+	script, err := mikrotik.GenerateRoutingRSC(client, fallbackGateway, topo)
 	if err != nil {
 		return err
 	}
@@ -85,7 +96,7 @@ func generateMikrotik(client topology.ClientNode, gateway string) error {
 	return nil
 }
 
-func generateLinux(client topology.ClientNode, gateway string) error {
+func generateLinux(client topology.ClientNode, fallbackGateway string, topo *topology.Topology) error {
 	var sb strings.Builder
 	sb.WriteString("#!/bin/bash\n")
 	sb.WriteString("# awg-mesh DSCP routing configuration\n")
@@ -98,7 +109,12 @@ func generateLinux(client topology.ClientNode, gateway string) error {
 			return fmt.Errorf("client %q policy %q: %w", client.Name, policy.Name, err)
 		}
 		tableID := 100 + policy.DSCP
-		fmt.Fprintf(&sb, "# Policy: %s (DSCP %d)\n", policy.Name, policy.DSCP)
+
+		// B12 fix: resolve per-policy gateway from topology targets.
+		// Each DSCP class routes to its specific target endpoint, not a single shared gateway.
+		gateway, targetName := resolveLinuxGateway(policy, fallbackGateway, topo)
+
+		fmt.Fprintf(&sb, "# Policy: %s (DSCP %d, target: %s)\n", policy.Name, policy.DSCP, targetName)
 		fmt.Fprintf(&sb, "iptables -t mangle -A PREROUTING -m connmark --mark %d -j DSCP --set-dscp %d\n", policy.DSCP, policy.DSCP)
 		fmt.Fprintf(&sb, "ip rule add fwmark %d lookup %d 2>/dev/null || true\n", policy.DSCP, tableID)
 		fmt.Fprintf(&sb, "ip route replace default via %s table %d\n\n", gateway, tableID)
@@ -108,11 +124,30 @@ func generateLinux(client topology.ClientNode, gateway string) error {
 	return nil
 }
 
+// resolveLinuxGateway resolves the per-policy gateway for linux iproute2 output.
+// Mirrors the logic in pkg/mikrotik/routing.go::resolveTargetGateway.
+func resolveLinuxGateway(policy topology.RoutingPolicy, fallback string, topo *topology.Topology) (gateway, targetName string) {
+	if topo != nil && len(policy.Targets) > 0 {
+		name := policy.Targets[0]
+		if ep := topo.FindEndpoint(name); ep != nil && strings.TrimSpace(ep.OverlayIP) != "" {
+			return ep.OverlayIP, name
+		}
+		if m := topo.FindMaster(name); m != nil && strings.TrimSpace(m.OverlayIP) != "" {
+			return m.OverlayIP, name
+		}
+		// Target declared but not found in topology — warn via comment, use fallback.
+		targetName = name + " (unresolved)"
+	} else {
+		targetName = "fallback"
+	}
+	return fallback, targetName
+}
+
 // RoutingJSON represents the generic JSON output for routing configuration.
 type RoutingJSON struct {
-	Gateway        string           `json:"gateway"`
-	DSCPMap        []DSCPMapEntry   `json:"dscp_map"`
-	FallbackRoutes []FallbackRoute  `json:"fallback_routes,omitempty"`
+	Gateway        string          `json:"gateway"`
+	DSCPMap        []DSCPMapEntry  `json:"dscp_map"`
+	FallbackRoutes []FallbackRoute `json:"fallback_routes,omitempty"`
 }
 
 // DSCPMapEntry represents a single DSCP mapping entry.
@@ -120,6 +155,8 @@ type DSCPMapEntry struct {
 	DSCP    int      `json:"dscp"`
 	Name    string   `json:"name"`
 	Targets []string `json:"targets"`
+	// Gateway is the resolved target overlay IP (empty if unresolvable).
+	Gateway string `json:"gateway,omitempty"`
 }
 
 // FallbackRoute represents a per-overlay-IP static route for routers without DSCP support.
@@ -129,15 +166,18 @@ type FallbackRoute struct {
 	Via       string `json:"via"`
 }
 
-func generateGeneric(topo *topology.Topology, client topology.ClientNode, gateway string) error {
+func generateGeneric(topo *topology.Topology, client topology.ClientNode, fallbackGateway string) error {
 	entries := make([]DSCPMapEntry, 0, len(client.RoutingPolicies))
 	for _, policy := range client.RoutingPolicies {
 		targets := make([]string, len(policy.Targets))
 		copy(targets, policy.Targets)
+		// Resolve per-policy gateway for generic output.
+		gw, _ := resolveLinuxGateway(policy, fallbackGateway, topo)
 		entries = append(entries, DSCPMapEntry{
 			DSCP:    policy.DSCP,
 			Name:    policy.Name,
 			Targets: targets,
+			Gateway: gw,
 		})
 	}
 
@@ -148,7 +188,7 @@ func generateGeneric(topo *topology.Topology, client topology.ClientNode, gatewa
 			fallback = append(fallback, FallbackRoute{
 				OverlayIP: ep.OverlayIP,
 				NodeName:  ep.Name,
-				Via:       gateway,
+				Via:       fallbackGateway,
 			})
 		}
 	}
@@ -157,13 +197,13 @@ func generateGeneric(topo *topology.Topology, client topology.ClientNode, gatewa
 			fallback = append(fallback, FallbackRoute{
 				OverlayIP: m.OverlayIP,
 				NodeName:  m.Name,
-				Via:       gateway,
+				Via:       fallbackGateway,
 			})
 		}
 	}
 
 	output := RoutingJSON{
-		Gateway:        gateway,
+		Gateway:        fallbackGateway,
 		DSCPMap:        entries,
 		FallbackRoutes: fallback,
 	}
