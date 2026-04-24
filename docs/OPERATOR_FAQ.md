@@ -52,7 +52,7 @@ you actually need the raw token printed to stdout (e.g. bootstrapping a new
 node on a host that does not yet have the `<nodeDir>/token` file). See
 `pkg/tls/token.go:19-44` for the authoritative lifecycle docstring.
 
-> Related engram issue: #151 items B5 and B19.
+> Added in v1.12.11/v1.12.12 audit items B5 and B19.
 
 ## Pubkey admin-side file formats
 
@@ -75,7 +75,7 @@ current 64-hex format and never rewrites a legacy binary file unless `endpoint
 init` / `master init` runs again. A re-init on the same node does not flip
 the format — `SetPubkey` atomically writes the new hex value.
 
-> Related engram issue: #151 item B16.
+> Added in v1.12.11/v1.12.12 audit item B16.
 
 ## Client admin-side state
 
@@ -101,7 +101,7 @@ in the admin-side directory.
   restarting its container; the new keypair is negotiated via `AddPeer` on
   the next boot.
 
-> Related engram issue: #151 item B22.
+> Added in v1.12.11/v1.12.12 audit item B22.
 
 ## Config-dir `.bak.*` and related artefacts
 
@@ -146,7 +146,7 @@ config dir:
     compose/<name>-docker-compose.yml.<ts>.bak  # optional
 ```
 
-> Related engram issue: #151 items B24, B25, B26, B28.
+> Added in v1.12.11/v1.12.12 audit items B24, B25, B26, B28.
 
 ## `mesh-ctl upgrade compose` — preview vs in-place
 
@@ -168,4 +168,4 @@ mesh-ctl upgrade compose --in-place /path/to/old-compose.yml
 No `--dry-run` flag exists because the default (`stdout`) already is the
 dry-run. `--in-place` is the only destructive mode.
 
-> Related engram issue: #151 item B31.
+> Added in v1.12.11/v1.12.12 audit item B31.

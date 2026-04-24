@@ -73,6 +73,18 @@ graph TB
 
 ## What's New
 
+### v1.12.12
+
+- **mesh-ctl audit round 2** — operator FAQ (`docs/OPERATOR_FAQ.md`) covering token lifecycle, pubkey file formats, client admin-side state, and backup artefact conventions; upgrade log files moved from config root to `backups/upgrade-logs/` subdirectory.
+
+### v1.12.11
+
+- **mesh-ctl audit round 1** — 17 of 32 items from deployment review: input validation hardening, error surfacing improvements, and observability additions.
+
+### v1.12.10
+
+- **Auto-insert iptables FORWARD rule on master startup** — master daemons now run `iptables -I FORWARD -i wg-+ -o wg-+ -j ACCEPT` at startup, preventing silent DROP of endpoint-to-endpoint overlay packets on Docker hosts with a default DROP FORWARD policy. Non-fatal: if `iptables` is unavailable (e.g. unprivileged container), the master logs a warning and continues normally.
+
 ### v1.12.9
 
 - **Proto descriptor fix** — `AddTunnelRequest.allowed_ips` (field 13) was present in the Go struct but absent from the raw protobuf descriptor. `proto.Unmarshal` on master silently dropped it, causing `saveTransportState` to fall back to the minimal path (no /27). Corrected `file_types_proto_rawDesc` in `proto/types.pb.go`. Zero application code changes. (local tracker #147 layer 4)
@@ -377,7 +389,7 @@ This example deploys a minimal mesh: two masters in two regions, two endpoints i
 
 ```bash
 # 1. Install mesh-ctl on your admin machine
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@latest
 export PATH=$PATH:$(go env GOPATH)/bin
 
 # 2. Create your topology file (see Configuration section for all fields)
@@ -421,7 +433,7 @@ mesh-ctl status -t mesh-topology.yml
 ### Install mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@latest
 ```
 
 The binary lands in `$(go env GOPATH)/bin`. Ensure that directory is in your `PATH`:
@@ -518,7 +530,7 @@ All nodes should appear `ONLINE` with tunnel counts matching the topology.
 ### Upgrading mesh-ctl
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@v1.7.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl@latest
 ```
 
 The `~/.mesh-ctl/` state directory (CA, tokens, keys, transport allocations) is not affected.
@@ -1053,6 +1065,8 @@ MESH_INTERFACE  env    Override auto-discovered WAN interface name (e.g., veth-a
 ## CLI Reference
 
 `mesh-ctl` runs on your admin workstation. It communicates with nodes over gRPC (mTLS + token).
+
+For common operational questions (token lifecycle, pubkey format, backup artefacts, client admin-state), see [docs/OPERATOR_FAQ.md](docs/OPERATOR_FAQ.md).
 
 **Global flags:**
 
