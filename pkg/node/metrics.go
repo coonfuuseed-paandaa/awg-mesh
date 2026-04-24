@@ -1,11 +1,13 @@
 package node
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -67,8 +69,11 @@ func RegisterMetrics() {
 	})
 }
 
-// StartMetricsServer starts a Prometheus metrics server and returns the running server.
-func StartMetricsServer(addr string) (*http.Server, error) {
+// StartMetricsServer starts a Prometheus metrics server. When the bind address
+// is not localhost, bearer token authentication is enforced using the node's
+// mesh.token from configDir. Prometheus scrape config supports this natively
+// via authorization.credentials_file.
+func StartMetricsServer(addr, configDir string) (*http.Server, error) {
 	metricsAddr := strings.TrimSpace(addr)
 	if metricsAddr == "" {
 		return nil, fmt.Errorf("metrics address is required")
@@ -79,8 +84,19 @@ func StartMetricsServer(addr string) (*http.Server, error) {
 		return nil, fmt.Errorf("listen metrics server on %q: %w", metricsAddr, err)
 	}
 
+	handler := promhttp.Handler()
+
+	if !isLocalhostAddr(metricsAddr) {
+		token, tokenErr := loadMetricsToken(configDir)
+		if tokenErr != nil {
+			_ = listener.Close()
+			return nil, fmt.Errorf("metrics auth required for non-localhost bind %q but token unavailable: %w", metricsAddr, tokenErr)
+		}
+		handler = bearerAuthMiddleware(token, handler)
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/metrics", handler)
 
 	server := &http.Server{
 		Addr:    metricsAddr,
@@ -94,6 +110,59 @@ func StartMetricsServer(addr string) (*http.Server, error) {
 	}()
 
 	return server, nil
+}
+
+// isLocalhostAddr returns true if the bind address is localhost (127.0.0.1 or ::1).
+func isLocalhostAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	host = strings.TrimSpace(host)
+	return host == "" || host == "127.0.0.1" || host == "::1" || host == "localhost"
+}
+
+// loadMetricsToken reads the bearer token from <configDir>/mesh.token.
+func loadMetricsToken(configDir string) (string, error) {
+	dir := strings.TrimSpace(configDir)
+	if dir == "" {
+		return "", fmt.Errorf("config directory is empty")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "mesh.token"))
+	if err != nil {
+		return "", fmt.Errorf("read mesh.token: %w", err)
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("mesh.token is empty")
+	}
+	return token, nil
+}
+
+// bearerAuthMiddleware wraps an http.Handler with Bearer token verification.
+func bearerAuthMiddleware(expectedToken string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="metrics"`)
+			http.Error(w, "authorization required", http.StatusUnauthorized)
+			return
+		}
+
+		const prefix = "Bearer "
+		if !strings.HasPrefix(auth, prefix) {
+			http.Error(w, "invalid authorization scheme", http.StatusUnauthorized)
+			return
+		}
+
+		provided := strings.TrimSpace(auth[len(prefix):])
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
+			http.Error(w, "invalid token", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // UpdateTunnelMetrics updates tunnel total and healthy gauges from current tunnel state.

@@ -70,7 +70,7 @@ func TestStartMetricsServer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			server, err := StartMetricsServer(tt.addr)
+			server, err := StartMetricsServer(tt.addr, t.TempDir())
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected StartMetricsServer error")
