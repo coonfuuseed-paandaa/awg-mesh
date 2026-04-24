@@ -9,32 +9,47 @@ import (
 
 const deployScriptTemplate = `# awg-mesh RouterOS deployment script
 # Generated for container {{.ContainerName}}
+# Topology node name: {{.TopologyName}}
 #
-# KEYPAIR NOTE (B22):
+# KEYPAIR NOTE:
 # The awg-mesh-client container generates its own AmneziaWG keypair on first boot.
-# After running this script and starting the container, retrieve the public key with:
+# After running this script and starting the container, run:
 #
-#   /container/shell [find where name={{.ContainerName}}]
-#   # inside the container shell:
-#   cat /config/publickey
+#   mesh-ctl client init {{.TopologyName}}
 #
-# Then run 'mesh-ctl client init {{.ContainerName}}' from the admin workstation
-# (the init RPC reads the node's public key and registers it with all masters).
-# You do NOT need to copy/paste the public key manually — mesh-ctl init handles
-# the key exchange via gRPC.
+# from the admin workstation. The init RPC reads the node's public key and
+# registers it with all masters via gRPC — no manual key exchange needed.
 
+# === Bridge (idempotent — shared across awg-mesh containers) ===
+{{- range .BridgeCommands }}
+{{ . }}
+{{- end }}
+
+# === Veth ===
 {{- range .VethCommands }}
 {{ . }}
 {{- end }}
-{{- range .RouteCommands }}
+
+# === NAT ===
+{{- range .NATCommands }}
 {{ . }}
 {{- end }}
+
+# === Firewall (placed before defconf drop rules) ===
 {{- range .FirewallCommands }}
 {{ . }}
 {{- end }}
+
+# === Route: overlay space → container ===
+{{- range .RouteCommands }}
+{{ . }}
+{{- end }}
+
+# === Mount + Container ===
 {{- range .ContainerCommands }}
 {{ . }}
 {{- end }}
+
 {{ .StartCommand }}
 `
 
@@ -56,20 +71,19 @@ const rotateScriptTemplate = `# awg-mesh AWG parameter rotation script
 //
 // TokenHash is the bcrypt hash of the bearer token — never the plaintext. The
 // node binary bootstraps /config/mesh.token from this value on first boot
-// (see cmd/awg-mesh-node/main.go:bootstrapTokenHash), matching the
-// docker-compose path. Masters must be "host:port" strings so the client
-// can dial each master on its actual listen_port.
+// (see cmd/awg-mesh-node/main.go:bootstrapTokenHash).
 type DeployScript struct {
-	ContainerName string
-	Image         string
-	Veth          string
-	VethGateway   string
-	OverlayIP     string
-	OverlayNet    string
-	ListenPort    int
-	Masters       []string
-	AWGConfig     string
-	TokenHash     string
+	TopologyName  string   // original name from topology (e.g. "mikrotik-home")
+	ContainerName string   // CAPS name for RouterOS (e.g. "AWG_MESH_HOME")
+	BridgeName    string   // shared bridge name (default: BR_AWG_MESH)
+	Image         string   // container image reference
+	Veth          string   // veth interface name (CAPS, e.g. "AWG_MESH_HOME")
+	VethGateway   string   // gateway IP or CIDR for veth (default: 100.127.0.1)
+	OverlayIP     string   // client overlay IP from topology
+	OverlayNet    string   // overlay CIDR from topology (e.g. "172.20.70.0/24")
+	TokenHash     string   // bcrypt hash of bearer token
+	DNS           []string // DNS servers (default: ["1.1.1.1", "8.8.8.8"])
+	GRPCPort      int      // gRPC management port for dstnat (default: 9090)
 }
 
 // GenerateDeployRSC generates a full .rsc script importable via /import.
@@ -78,30 +92,39 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 		return "", err
 	}
 
-	_, normalizedGateway := deriveVethAddressAndGateway(ds.VethGateway)
 	envVars := buildDeployEnvVars(ds)
+	mountName := DeriveMountName(ds.ContainerName)
+	mountSrc := "/docker/etc/awg-mesh-client-" + strings.ToLower(ds.TopologyName) + "-config"
+
 	containerCfg := ContainerConfig{
-		Name:        ds.ContainerName,
-		Image:       ds.Image,
-		Interface:   ds.Veth,
-		VethGateway: normalizedGateway,
-		OverlayIP:   ds.OverlayIP,
-		ListenPort:  ds.ListenPort,
-		EnvVars:     envVars,
+		Name:      ds.ContainerName,
+		Image:     ds.Image,
+		Interface: ds.Veth,
+		RootDir:   "/docker/awg-mesh-client-" + strings.ToLower(ds.TopologyName),
+		MountName: mountName,
+		MountSrc:  mountSrc,
+		DNS:       ds.DNS,
+		EnvVars:   envVars,
 	}
 
 	templateData := struct {
-		ContainerName     string
+		ContainerName string
+		TopologyName  string
+		BridgeCommands    []string
 		VethCommands      []string
-		RouteCommands     []string
+		NATCommands       []string
 		FirewallCommands  []string
+		RouteCommands     []string
 		ContainerCommands []string
 		StartCommand      string
 	}{
 		ContainerName:     ds.ContainerName,
+		TopologyName:      ds.TopologyName,
+		BridgeCommands:    GenerateBridgeCommands(ds.BridgeName, ds.Veth, ds.VethGateway),
 		VethCommands:      GenerateVethCommands(ds.Veth, ds.VethGateway),
-		RouteCommands:     GenerateRouteCommands(ds.OverlayNet, normalizedGateway),
-		FirewallCommands:  GenerateFirewallCommands(ds.Veth),
+		NATCommands:       GenerateNATCommands(ds.VethGateway, ds.GRPCPort),
+		FirewallCommands:  GenerateFirewallCommands(ds.BridgeName),
+		RouteCommands:     GenerateRouteCommands(ds.OverlayNet, ds.VethGateway),
 		ContainerCommands: GenerateContainerCommands(containerCfg),
 		StartCommand:      fmt.Sprintf("/container/start [find where name=%s]", escapeRouterOSToken(ds.ContainerName)),
 	}
@@ -138,15 +161,9 @@ func GenerateRotateRSC(containerName string, params RotateParams) (string, error
 
 	encodedParams := fmt.Sprintf(
 		"jc=%d,jmin=%d,jmax=%d,s1=%d,s2=%d,h1=%d,h2=%d,h3=%d,h4=%d",
-		params.Jc,
-		params.Jmin,
-		params.Jmax,
-		params.S1,
-		params.S2,
-		params.H1,
-		params.H2,
-		params.H3,
-		params.H4,
+		params.Jc, params.Jmin, params.Jmax,
+		params.S1, params.S2,
+		params.H1, params.H2, params.H3, params.H4,
 	)
 
 	templateData := struct {
@@ -156,7 +173,7 @@ func GenerateRotateRSC(containerName string, params RotateParams) (string, error
 		ContainerNameLiteral string
 	}{
 		ContainerName:        trimmedName,
-		EnvListLiteral:       quoteRouterOSValue(buildEnvListName(trimmedName)),
+		EnvListLiteral:       quoteRouterOSValue(DeriveEnvListName(trimmedName)),
 		ParamsLiteral:        quoteRouterOSValue(encodedParams),
 		ContainerNameLiteral: quoteRouterOSValue(trimmedName),
 	}
@@ -169,18 +186,17 @@ func GenerateRotateRSC(containerName string, params RotateParams) (string, error
 }
 
 func validateDeployScript(ds DeployScript) error {
-	trimmedContainerName := strings.TrimSpace(ds.ContainerName)
-	if trimmedContainerName == "" {
+	if strings.TrimSpace(ds.ContainerName) == "" {
 		return fmt.Errorf("container name is required")
+	}
+	if strings.TrimSpace(ds.TopologyName) == "" {
+		return fmt.Errorf("topology name is required")
 	}
 	if strings.TrimSpace(ds.Image) == "" {
 		return fmt.Errorf("container image is required")
 	}
 	if strings.TrimSpace(ds.Veth) == "" {
 		return fmt.Errorf("veth interface is required")
-	}
-	if strings.TrimSpace(ds.VethGateway) == "" {
-		return fmt.Errorf("veth gateway is required")
 	}
 	if strings.TrimSpace(ds.TokenHash) == "" {
 		return fmt.Errorf("token hash is required")
@@ -191,12 +207,6 @@ func validateDeployScript(ds DeployScript) error {
 	if strings.TrimSpace(ds.OverlayNet) == "" {
 		return fmt.Errorf("overlay network is required")
 	}
-	if ds.ListenPort < 0 || ds.ListenPort > 65535 {
-		return fmt.Errorf("listen port %d is out of range", ds.ListenPort)
-	}
-	if len(ds.Masters) == 0 {
-		return fmt.Errorf("at least one master is required")
-	}
 
 	if _, err := netip.ParseAddr(ds.OverlayIP); err != nil {
 		return fmt.Errorf("invalid overlay IP %q: %w", ds.OverlayIP, err)
@@ -204,47 +214,17 @@ func validateDeployScript(ds DeployScript) error {
 	if _, err := netip.ParsePrefix(ds.OverlayNet); err != nil {
 		return fmt.Errorf("invalid overlay network %q: %w", ds.OverlayNet, err)
 	}
-	if _, err := netip.ParseAddr(ds.VethGateway); err != nil {
-		if _, prefixErr := netip.ParsePrefix(ds.VethGateway); prefixErr != nil {
-			return fmt.Errorf("invalid veth gateway %q: %v", ds.VethGateway, prefixErr)
-		}
-	}
-
-	for _, master := range ds.Masters {
-		if strings.TrimSpace(master) == "" {
-			return fmt.Errorf("masters list contains empty entry")
-		}
-	}
 
 	return nil
 }
 
 func buildDeployEnvVars(ds DeployScript) map[string]string {
-	envVars := map[string]string{
+	return map[string]string{
 		"MESH_TOKEN_HASH": strings.TrimSpace(ds.TokenHash),
 		"MESH_MODE":       "client",
-		"MESH_NAME":       strings.TrimSpace(ds.ContainerName),
+		"MESH_NAME":       strings.TrimSpace(ds.TopologyName),
 		"MESH_OVERLAY_IP": strings.TrimSpace(ds.OverlayIP),
-		// Entries are "host:port"; clients dial each master on its actual
-		// listen_port rather than assuming 51820. See onboarding.go:
-		// resolveMasterAddresses for the builder.
-		"MESH_MASTERS":    strings.Join(ds.Masters, ","),
-		"MESH_CONFIG_DIR": "/config",
 	}
-
-	// Clients do not listen for incoming AWG traffic — they dial masters —
-	// so MESH_LISTEN_PORT on a client is ignored by the binary. It's still
-	// emitted if explicitly requested, to keep existing operator tooling
-	// happy, but no longer set by the default deploy path.
-	if ds.ListenPort > 0 {
-		envVars["MESH_LISTEN_PORT"] = fmt.Sprintf("%d", ds.ListenPort)
-	}
-
-	if strings.TrimSpace(ds.AWGConfig) != "" {
-		envVars["MESH_AWG_CONFIG"] = ds.AWGConfig
-	}
-
-	return envVars
 }
 
 func validateRotateParams(params RotateParams) error {

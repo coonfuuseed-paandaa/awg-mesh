@@ -3,8 +3,10 @@
 package routing
 
 import (
+	"errors"
 	"net"
 	"os"
+	"syscall"
 	"testing"
 )
 
@@ -71,5 +73,36 @@ func TestListRoutes(t *testing.T) {
 	}
 	if len(routes) == 0 {
 		t.Fatal("expected at least one route")
+	}
+}
+
+func TestRouteDeleteIgnoresMissingRoute(t *testing.T) {
+	t.Parallel()
+	dest := &net.IPNet{IP: net.ParseIP("172.20.70.1"), Mask: net.CIDRMask(32, 32)}
+	r := NewNetlinkRouter()
+
+	if err := r.RouteDelete(dest); err != nil {
+		t.Fatalf("RouteDelete should ignore missing route: %v", err)
+	}
+}
+
+func TestRemoveECMPRouteIgnoresMissingRoute(t *testing.T) {
+	t.Parallel()
+	dest := &net.IPNet{IP: net.ParseIP("172.20.70.1"), Mask: net.CIDRMask(32, 32)}
+	r := NewNetlinkRouter()
+
+	if err := r.RemoveECMPRoute(dest); err != nil {
+		t.Fatalf("RemoveECMPRoute should ignore missing route: %v", err)
+	}
+}
+
+func TestIsMissingRouteDeleteError(t *testing.T) {
+	t.Parallel()
+
+	if !isMissingRouteDeleteError(errors.Join(syscall.ESRCH, errors.New("route missing"))) {
+		t.Fatal("expected ESRCH to be treated as missing-route delete")
+	}
+	if isMissingRouteDeleteError(errors.Join(syscall.EPERM, errors.New("permission denied"))) {
+		t.Fatal("expected non-ESRCH error to remain fatal")
 	}
 }

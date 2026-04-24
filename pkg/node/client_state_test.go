@@ -11,7 +11,8 @@ func TestClientStateSaveLoad(t *testing.T) {
 	dir := t.TempDir()
 
 	state := ClientState{
-		OverlayIP: "172.20.70.131",
+		OverlayIP:    "172.20.70.131",
+		OverlaySpace: "172.20.70.0/24",
 		RoutingPolicies: []RoutingPolicyState{
 			{Name: "vpn-asia", DSCP: 10, Targets: []string{"node-asia-01"}},
 			{Name: "vpn-us", DSCP: 20, Targets: []string{"node-us-01"}},
@@ -47,6 +48,9 @@ func TestClientStateSaveLoad(t *testing.T) {
 
 	if loaded.OverlayIP != "172.20.70.131" {
 		t.Errorf("expected overlay IP 172.20.70.131, got %s", loaded.OverlayIP)
+	}
+	if loaded.OverlaySpace != "172.20.70.0/24" {
+		t.Errorf("expected overlay space 172.20.70.0/24, got %s", loaded.OverlaySpace)
 	}
 	if len(loaded.RoutingPolicies) != 2 {
 		t.Fatalf("expected 2 routing policies, got %d", len(loaded.RoutingPolicies))

@@ -77,22 +77,27 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 		// Log the error and continue — healthcheck will converge state over time.
 		c.node.logger.Warn().Err(err).Msg("reconcile client transport state failed (non-fatal, partial-mesh boot)")
 	}
-	// Ensure ECMP is built from whatever links reconcile managed to bring up,
-	// even when reconcile returned errors (FR-7 partial-mesh boot).
-	if err := c.rebuildClientECMP("init"); err != nil {
-		c.node.logger.Warn().Err(err).Msg("initial ECMP build failed (non-fatal)")
-	}
 
-	// On restart without topology file, load persisted client state to restore
-	// DSCP routing and DNS configuration.
+	// Without a mounted topology file, load persisted client metadata before the
+	// first ECMP rebuild so overlay-space routes can still be programmed during
+	// the initial init/startup cycle.
 	if c.node.topology == nil {
 		loaded, err := loadClientState(c.node.config.ConfigDir)
 		if err != nil {
 			c.node.logger.Warn().Err(err).Msg("load client state failed (non-fatal)")
 		} else if loaded.OverlayIP != "" {
 			c.clientState = &loaded
-			c.node.logger.Info().Str("overlay_ip", loaded.OverlayIP).Msg("client state loaded from disk")
+			c.node.logger.Info().
+				Str("overlay_ip", loaded.OverlayIP).
+				Str("overlay_space", loaded.OverlaySpace).
+				Msg("client state loaded from disk")
 		}
+	}
+
+	// Ensure ECMP is built from whatever links reconcile managed to bring up,
+	// even when reconcile returned errors (FR-7 partial-mesh boot).
+	if err := c.rebuildClientECMP("init"); err != nil {
+		c.node.logger.Warn().Err(err).Msg("initial ECMP build failed (non-fatal)")
 	}
 
 	if err := c.setupDSCPRouting(); err != nil {

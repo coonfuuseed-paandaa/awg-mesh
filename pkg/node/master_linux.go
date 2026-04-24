@@ -63,7 +63,17 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 				peerCfg.Endpoint = addr
 			}
 		}
-		if transportSubnet != "" && strings.TrimSpace(tunnel.OverlayIP) != "" {
+		if len(tunnel.AllowedIPs) > 0 {
+			// Use explicitly provided AllowedIPs (v1.12.9+: CLI is the source of truth).
+			peerAllowed := make([]net.IPNet, 0, len(tunnel.AllowedIPs))
+			for _, cidr := range tunnel.AllowedIPs {
+				if _, parsed, parseErr := net.ParseCIDR(strings.TrimSpace(cidr)); parseErr == nil {
+					peerAllowed = append(peerAllowed, *parsed)
+				}
+			}
+			peerCfg.AllowedIPs = peerAllowed
+		} else if transportSubnet != "" && strings.TrimSpace(tunnel.OverlayIP) != "" {
+			// Fallback: compute from topology (pre-v1.12.9 path).
 			allowedIPs, err := buildPeerAllowedIPs(m.node.topology, tunnel.Name, transportSubnet, tunnel.OverlayIP)
 			if err != nil {
 				_ = iface.Close()

@@ -87,17 +87,24 @@ func (r *NetlinkRouter) RouteReplaceLinkWithSrc(dest *net.IPNet, dev string, src
 	return nil
 }
 
+func isMissingRouteDeleteError(err error) bool {
+	return errors.Is(err, syscall.ESRCH)
+}
+
 // RouteDelete removes a route to dest.
 func (r *NetlinkRouter) RouteDelete(dest *net.IPNet) error {
 	route := &netlink.Route{Dst: dest}
 	if err := netlink.RouteDel(route); err != nil {
+		if isMissingRouteDeleteError(err) {
+			return nil // already absent, idempotent delete
+		}
 		return fmt.Errorf("route del %s: %w", dest, err)
 	}
 	return nil
 }
 
 // SetECMPRoute installs a multipath ECMP route with weighted nexthops.
-func (r *NetlinkRouter) SetECMPRoute(dest *net.IPNet, nexthops []NextHop) error {
+func (r *NetlinkRouter) SetECMPRoute(dest *net.IPNet, nexthops []NextHop, src ...net.IP) error {
 	if len(nexthops) == 0 {
 		return fmt.Errorf("at least one nexthop required for ECMP route to %s", dest)
 	}
@@ -130,6 +137,9 @@ func (r *NetlinkRouter) SetECMPRoute(dest *net.IPNet, nexthops []NextHop) error 
 	route := &netlink.Route{
 		Dst:       dest,
 		MultiPath: multipath,
+	}
+	if len(src) > 0 && src[0] != nil {
+		route.Src = src[0].To4()
 	}
 	if err := netlink.RouteReplace(route); err != nil {
 		return fmt.Errorf("ecmp route replace %s (%d nexthops): %w", dest, len(nexthops), err)

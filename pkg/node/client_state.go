@@ -19,6 +19,7 @@ var ErrCorruptClientState = errors.New("client state is corrupt")
 // Saved after mesh-ctl client init, loaded on container restart.
 type ClientState struct {
 	OverlayIP       string               `yaml:"overlay_ip"`
+	OverlaySpace    string               `yaml:"overlay_space,omitempty"`
 	RoutingPolicies []RoutingPolicyState `yaml:"routing_policies,omitempty"`
 	DNS             *DNSState            `yaml:"dns,omitempty"`
 	Masters         []NodeRef            `yaml:"masters,omitempty"`
