@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -82,6 +83,9 @@ func TestRouteDeleteIgnoresMissingRoute(t *testing.T) {
 	r := NewNetlinkRouter()
 
 	if err := r.RouteDelete(dest); err != nil {
+		if strings.Contains(err.Error(), "operation not permitted") {
+			t.Skip("skipping: requires CAP_NET_ADMIN")
+		}
 		t.Fatalf("RouteDelete should ignore missing route: %v", err)
 	}
 }
@@ -92,6 +96,9 @@ func TestRemoveECMPRouteIgnoresMissingRoute(t *testing.T) {
 	r := NewNetlinkRouter()
 
 	if err := r.RemoveECMPRoute(dest); err != nil {
+		if strings.Contains(err.Error(), "operation not permitted") {
+			t.Skip("skipping: requires CAP_NET_ADMIN")
+		}
 		t.Fatalf("RemoveECMPRoute should ignore missing route: %v", err)
 	}
 }

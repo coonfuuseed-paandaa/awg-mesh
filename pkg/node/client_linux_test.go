@@ -745,11 +745,7 @@ func TestRebuildClientECMP_ZeroHealthy_VIP_IgnoresMissingRoute(t *testing.T) {
 	topo := &topology.Topology{
 		Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"},
 	}
-	router := &mockRouter{
-		removeECMPErrorsByDest: map[string]error{
-			primaryCIDR: errors.Join(syscall.ESRCH, errors.New("route del no such process")),
-		},
-	}
+	router := &mockRouter{}
 	fw := &mockFirewall{}
 	sysctl := &mockSysctl{}
 
