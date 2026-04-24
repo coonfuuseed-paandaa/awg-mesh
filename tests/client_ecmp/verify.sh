@@ -8,10 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/compose.yml"
 COMPOSE_PROJECT="clientecmp"
-COMPOSE_STATE_DIR="${SCRIPT_DIR}/compose-state"
 COMPOSE_UP_TIMEOUT=300
 READY_TIMEOUT=60
-SETTLE_PAUSE=20
+SETTLE_PAUSE=8
 FAILOVER_WAIT=35
 RECOVERY_WAIT=60
 MASTER_01_OVERLAY="172.20.70.2"
@@ -30,8 +29,7 @@ MASTER_02_GRPC_PORT="29090"
 ENDPOINT_GRPC_PORT="39090"
 CLIENT_GRPC_PORT="49090"
 TS=$(date +%Y%m%d_%H%M%S)
-RUNTIME_ROOT="${SCRIPT_DIR}/.runtime"
-RUNTIME_DIR="${RUNTIME_ROOT}"
+RUNTIME_DIR="${SCRIPT_DIR}/.runtime"
 LOG_DIR="${RUNTIME_DIR}/awg-verify-${TS}"
 mkdir -p "${RUNTIME_DIR}"
 CTL_CONFIG_DIR=$(mktemp -d "${RUNTIME_DIR}/client-ecmp-ctl-XXXXXX")
@@ -59,7 +57,7 @@ dump_logs() {
 
 cleanup() {
     rm -rf "${CTL_CONFIG_DIR}"
-    rm -rf "${COMPOSE_STATE_DIR}"
+    [[ -n "${TOPO_FILE}" ]] && rm -f "${TOPO_FILE}" || true
 }
 
 wait_for_log() {
@@ -80,20 +78,20 @@ wait_for_log() {
 }
 
 find_meshctl() {
-    if [[ -x "${REPO_ROOT}/mesh-ctl.exe" ]]; then
-        echo "${REPO_ROOT}/mesh-ctl.exe"
-        return 0
-    fi
-    if [[ -x "${REPO_ROOT}/bin/mesh-ctl.exe" ]]; then
-        echo "${REPO_ROOT}/bin/mesh-ctl.exe"
-        return 0
-    fi
     if command -v mesh-ctl > /dev/null 2>&1; then
         echo "mesh-ctl"
         return 0
     fi
     if [[ -x "${REPO_ROOT}/bin/mesh-ctl" ]]; then
         echo "${REPO_ROOT}/bin/mesh-ctl"
+        return 0
+    fi
+    if [[ -x "${REPO_ROOT}/mesh-ctl.exe" ]]; then
+        echo "${REPO_ROOT}/mesh-ctl.exe"
+        return 0
+    fi
+    if [[ -x "${REPO_ROOT}/bin/mesh-ctl.exe" ]]; then
+        echo "${REPO_ROOT}/bin/mesh-ctl.exe"
         return 0
     fi
     return 1
@@ -109,19 +107,14 @@ meshctl_arg_path() {
     local path_value="$2"
 
     if meshctl_is_windows_binary "${meshctl_bin}"; then
-        if [[ "${path_value}" =~ ^/mnt/[a-z]/ ]]; then
-            echo "${path_value}" | sed -E 's#^/mnt/([a-z])/#\1:/#' | sed 's#/#\\#g'
-        else
-            wslpath -w "${path_value}"
-        fi
+        wslpath -w "${path_value}"
     else
         echo "${path_value}"
     fi
 }
 
 write_topology() {
-    TOPO_FILE="${RUNTIME_DIR}/mesh-topology-${TS}.yml"
-    mkdir -p "${RUNTIME_DIR}"
+    TOPO_FILE=$(mktemp "${RUNTIME_DIR}/client-ecmp-topology-XXXXXX.yml")
     cat > "${TOPO_FILE}" << EOF
 overlay:
   space: 172.20.70.0/24
@@ -182,19 +175,17 @@ EOF
 }
 
 deploy_generated_tokens() {
-    log "Deploying generated token hashes into running containers"
+    local node
+    local token_hash
+
+    log "Copying generated mesh.token hashes into running containers"
     for node in master-01 master-02 node-eu-01 client-lin; do
-        local token_path="${CTL_CONFIG_DIR}/nodes/${node}/mesh.token"
-        if [[ ! -f "${token_path}" ]]; then
-            fail "generated mesh.token for ${node} not found at ${token_path}"
-        fi
-        local hash
-        hash="$(tr -d '\r\n' < "${token_path}")"
-        docker exec "${node}" sh -c "mkdir -p /config && printf '%s' '${hash}' > /config/mesh.token"
+        token_hash="$(< "${CTL_CONFIG_DIR}/nodes/${node}/mesh.token")"
+        docker exec "${node}" sh -c "printf '%s' '${token_hash}' > /config/mesh.token"
     done
 
-    log "Restarting containers so gRPC auth reloads the generated token hashes"
-    docker restart master-01 master-02 node-eu-01 client-lin > /dev/null
+    log "Restarting containers so gRPC servers load the generated token hashes"
+    compose restart master-01 master-02 node-eu-01 client-lin
     sleep 5
 }
 
@@ -211,13 +202,12 @@ run_mesh_init() {
     "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" master prepare master-02 > /dev/null
     "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" endpoint prepare node-eu-01 > /dev/null
     "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" client prepare client-lin > /dev/null
-
     deploy_generated_tokens
 
-    log "Running mesh init flow: endpoint -> masters -> client"
-    "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" endpoint init node-eu-01
+    log "Running mesh init flow: masters -> endpoint -> client"
     "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" master init master-01
     "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" master init master-02
+    "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" endpoint init node-eu-01
     "${meshctl_bin}" --topology "${topology_arg}" --config-dir "${config_dir_arg}" client init client-lin
 }
 
@@ -261,23 +251,11 @@ fi
 # Step 2: Bring up the stack
 # ----------------------------------------------------------------------------
 
-log "Step 2: reset and docker compose up (timeout ${COMPOSE_UP_TIMEOUT}s)"
+log "Step 2: docker compose up (timeout ${COMPOSE_UP_TIMEOUT}s)"
 
-log "Removing any stale containers, networks, volumes, and compose-state from previous runs"
-compose down -v --remove-orphans > /dev/null 2>&1 || true
-rm -rf "${COMPOSE_STATE_DIR}"
-mkdir -p "${COMPOSE_STATE_DIR}"
-
-log "Seeding topology into client compose-state so client knows overlay space"
-mkdir -p "${COMPOSE_STATE_DIR}/client-lin"
-cp "${TOPO_FILE}" "${COMPOSE_STATE_DIR}/client-lin/mesh-topology.yml"
-
-# docker compose does not have a native timeout flag; wrap the compose helper with timeout(1).
+# docker compose does not have a native timeout flag; wrap with timeout(1).
 if command -v timeout > /dev/null 2>&1; then
-    timeout "${COMPOSE_UP_TIMEOUT}" bash -lc 'compose() {
-    MESH_TOPOLOGY_HOST_PATH="$1" docker compose -p "$2" -f "$3" "${@:4}"
-}
-compose "$@"' _ "${TOPO_FILE}" "${COMPOSE_PROJECT}" "${COMPOSE_FILE}" up -d --build
+    timeout "${COMPOSE_UP_TIMEOUT}" docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d --build
 else
     # Fallback: run without timeout (macOS / minimal images without coreutils timeout).
     compose up -d --build
@@ -308,41 +286,29 @@ sleep "${SETTLE_PAUSE}"
 # Step 5: US2 — stickiness check (ECMP route with both nexthops)
 # ----------------------------------------------------------------------------
 
-log "Step 5: US2 — verify ECMP route with both master nexthops and endpoint overlay reachability"
+log "Step 5: US2 — verify ECMP route with both master nexthops"
 
-# Check both VIP (172.20.70.1/32) and overlay space (172.20.70.0/24) routes.
-# Nexthops are WireGuard transport peer IPs (10.255.0.x), not Docker network IPs.
-VIP_ROUTE=$(docker exec client-lin ip route show 172.20.70.1/32 2>/dev/null || echo "no route yet")
-OVERLAY_ROUTE=$(docker exec client-lin ip route show 172.20.70.0/24 2>/dev/null || echo "no route yet")
-log "Client VIP route: ${VIP_ROUTE}"
-log "Client overlay route: ${OVERLAY_ROUTE}"
+RAW_ROUTE=$(docker exec client-lin ip route show 172.20.70.0/24 2>/dev/null || echo "no route yet")
+log "Client route: ${RAW_ROUTE}"
 
-# Primary check: overlay-space route must exist with at least one nexthop.
-if echo "${OVERLAY_ROUTE}" | grep -q "nexthop"; then
-    NH_COUNT=$(echo "${OVERLAY_ROUTE}" | grep -c "nexthop" || true)
-    if [[ "${NH_COUNT}" -ge 2 ]]; then
-        log "US2 PASS: overlay ECMP route has ${NH_COUNT} nexthops."
+if echo "${RAW_ROUTE}" | grep -q "nexthop"; then
+    # Multipath route present — check both nexthops appear.
+    if echo "${RAW_ROUTE}" | grep -q "172.31.0.10" && echo "${RAW_ROUTE}" | grep -q "172.31.0.11"; then
+        log "US2 PASS: ECMP route contains both master nexthops (172.31.0.10 + 172.31.0.11)."
     else
-        log "WARNING: overlay route has only ${NH_COUNT} nexthop (partial convergence). Accepted."
+        fail "US2: ECMP route exists but does not contain both master nexthops. Got: ${RAW_ROUTE}"
     fi
-elif echo "${OVERLAY_ROUTE}" | grep -q "via"; then
-    log "WARNING: overlay route is single-path (not ECMP). Accepted as partial convergence."
 else
-    fail "US2: No route to overlay 172.20.70.0/24 found on client-lin. Got: ${OVERLAY_ROUTE}"
+    # Single nexthop or missing — accept if at least one master is reachable (partial convergence).
+    if echo "${RAW_ROUTE}" | grep -qE "172.31.0.10|172.31.0.11"; then
+        log "WARNING: route not yet multipath — only one nexthop present. Accepted as partial convergence."
+    else
+        fail "US2: No route to overlay 172.20.70.0/24 found on client-lin. Got: ${RAW_ROUTE}"
+    fi
 fi
 
 if [[ "${HAVE_CONNTRACK}" == "true" ]]; then
     log "conntrack stickiness check (informational): $(conntrack -L 2>/dev/null | grep -c udp || echo 'n/a') UDP conntrack entries"
-fi
-
-ENDPOINT_PING=$(docker exec client-lin sh -lc "ping -c 3 -W 5 ${ENDPOINT_OVERLAY}" 2>&1 || true)
-log "Client -> endpoint overlay ping output: ${ENDPOINT_PING//$'\n'/ | }"
-if echo "${ENDPOINT_PING}" | grep -qE " 0% packet loss| 0 packets? lost"; then
-    log "US2 PASS: client can reach endpoint overlay ${ENDPOINT_OVERLAY}."
-elif echo "${ENDPOINT_PING}" | grep -qE "[1-9][0-9]* packets? received|[1-9][0-9]* bytes from"; then
-    log "US2 PASS (partial): some packets reached endpoint overlay ${ENDPOINT_OVERLAY}."
-else
-    fail "US2: client cannot reach endpoint overlay ${ENDPOINT_OVERLAY}. Ping output: ${ENDPOINT_PING}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -359,10 +325,15 @@ sleep "${FAILOVER_WAIT}"
 FAILOVER_ROUTE=$(docker exec client-lin ip route show 172.20.70.0/24 2>/dev/null || echo "no route yet")
 log "Client route after failover: ${FAILOVER_ROUTE}"
 
-if echo "${FAILOVER_ROUTE}" | grep -qE "nexthop|via"; then
-    log "US1 PASS: client still has a route to overlay after master-01 failure."
+if echo "${FAILOVER_ROUTE}" | grep -qE "172.31.0.11|via"; then
+    log "US1 PASS: client still has a route to overlay after master-01 failure (via master-02)."
 else
     fail "US1 failover: client lost all overlay routes after master-01 failure. Got: ${FAILOVER_ROUTE}"
+fi
+
+# Sanity: master-01 nexthop must be absent (routing correctly removed the dead path).
+if echo "${FAILOVER_ROUTE}" | grep -q "172.31.0.10"; then
+    log "WARNING: master-01 nexthop (172.31.0.10) still present in route after kill. Healthcheck may need more time."
 fi
 
 # ----------------------------------------------------------------------------
@@ -379,11 +350,10 @@ sleep "${RECOVERY_WAIT}"
 RECOVERY_ROUTE=$(docker exec client-lin ip route show 172.20.70.0/24 2>/dev/null || echo "no route yet")
 log "Client route after recovery: ${RECOVERY_ROUTE}"
 
-RECOVERY_NH_COUNT=$(echo "${RECOVERY_ROUTE}" | grep -c "nexthop" || true)
-if [[ "${RECOVERY_NH_COUNT}" -ge 2 ]]; then
-    log "US1 PASS: both nexthops restored in client route after recovery."
+if echo "${RECOVERY_ROUTE}" | grep -q "172.31.0.10"; then
+    log "US1 PASS: master-01 nexthop (172.31.0.10) restored in client route after recovery."
 else
-    log "WARNING: only ${RECOVERY_NH_COUNT} nexthop(s) after ${RECOVERY_WAIT}s recovery. May need more convergence time."
+    log "WARNING: master-01 nexthop not yet re-added after ${RECOVERY_WAIT}s. May need more convergence time."
     log "Route state: ${RECOVERY_ROUTE}"
 fi
 

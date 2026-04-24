@@ -165,9 +165,9 @@ func reconcileMasterNode(
 	}
 
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-		Target:   master.GRPCAddr(),
-		Token:    token,
-		Insecure: true,
+		Target:     master.GRPCAddr(),
+		Token:      token,
+		CACertPath: caPath(cfgDir),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "master %s: connect failed (%v) — skipping\n", master.Name, err)
@@ -471,9 +471,9 @@ func reconcileEndpointNode(
 	alloc, allocErr := loadOrCreateAllocator(cfgDir, topo)
 
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-		Target:   ep.GRPCAddr(),
-		Token:    token,
-		Insecure: true,
+		Target:     ep.GRPCAddr(),
+		Token:      token,
+		CACertPath: caPath(cfgDir),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "endpoint %s: connect failed (%v) — skipping\n", ep.Name, err)
