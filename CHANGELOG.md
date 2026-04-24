@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Client data-plane hardening (#165)** — 11 runtime fixes making the client fully
+  operational end-to-end: bounded deterministic tunnel ID for long client names,
+  master pubkey hex decode, cert NotBefore backdate, EnableL4Hash non-fatal in Docker,
+  overlay ECMP route `src` hint, client AllowedIPs in AddTunnel, master uses request
+  AllowedIPs, healthcheck initial unhealthy→healthy transition, idempotent tunnel
+  re-create on master init.
+- **MikroTik config generator overhaul (#165)** — generated .rsc scripts are now
+  production-ready: bridge + IP + bridge-port for L2/L3 connectivity, srcnat
+  masquerade + dstnat for gRPC, conntrack-aware firewall rules with `place-before`
+  defconf drop, persistent `/config` mount (separate from root-dir), DNS servers
+  (default 1.1.1.1, 8.8.8.8), `logging=yes`, `start-on-boot=yes`, CAPS naming
+  convention (`AWG_MESH_<NAME>`), default veth subnet changed to 100.127.0.0/24
+  (CGN/RFC 6598).
+- **Linux docker-compose templates** — added `dns`, `mem_limit: 256m`, `shm_size: 64m`,
+  `logging` with json-file driver, `stop_grace_period: 10s`.
+
+### Removed
+
+- Dead environment variables from generated configs: `MESH_MASTERS`, `MESH_AWG_CONFIG`,
+  `MESH_CONFIG_DIR` — none were read by the node binary.
+
 ## v1.12.12 — 2026-04-21
 
 ### Changes (mesh-ctl audit round 2 — local tracker #151 remaining 14 items)
