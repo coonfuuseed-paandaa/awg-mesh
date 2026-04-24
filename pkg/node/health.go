@@ -290,7 +290,7 @@ func (h *HealthChecker) Run(
 				}
 
 				if alive {
-					if failures[t.Name] > 0 {
+					if failures[t.Name] > 0 || !t.Healthy {
 						h.logger.Info().
 							Str("tunnel", t.Name).
 							Str("ping_target", t.PingAddr).

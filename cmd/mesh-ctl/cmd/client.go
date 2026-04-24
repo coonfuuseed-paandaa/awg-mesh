@@ -2,16 +2,21 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
@@ -30,6 +35,27 @@ func newClientCommand() *cobra.Command {
 	cmd.AddCommand(newClientRemoveCommand())
 
 	return cmd
+}
+
+func saveClientInitState(configDir string, state node.ClientState) error {
+	trimmedDir := strings.TrimSpace(configDir)
+	if trimmedDir == "" {
+		return fmt.Errorf("config directory is required")
+	}
+
+	data, err := yaml.Marshal(&state)
+	if err != nil {
+		return fmt.Errorf("marshal client init state: %w", err)
+	}
+
+	path := filepath.Join(trimmedDir, "client-state.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create client init state directory: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write client init state: %w", err)
+	}
+	return nil
 }
 
 func newClientPrepareCommand() *cobra.Command {
@@ -88,31 +114,18 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("save token: %w", err)
 				}
 
-				// Resolve every referenced master so the client knows which
-				// UDP port to dial per master. Missing masters in the topology
-				// are a hard error — the resulting compose would otherwise
-				// silently reference non-existent endpoints.
-				masterAddrs, err := resolveMasterAddresses(topo, client.Masters)
-				if err != nil {
-					return fmt.Errorf("resolve masters for client %q: %w", name, err)
-				}
-
 				data := struct {
 					Name      string
-					Host      string
 					OverlayIP string
 					Image     string
 					TokenHash string
-					Masters   string
 				}{
 					Name:      client.Name,
-					Host:      "",
 					OverlayIP: client.OverlayIP,
 					Image:     resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest", "defaults.image.client"),
 					// Escape $ → $$ to survive Docker Compose variable
 					// interpolation. Bcrypt hashes contain literal `$`.
 					TokenHash: composeEscapeDollar(hash),
-					Masters:   strings.Join(masterAddrs, ","),
 				}
 
 				// B3 fix: write output to configDir/clients/<name>/ instead of CWD.
@@ -163,21 +176,13 @@ func newClientPrepareCommand() *cobra.Command {
 					return fmt.Errorf("save token: %w", err)
 				}
 
-				// Collect master host:port pairs for the deploy script so the
-				// RouterOS container can dial each master on its configured
-				// listen_port (anti-DPI deployments commonly use 443/udp, not
-				// the default 51820).
-				masterAddrs, err := resolveMasterAddresses(topo, client.Masters)
-				if err != nil {
-					return fmt.Errorf("resolve masters for client %q: %w", name, err)
-				}
+				// Derive CAPS naming convention for RouterOS.
+				containerName := mikrotik.DeriveContainerName(name)
 
-				// B4 fix: resolve veth name and gateway from topology veth block,
-				// falling back to built-in defaults when not specified.
-				// The hardcoded "192.168.100.1/24" conflicts with common home-router
-				// subnets; operators can now override via topology clients[].veth.gateway.
-				vethName := "veth-" + name
-				vethGateway := "192.168.100.1/24"
+				// Resolve veth name and gateway from topology veth block,
+				// falling back to CAPS container name and CGN subnet.
+				vethName := containerName
+				vethGateway := "" // empty = deriveVethAddressAndGateway defaults to 100.127.0.x
 				if client.Veth != nil {
 					if client.Veth.Name != "" {
 						vethName = client.Veth.Name
@@ -187,18 +192,28 @@ func newClientPrepareCommand() *cobra.Command {
 					}
 				}
 
+				// DNS: topology override or safe defaults.
+				dns := []string{"1.1.1.1", "8.8.8.8"}
+				if client.DNS != nil && client.DNS.Upstream != "" {
+					dns = strings.Split(client.DNS.Upstream, ",")
+				}
+
+				grpcPort := client.GRPCPort
+				if grpcPort == 0 {
+					grpcPort = 9090
+				}
+
 				ds := mikrotik.DeployScript{
-					ContainerName: name,
+					TopologyName:  name,
+					ContainerName: containerName,
 					Image:         resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest", "defaults.image.client"),
 					Veth:          vethName,
 					VethGateway:   vethGateway,
 					OverlayIP:     client.OverlayIP,
 					OverlayNet:    topo.Overlay.Space,
-					// ListenPort deliberately left 0: clients do not listen,
-					// they dial masters via MESH_MASTERS (host:port pairs).
-					Masters:   masterAddrs,
-					AWGConfig: strings.Join(masterAddrs, ","),
-					TokenHash: hash,
+					TokenHash:     hash,
+					DNS:           dns,
+					GRPCPort:      grpcPort,
 				}
 
 				rsc, err := mikrotik.GenerateDeployRSC(ds)
@@ -267,6 +282,77 @@ func resolveClientTarget(topo *topology.Topology, client *topology.ClientNode) (
 
 func resolveClientGRPCAddr(_ *topology.Topology, client *topology.ClientNode) string {
 	return client.GRPCAddr()
+}
+
+var masterClientTunnelIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,12}$`)
+
+func masterClientLegacyTunnelID(clientName string) string {
+	return strings.TrimSpace(clientName)
+}
+
+func masterClientTunnelID(clientName string) string {
+	trimmed := masterClientLegacyTunnelID(clientName)
+	if trimmed == "" {
+		return "cli-00000000"
+	}
+	if len(trimmed) <= 12 && masterClientTunnelIDPattern.MatchString(trimmed) {
+		return trimmed
+	}
+	sum := sha256.Sum256([]byte(trimmed))
+	return "cli-" + hex.EncodeToString(sum[:4])
+}
+
+func masterClientPreferredTunnelID(clientName string, tunnels []*proto.TunnelStatus) string {
+	legacyName := masterClientLegacyTunnelID(clientName)
+	boundedName := masterClientTunnelID(clientName)
+	if legacyName == "" || legacyName == boundedName {
+		return boundedName
+	}
+	for _, tunnel := range tunnels {
+		if tunnel != nil && strings.TrimSpace(tunnel.GetName()) == legacyName {
+			return legacyName
+		}
+	}
+	return boundedName
+}
+
+func masterClientRemovalTunnelIDs(clientName string, tunnels []*proto.TunnelStatus) []string {
+	legacyName := masterClientLegacyTunnelID(clientName)
+	boundedName := masterClientTunnelID(clientName)
+	seen := make(map[string]struct{}, 2)
+	removals := make([]string, 0, 2)
+	appendName := func(name string) {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			return
+		}
+		if _, exists := seen[trimmed]; exists {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		removals = append(removals, trimmed)
+	}
+
+	if len(tunnels) == 0 {
+		appendName(legacyName)
+		appendName(boundedName)
+		return removals
+	}
+
+	present := make(map[string]struct{}, len(tunnels))
+	for _, tunnel := range tunnels {
+		if tunnel == nil {
+			continue
+		}
+		present[strings.TrimSpace(tunnel.GetName())] = struct{}{}
+	}
+	if _, exists := present[legacyName]; exists {
+		appendName(legacyName)
+	}
+	if _, exists := present[boundedName]; exists {
+		appendName(boundedName)
+	}
+	return removals
 }
 
 func newClientInitCommand() *cobra.Command {
@@ -389,8 +475,7 @@ func newClientInitCommand() *cobra.Command {
 					continue
 				}
 
-				masterPubkeyPath := filepath.Join(nodeDir(configDir, master.Name), "pubkey")
-				masterPubkey, err := os.ReadFile(masterPubkeyPath)
+				masterPubkey, err := readAdminPubkeyRaw(configDir, master.Name)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: read master %q pubkey: %v\n", master.Name, err)
 					continue
@@ -417,8 +502,28 @@ func newClientInitCommand() *cobra.Command {
 				}
 
 				masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				tunnelList, listErr := masterClient.Agent().ListTunnels(masterCtx, &proto.Empty{})
+				masterCancel()
+				if listErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: list tunnels on master %q failed: %v\n", master.Name, listErr)
+					if closeErr := masterClient.Close(); closeErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
+					}
+					continue
+				}
+				masterTunnelName := masterClientPreferredTunnelID(client.Name, tunnelList.GetTunnels())
+
+				// Client AllowedIPs: transport subnet + client overlay IP.
+				// Without these, master WireGuard drops client packets with
+				// overlay source IPs (not in peer AllowedIPs).
+				clientAllowedIPs := []string{
+					allocation.Subnet.String(),
+					client.OverlayIP + "/32",
+				}
+
+				masterCtx, masterCancel = context.WithTimeout(context.Background(), 30*time.Second)
 				addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
-					Name:                client.Name,
+					Name:                masterTunnelName,
 					EndpointHost:        "",
 					OverlayIp:           client.OverlayIP,
 					BalancerIp:          "",
@@ -427,6 +532,7 @@ func newClientInitCommand() *cobra.Command {
 					TransportSubnet:     allocation.Subnet.String(),
 					MasterTransportIp:   allocation.MasterIP.String(),
 					EndpointTransportIp: allocation.EndpointIP.String(),
+					AllowedIps:          clientAllowedIPs,
 				})
 				masterCancel()
 				if closeErr := masterClient.Close(); closeErr != nil {
@@ -470,6 +576,7 @@ func newClientInitCommand() *cobra.Command {
 					LocalTransportIp:    allocation.EndpointIP.String(),
 					PeerTransportIp:     allocation.MasterIP.String(),
 					BalancerIp:          masterBalancerIP,
+					ExtraRoutes:         []string{topo.Overlay.Space},
 				})
 				peerCancel()
 				if closeErr := clientPeerClient.Close(); closeErr != nil {
@@ -495,6 +602,13 @@ func newClientInitCommand() *cobra.Command {
 
 			if err := saveTransportState(alloc, configDir); err != nil {
 				return fmt.Errorf("save transport state: %w", err)
+			}
+
+			if err := saveClientInitState(nodeDir(configDir, name), node.ClientState{
+				OverlayIP:    client.OverlayIP,
+				OverlaySpace: topo.Overlay.Space,
+			}); err != nil {
+				return fmt.Errorf("save client init state: %w", err)
 			}
 
 			fmt.Printf("Client %q initialized: %d/%d masters connected.\nPublic key: %s\n",
@@ -545,25 +659,42 @@ func newClientRemoveCommand() *cobra.Command {
 				}
 
 				masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				removeResp, removeErr := masterClient.Agent().RemoveTunnel(masterCtx, &proto.RemoveTunnelRequest{
-					Name: client.Name,
-				})
+				tunnelList, listErr := masterClient.Agent().ListTunnels(masterCtx, &proto.Empty{})
 				masterCancel()
+				if listErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: list tunnels on master %q failed: %v\n", master.Name, listErr)
+					if closeErr := masterClient.Close(); closeErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
+					}
+					continue
+				}
+
+				removedAny := false
+				for _, tunnelName := range masterClientRemovalTunnelIDs(client.Name, tunnelList.GetTunnels()) {
+					masterCtx, masterCancel = context.WithTimeout(context.Background(), 30*time.Second)
+					removeResp, removeErr := masterClient.Agent().RemoveTunnel(masterCtx, &proto.RemoveTunnelRequest{
+						Name: tunnelName,
+					})
+					masterCancel()
+
+					if removeErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: remove tunnel %q from master %q failed: %v\n", tunnelName, master.Name, removeErr)
+						continue
+					}
+					if removeResp == nil || !removeResp.Success {
+						fmt.Fprintf(os.Stderr, "warning: remove tunnel %q from master %q failed: %s\n", tunnelName, master.Name, "[RPC failure]")
+						continue
+					}
+					removedAny = true
+					fmt.Printf("Removed tunnel %q for client %q from master %q.\n", tunnelName, client.Name, master.Name)
+				}
+
 				if closeErr := masterClient.Close(); closeErr != nil {
 					fmt.Fprintf(os.Stderr, "warning: close grpc client for master %q: %v\n", master.Name, closeErr)
 				}
-
-				if removeErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: remove tunnel from master %q failed: %v\n", master.Name, removeErr)
-					continue
+				if !removedAny {
+					fmt.Fprintf(os.Stderr, "warning: no tunnels removed for client %q from master %q\n", client.Name, master.Name)
 				}
-
-				if !removeResp.Success {
-					fmt.Fprintf(os.Stderr, "warning: remove tunnel from master %q failed: %s\n", master.Name, "[RPC failure]")
-					continue
-				}
-
-				fmt.Printf("Removed tunnel for client %q from master %q.\n", client.Name, master.Name)
 			}
 
 			fmt.Printf("Client removed from all masters. Manual cleanup may be needed on client host.\n")

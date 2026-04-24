@@ -63,15 +63,31 @@ endpoints:
 clients:
   - name: office-linux
     type: linux
+    host: 10.0.0.50          # management IP for mesh-ctl client init
     overlay_ip: 172.20.70.130
+    grpc_port: 9090           # default; override if port-forwarded
     masters:
       - master-01
       - master-02
-  - name: my-router
+    # Optional fields:
+    # routing_policies:
+    #   - name: video
+    #     dscp: 46
+    #     targets: [node-us-01]
+    # dns:
+    #   upstream: 1.1.1.1
+
+  - name: mikrotik-home
     type: mikrotik
     overlay_ip: 172.20.70.131
+    grpc_port: 9090
     masters:
       - master-01
+    veth:
+      name: AWG_MESH_HOME       # CAPS convention for RouterOS interfaces
+      gateway: 100.127.0.1/24   # CGN space (RFC 6598) — avoids LAN conflicts
+    dns:
+      upstream: 1.1.1.1,8.8.8.8
 
 capture:
   domains_file: domains.txt   # local file on admin PC, distributed to masters via gRPC

@@ -352,8 +352,7 @@ func newMasterInitCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "warning: build master allowed_ips for endpoint %q / master %q: %v\n", ep.Name, master.Name, maipErr)
 					masterAllowedIPs = []string{allocation.Subnet.String(), ep.OverlayIP + "/32"}
 				}
-				addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				addResp, addErr := client.Agent().AddTunnel(addCtx, &proto.AddTunnelRequest{
+				addTunnelReq := &proto.AddTunnelRequest{
 					Name:                ep.Name,
 					EndpointHost:        endpointHost,
 					OverlayIp:           ep.OverlayIP,
@@ -364,8 +363,27 @@ func newMasterInitCommand() *cobra.Command {
 					MasterTransportIp:   allocation.MasterIP.String(),
 					EndpointTransportIp: allocation.EndpointIP.String(),
 					AllowedIps:          masterAllowedIPs,
-				})
+				}
+				addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				addResp, addErr := client.Agent().AddTunnel(addCtx, addTunnelReq)
 				addCancel()
+
+				// Idempotent re-init: if the tunnel already exists (e.g. from a prior
+				// endpoint init), remove it and re-add with the correct endpoint host
+				// and per-master WG listen port. Without this, the master keeps the
+				// stale endpoint_host from the original AddTunnel and the WG handshake
+				// never completes.
+				if addErr != nil && strings.Contains(addErr.Error(), "already exists") {
+					fmt.Fprintf(os.Stderr, "note: tunnel %q on master %q already exists, re-creating with updated endpoint %s\n", ep.Name, master.Name, endpointHost)
+					rmCtx, rmCancel := context.WithTimeout(context.Background(), 15*time.Second)
+					_, _ = client.Agent().RemoveTunnel(rmCtx, &proto.RemoveTunnelRequest{Name: ep.Name})
+					rmCancel()
+
+					addCtx2, addCancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+					addResp, addErr = client.Agent().AddTunnel(addCtx2, addTunnelReq)
+					addCancel2()
+				}
+
 				if addErr != nil {
 					fmt.Fprintf(os.Stderr, "warning: add tunnel to master %q for endpoint %q failed: %v\n", master.Name, ep.Name, addErr)
 					continue
@@ -377,7 +395,7 @@ func newMasterInitCommand() *cobra.Command {
 				}
 
 				fmt.Printf("Added peer on endpoint %q for master %q.\n", ep.Name, master.Name)
-				fmt.Printf("Added tunnel for endpoint %q on master %q (endpoint: %s).\n", ep.Name, master.Name, endpointHost)
+				fmt.Printf("Tunnel %q on master %q: created (endpoint: %s).\n", ep.Name, master.Name, endpointHost)
 			}
 
 			if err := saveTransportState(alloc, configDir); err != nil {

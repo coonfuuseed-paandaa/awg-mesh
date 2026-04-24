@@ -16,6 +16,7 @@ const (
 	topo     = "mesh-topology.yml"
 	cfgDir   = "../../.mesh-ctl-e2e"
 	compDir  = "."
+	topoPath = "../../tests/simulation/mesh-topology.yml"
 )
 
 // TestE2EFullMesh runs the complete 8-node simulation and verifies all connectivity.
@@ -37,6 +38,7 @@ func TestE2EFullMesh(t *testing.T) {
 	t.Run("OverlayPing", testOverlayPing)
 	t.Run("ECMP", testECMP)
 	t.Run("ClientToMaster", testClientToMaster)
+	t.Run("ClientToEndpoint", testClientToEndpoint)
 	t.Run("Status", testStatus)
 }
 
@@ -53,12 +55,12 @@ func setup(t *testing.T) {
 
 	// Prepare all nodes
 	for _, n := range []string{"master-01", "master-02"} {
-		run(t, meshCtl, "master", "prepare", n, "-t", topo, "--config-dir", cfgDir)
+		run(t, meshCtl, "master", "prepare", n, "-t", topoPath, "--config-dir", cfgDir)
 	}
 	for _, n := range []string{"node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01"} {
-		run(t, meshCtl, "endpoint", "prepare", n, "-t", topo, "--config-dir", cfgDir)
+		run(t, meshCtl, "endpoint", "prepare", n, "-t", topoPath, "--config-dir", cfgDir)
 	}
-	run(t, meshCtl, "client", "prepare", "client-01", "-t", topo, "--config-dir", cfgDir)
+	run(t, meshCtl, "client", "prepare", "client-01", "-t", topoPath, "--config-dir", cfgDir)
 
 	// Deploy tokens
 	nodes := []string{"master-01", "master-02", "node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01", "client-01"}
@@ -80,15 +82,15 @@ func initAll(t *testing.T) {
 	t.Helper()
 
 	for _, n := range []string{"node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01"} {
-		out := run(t, meshCtl, "endpoint", "init", n, "-t", topo, "--config-dir", cfgDir)
+		out := run(t, meshCtl, "endpoint", "init", n, "-t", topoPath, "--config-dir", cfgDir)
 		if !strings.Contains(out, "initialized successfully") {
 			t.Fatalf("endpoint %s init failed: %s", n, out)
 		}
 	}
 	for _, n := range []string{"master-01", "master-02"} {
-		run(t, meshCtl, "master", "init", n, "-t", topo, "--config-dir", cfgDir)
+		run(t, meshCtl, "master", "init", n, "-t", topoPath, "--config-dir", cfgDir)
 	}
-	out := run(t, meshCtl, "client", "init", "client-01", "-t", topo, "--config-dir", cfgDir)
+	out := run(t, meshCtl, "client", "init", "client-01", "-t", topoPath, "--config-dir", cfgDir)
 	if !strings.Contains(out, "masters connected") && !strings.Contains(out, "Added peer") {
 		t.Logf("client init output: %s", out)
 		t.Fatalf("client init failed — no masters connected")
@@ -163,8 +165,15 @@ func testClientToMaster(t *testing.T) {
 	}
 }
 
+func testClientToEndpoint(t *testing.T) {
+	out := dockerExec(t, "client-01", "ping -c 1 -W 3 172.20.70.37")
+	if !strings.Contains(out, "1 packets received") {
+		t.Errorf("client → endpoint overlay failed: %s", out)
+	}
+}
+
 func testStatus(t *testing.T) {
-	out := run(t, meshCtl, "status", "-t", topo, "--config-dir", cfgDir)
+	out := run(t, meshCtl, "status", "-t", topoPath, "--config-dir", cfgDir)
 	for _, node := range []string{"master-01", "master-02", "node-asia-01", "node-asia-02", "node-asia-03", "node-eu-01", "node-us-01"} {
 		if !strings.Contains(out, node) {
 			t.Errorf("status missing node %s", node)

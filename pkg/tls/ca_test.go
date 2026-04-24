@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGenerateCA(t *testing.T) {
 	t.Parallel()
 
+	start := time.Now().UTC()
 	cert, key, err := GenerateCA("awg-mesh-ca")
 	if err != nil {
 		t.Fatalf("GenerateCA returned error: %v", err)
@@ -28,6 +30,12 @@ func TestGenerateCA(t *testing.T) {
 	}
 	if cert.KeyUsage&x509.KeyUsageCertSign == 0 {
 		t.Fatalf("expected cert-sign key usage")
+	}
+	if !cert.NotBefore.Before(start) {
+		t.Fatalf("expected CA NotBefore to be backdated, got %s (start %s)", cert.NotBefore, start)
+	}
+	if cert.NotBefore.Before(start.Add(-2 * time.Minute)) {
+		t.Fatalf("expected CA NotBefore backdating to stay bounded, got %s (start %s)", cert.NotBefore, start)
 	}
 	if _, ok := key.(*ecdsa.PrivateKey); !ok {
 		t.Fatalf("expected ECDSA private key, got %T", key)
@@ -42,6 +50,7 @@ func TestIssueCert(t *testing.T) {
 		t.Fatalf("GenerateCA returned error: %v", err)
 	}
 
+	start := time.Now().UTC()
 	certPEM, keyPEM, err := IssueCert(caCert, caKey, "node-1", []string{"node-1.local", "10.0.0.10"})
 	if err != nil {
 		t.Fatalf("IssueCert returned error: %v", err)
@@ -60,6 +69,12 @@ func TestIssueCert(t *testing.T) {
 	}
 	if cert.Subject.CommonName != "node-1" {
 		t.Fatalf("unexpected cert CN: %s", cert.Subject.CommonName)
+	}
+	if !cert.NotBefore.Before(start) {
+		t.Fatalf("expected node cert NotBefore to be backdated, got %s (start %s)", cert.NotBefore, start)
+	}
+	if cert.NotBefore.Before(start.Add(-2 * time.Minute)) {
+		t.Fatalf("expected node cert NotBefore backdating to stay bounded, got %s (start %s)", cert.NotBefore, start)
 	}
 	if !containsString(cert.DNSNames, "node-1.local") {
 		t.Fatalf("missing DNS SAN in certificate: %#v", cert.DNSNames)

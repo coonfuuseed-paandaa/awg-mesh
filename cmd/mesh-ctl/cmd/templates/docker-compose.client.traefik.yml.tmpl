@@ -13,9 +13,19 @@ services:
       - MESH_MODE=client
       - MESH_NAME={{.Name}}
       - MESH_OVERLAY_IP={{.OverlayIP}}
-      - MESH_CONFIG_DIR=/config
       # Bind to all interfaces so Traefik can scrape metrics from the sidecar.
       - MESH_METRICS_ADDR=0.0.0.0:9091
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    mem_limit: 256m
+    shm_size: 64m
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - /srv/awg-mesh/{{.Name}}:/config
     labels:

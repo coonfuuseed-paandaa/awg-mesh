@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const certificateValidityBackdate = time.Minute
+
 // GenerateCA creates a new self-signed ECDSA P-256 CA certificate.
 func GenerateCA(commonName string) (*x509.Certificate, crypto.PrivateKey, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -34,7 +36,7 @@ func GenerateCA(commonName string) (*x509.Certificate, crypto.PrivateKey, error)
 		Subject: pkix.Name{
 			CommonName: commonName,
 		},
-		NotBefore:             now,
+		NotBefore:             now.Add(-certificateValidityBackdate),
 		NotAfter:              now.Add(10 * 365 * 24 * time.Hour),
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
@@ -73,7 +75,7 @@ func IssueCert(caCert *x509.Certificate, caKey crypto.PrivateKey, commonName str
 		Subject: pkix.Name{
 			CommonName: commonName,
 		},
-		NotBefore: now,
+		NotBefore: now.Add(-certificateValidityBackdate),
 		NotAfter:  now.Add(365 * 24 * time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{

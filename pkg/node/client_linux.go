@@ -128,6 +128,18 @@ func clientIfaceName(pk wg.Key) string {
 	return clientInterfacePrefix + hex.EncodeToString(sum[:2])
 }
 
+type transportInfo struct {
+	gateway string
+	device  string
+}
+
+type resolvedDSCPPolicy struct {
+	policy     routing.DSCPPolicy
+	name       string
+	targets    []string
+	unresolved []string
+}
+
 // uniqueClientIfaceName resolves name collisions by appending numeric suffixes.
 // Must be called with c.platformState.mu held.
 //
@@ -293,7 +305,7 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	newLink := &transportLink{
 		iface:     iface,
 		pubkeyHex: pubkeyHex,
-		healthy:   true,
+		healthy:   false,
 	}
 
 	c.platformState.mu.Lock()
@@ -462,7 +474,10 @@ func (c *ClientRunner) RemovePeer(publicKey []byte) error {
 // ConfigureTransport implements grpcserver.TransportConfigurator.
 // allowedIPs is accepted for interface compliance but ignored in client mode:
 // client overlay routing uses ECMP via rebuildClientECMP, not per-peer link routes.
-func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ []string, _ string, _ []string) error {
+// extraRoutes carries topology-derived overlay CIDRs when the client process does
+// not have a mounted topology file; the first valid CIDR is persisted into
+// clientState so the initial ECMP rebuild can still program the overlay route.
+func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ []string, _ string, extraRoutes []string) error {
 	if c == nil || c.node == nil {
 		return fmt.Errorf("client runner node is required")
 	}
@@ -480,6 +495,19 @@ func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ [
 	trimmedPeerIP := strings.TrimSpace(peerIP)
 	if net.ParseIP(trimmedPeerIP) == nil {
 		return fmt.Errorf("peer transport IP %q is invalid", peerIP)
+	}
+
+	persistedOverlaySpace := ""
+	for _, route := range extraRoutes {
+		trimmedRoute := strings.TrimSpace(route)
+		if trimmedRoute == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(trimmedRoute); err != nil {
+			return fmt.Errorf("client extra route %q is invalid: %w", route, err)
+		}
+		persistedOverlaySpace = trimmedRoute
+		break
 	}
 
 	c.platformState.mu.Lock()
@@ -515,6 +543,12 @@ func (c *ClientRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, _ [
 
 	c.platformState.links = nextLinks
 	c.platformState.byKey = nextByKey
+	if persistedOverlaySpace != "" {
+		if c.clientState == nil {
+			c.clientState = &ClientState{}
+		}
+		c.clientState.OverlaySpace = persistedOverlaySpace
+	}
 	c.platformState.mu.Unlock()
 
 	if err := ensureInterfaceAddress(updatedLink.iface.Name(), trimmedLocalIP); err != nil {
@@ -775,17 +809,19 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 		}
 
 		// Also route the overlay space through the same nexthops when available.
-		overlaySpace := ""
-		if c.node != nil && c.node.topology != nil && c.node.topology.Overlay.Space != "" {
-			overlaySpace = c.node.topology.Overlay.Space
-		}
+		// Set src=overlayIP so overlay traffic uses the client's overlay IP as source,
+		// not the transport IP (which isn't in endpoint AllowedIPs).
+		overlaySpace := c.overlaySpaceCIDR()
 		if overlaySpace != "" {
-			if _, overlayDest, parseErr := net.ParseCIDR(overlaySpace); parseErr == nil {
-				if err := router.SetECMPRoute(overlayDest, nexthops); err != nil {
-					c.node.logger.Warn().
-						Str("overlay", overlaySpace).
-						Err(err).
-						Msg("failed to set overlay space ECMP route")
+			if _, overlayDest, parseErr := net.ParseCIDR(overlaySpace); parseErr != nil {
+				return fmt.Errorf("parse client overlay space %q: %w", overlaySpace, parseErr)
+			} else {
+				var srcIP net.IP
+				if c.node != nil && c.node.config.OverlayIP != "" {
+					srcIP = net.ParseIP(c.node.config.OverlayIP)
+				}
+				if err := router.SetECMPRoute(overlayDest, nexthops, srcIP); err != nil {
+					return fmt.Errorf("set overlay space ECMP route %s via %d nexthops: %w", overlaySpace, len(nexthops), err)
 				}
 			}
 		} else {
@@ -800,7 +836,7 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 			return err
 		}
 		if err := c.sysctlDep().EnableL4Hash(); err != nil {
-			return fmt.Errorf("enable L4 hash: %w", err)
+			c.node.logger.Warn().Err(err).Msg("EnableL4Hash failed (non-fatal, routes already installed)")
 		}
 
 		nexthopIPs := make([]string, 0, len(nexthops))
@@ -841,14 +877,14 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 
 	// Overlay space is the sticky CIDR for legacy path when available.
 	stickyCIDR := defaultCIDR
-	if c.node != nil && c.node.topology != nil && c.node.topology.Overlay.Space != "" {
-		stickyCIDR = c.node.topology.Overlay.Space
+	if overlaySpace := c.overlaySpaceCIDR(); overlaySpace != "" {
+		stickyCIDR = overlaySpace
 	}
 	if err := c.applyStickyECMPDiff(stickyCIDR, reason); err != nil {
 		return err
 	}
 	if err := c.sysctlDep().EnableL4Hash(); err != nil {
-		return fmt.Errorf("enable L4 hash: %w", err)
+		c.node.logger.Warn().Err(err).Msg("EnableL4Hash failed (non-fatal, routes already installed)")
 	}
 
 	nexthopIPs := make([]string, 0, len(nexthops))
@@ -1064,6 +1100,68 @@ func (c *ClientRunner) healthTargets() []HealthTarget {
 	return targets
 }
 
+func (c *ClientRunner) resolveDSCPPolicies(routingPolicies []RoutingPolicyState, transportMap map[string]transportInfo) []resolvedDSCPPolicy {
+	resolved := make([]resolvedDSCPPolicy, 0, len(routingPolicies))
+	for _, rp := range routingPolicies {
+		entry := resolvedDSCPPolicy{
+			policy: routing.DSCPPolicy{
+				DSCP:    rp.DSCP,
+				Fwmark:  rp.DSCP,
+				TableID: 100 + rp.DSCP,
+			},
+			name:    rp.Name,
+			targets: append([]string(nil), rp.Targets...),
+		}
+		for _, target := range rp.Targets {
+			trimmedTarget := strings.TrimSpace(target)
+			if trimmedTarget == "" {
+				continue
+			}
+			if info, ok := transportMap[trimmedTarget]; ok {
+				entry.policy.Gateway = info.gateway
+				entry.policy.Device = info.device
+				break
+			}
+
+			resolvedViaMaster := false
+			if c.node.topology != nil {
+				matchedMasters := make([]string, 0)
+				for _, m := range c.node.topology.Masters {
+					for _, ep := range m.Endpoints {
+						if ep != trimmedTarget {
+							continue
+						}
+						resolvedViaMaster = true
+						matchedMasters = append(matchedMasters, m.Name)
+						if info, ok := transportMap[m.Name]; ok {
+							entry.policy.Gateway = info.gateway
+							entry.policy.Device = info.device
+							break
+						}
+						break
+					}
+					if entry.policy.Gateway != "" {
+						break
+					}
+				}
+				if entry.policy.Gateway == "" && len(matchedMasters) > 0 {
+					for _, masterName := range matchedMasters {
+						entry.unresolved = append(entry.unresolved, trimmedTarget+" (via master "+masterName+")")
+					}
+				}
+			}
+			if entry.policy.Gateway != "" {
+				break
+			}
+			if !resolvedViaMaster {
+				entry.unresolved = append(entry.unresolved, trimmedTarget)
+			}
+		}
+		resolved = append(resolved, entry)
+	}
+	return resolved
+}
+
 // setupDSCPRouting reads routing policies from topology (or persisted client state on restart)
 // and sets up DSCP->fwmark->table policy routing. It resolves per-policy gateway/device from
 // transport state so that per-table default routes are created.
@@ -1091,10 +1189,6 @@ func (c *ClientRunner) setupDSCPRouting() error {
 	}
 
 	// Build transport link map: tunnel name -> (peerTransportIP, interface name).
-	type transportInfo struct {
-		gateway string
-		device  string
-	}
 	transportMap := make(map[string]transportInfo)
 
 	state, stateErr := loadNodeTransportState(c.node.config.ConfigDir)
@@ -1116,55 +1210,32 @@ func (c *ClientRunner) setupDSCPRouting() error {
 		}
 	}
 
-	policies := make([]routing.DSCPPolicy, 0, len(routingPolicies))
-	for i, rp := range routingPolicies {
-		var gateway, device string
-
-		// For each routing policy, resolve targets -> master/tunnel -> transport info.
-		for _, target := range rp.Targets {
-			// Try the target name directly as a tunnel/master name in the transport map.
-			if info, ok := transportMap[target]; ok {
-				gateway = info.gateway
-				device = info.device
-				break
-			}
-			// When topology is available, also check endpoint -> parent master resolution.
-			if c.node.topology != nil {
-				for _, m := range c.node.topology.Masters {
-					for _, ep := range m.Endpoints {
-						if ep == target {
-							if info, ok := transportMap[m.Name]; ok {
-								gateway = info.gateway
-								device = info.device
-							}
-							break
-						}
-					}
-					if gateway != "" {
-						break
-					}
-				}
-			}
-			if gateway != "" {
-				break
-			}
+	resolvedPolicies := c.resolveDSCPPolicies(routingPolicies, transportMap)
+	policies := make([]routing.DSCPPolicy, 0, len(resolvedPolicies))
+	resolvedCount := 0
+	for i, rp := range resolvedPolicies {
+		logEvent := c.node.logger.Info()
+		if rp.policy.Gateway == "" || rp.policy.Device == "" {
+			logEvent = c.node.logger.Error()
 		}
-
-		policies = append(policies, routing.DSCPPolicy{
-			DSCP:    rp.DSCP,
-			Fwmark:  rp.DSCP,       // Use DSCP value as fwmark
-			TableID: 100 + rp.DSCP, // Table IDs start at 100+DSCP
-			Gateway: gateway,
-			Device:  device,
-		})
-		c.node.logger.Info().
-			Str("policy", rp.Name).
-			Int("dscp", rp.DSCP).
-			Int("table", 100+rp.DSCP).
-			Str("gateway", gateway).
-			Str("device", device).
+		logEvent.
+			Str("policy", rp.name).
+			Int("dscp", rp.policy.DSCP).
+			Int("table", rp.policy.TableID).
+			Str("gateway", rp.policy.Gateway).
+			Str("device", rp.policy.Device).
+			Strs("targets", rp.targets).
+			Strs("unresolved_targets", rp.unresolved).
 			Int("index", i).
 			Msg("DSCP routing policy configured")
+		if rp.policy.Gateway == "" || rp.policy.Device == "" {
+			continue
+		}
+		policies = append(policies, rp.policy)
+		resolvedCount++
+	}
+	if len(resolvedPolicies) > 0 && resolvedCount == 0 {
+		return fmt.Errorf("DSCP routing: no configured policies resolved to transport targets")
 	}
 
 	return routing.SetupDSCPPolicyRouting(policies)
@@ -1172,6 +1243,21 @@ func (c *ClientRunner) setupDSCPRouting() error {
 
 // SaveClientState persists current client configuration to disk for restart recovery.
 // Implements grpcserver.ClientStateSaver. Safe to call when topology is nil (returns nil).
+func (c *ClientRunner) overlaySpaceCIDR() string {
+	if c == nil {
+		return ""
+	}
+	if c.node != nil && c.node.topology != nil {
+		if overlaySpace := strings.TrimSpace(c.node.topology.Overlay.Space); overlaySpace != "" {
+			return overlaySpace
+		}
+	}
+	if c.clientState != nil {
+		return strings.TrimSpace(c.clientState.OverlaySpace)
+	}
+	return ""
+}
+
 func (c *ClientRunner) SaveClientState() error {
 	if c == nil || c.node == nil {
 		return nil
@@ -1215,6 +1301,7 @@ func (c *ClientRunner) SaveClientState() error {
 
 	state := ClientState{
 		OverlayIP:       c.node.config.OverlayIP,
+		OverlaySpace:    c.overlaySpaceCIDR(),
 		RoutingPolicies: routingPolicies,
 		DNS:             dnsState,
 		Masters:         masters,

@@ -3,12 +3,16 @@
 package node
 
 import (
+	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -108,6 +112,43 @@ func TestListPeersConcurrentClose(t *testing.T) {
 	// If we get here without panic, the test passes
 }
 
+func TestAddPeerNewLinkStartsUnhealthy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	_, _, err := EnsureKeypair(dir)
+	if err != nil {
+		t.Fatalf("EnsureKeypair: %v", err)
+	}
+
+	runner := NewClientRunner(&Node{config: NodeConfig{ConfigDir: dir}})
+
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 1)
+	}
+	peerHex := hex.EncodeToString(peerKey)
+
+	err = runner.AddPeer(peerKey, nil, []string{"0.0.0.0/0"}, "192.168.1.1:51820", 25, "")
+	if err != nil {
+		t.Skipf("AddPeer requires TUN device (privileged): %v", err)
+	}
+
+	link, ok := runner.platformState.byKey[peerHex]
+	if !ok || link == nil {
+		t.Fatalf("expected link for peer %s to be stored", peerHex)
+	}
+	if link.healthy {
+		t.Fatalf("expected new link to start unhealthy until healthcheck proves readiness")
+	}
+	if len(runner.platformState.links) != 1 {
+		t.Fatalf("expected exactly one stored link, got %d", len(runner.platformState.links))
+	}
+	if runner.platformState.links[0] != link {
+		t.Fatalf("expected stored links slice to reference byKey link")
+	}
+}
+
 // =============================================================================
 // Phase 2: rebuildClientECMP tests (T008)
 // =============================================================================
@@ -115,9 +156,11 @@ func TestListPeersConcurrentClose(t *testing.T) {
 // --- Mock implementations for routing interfaces ---
 
 type mockRouter struct {
-	mu              sync.Mutex
-	setECMPCalls    []mockRouteCall
-	removeECMPCalls []string
+	mu                     sync.Mutex
+	setECMPCalls           []mockRouteCall
+	removeECMPCalls        []string
+	setECMPErrorsByDest    map[string]error
+	removeECMPErrorsByDest map[string]error
 }
 
 type mockRouteCall struct {
@@ -134,9 +177,14 @@ func (m *mockRouter) AddrExists(_ string, _ *net.IPNet) (bool, error)     { retu
 func (m *mockRouter) LinkSetUp(_ string) error                            { return nil }
 func (m *mockRouter) LinkGetIndex(_ string) (int, error)                  { return 0, nil }
 
-func (m *mockRouter) SetECMPRoute(dest *net.IPNet, nexthops []routing.NextHop) error {
+func (m *mockRouter) SetECMPRoute(dest *net.IPNet, nexthops []routing.NextHop, _ ...net.IP) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.setECMPErrorsByDest != nil {
+		if err, ok := m.setECMPErrorsByDest[dest.String()]; ok {
+			return err
+		}
+	}
 	nhCopy := append([]routing.NextHop(nil), nexthops...)
 	m.setECMPCalls = append(m.setECMPCalls, mockRouteCall{dest: dest.String(), nexthops: nhCopy})
 	return nil
@@ -146,6 +194,11 @@ func (m *mockRouter) RemoveECMPRoute(dest *net.IPNet) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.removeECMPCalls = append(m.removeECMPCalls, dest.String())
+	if m.removeECMPErrorsByDest != nil {
+		if err, ok := m.removeECMPErrorsByDest[dest.String()]; ok {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -337,6 +390,61 @@ func TestRebuildClientECMP_HealthyVIP(t *testing.T) {
 		}
 	}
 	router.mu.Unlock()
+}
+
+func TestRebuildClientECMP_HealthyVIP_UsesPersistedOverlaySpaceWithoutTopology(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "10.100.0.1"
+	overlaySpace := "172.20.70.0/24"
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(nil), router, fw, sysctl)
+	runner.clientState = &ClientState{OverlaySpace: overlaySpace}
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", balancerIP, true),
+		makeTestLink("192.168.1.2", balancerIP, true),
+	}
+
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !router.hasSetECMPFor(overlaySpace) {
+		t.Fatalf("expected persisted overlay space route %s, got calls: %+v", overlaySpace, router.setECMPCalls)
+	}
+}
+
+func TestRebuildClientECMP_HealthyVIP_OverlayRouteFailureIsReturned(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "10.100.0.1"
+	overlaySpace := "172.20.70.0/24"
+	router := &mockRouter{
+		setECMPErrorsByDest: map[string]error{overlaySpace: errors.New("overlay route rejected")},
+	}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(&topology.Topology{Overlay: topology.OverlayConfig{Space: overlaySpace}}), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", balancerIP, true),
+		makeTestLink("192.168.1.2", balancerIP, true),
+	}
+
+	err := runner.rebuildClientECMP("init")
+	if err == nil {
+		t.Fatal("expected error when overlay ECMP route install fails")
+	}
+	if !strings.Contains(err.Error(), "set overlay space ECMP route "+overlaySpace) {
+		f := "expected overlay route context in error, got: %v"
+		t.Fatalf(f, err)
+	}
+	if fw.enableStickyCallCount() != 0 {
+		t.Fatalf("expected sticky rules to stay unchanged on overlay route failure, got: %+v", fw.enableStickyCalls)
+	}
 }
 
 func TestSetPeerHealth_CopiesTransportLinkState(t *testing.T) {
@@ -629,6 +737,63 @@ func TestRebuildClientECMP_ZeroHealthy_VIP(t *testing.T) {
 	}
 }
 
+func TestRebuildClientECMP_ZeroHealthy_VIP_IgnoresMissingRoute(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "172.20.70.1"
+	primaryCIDR := balancerIP + "/32"
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", balancerIP, false),
+		makeTestLink("192.168.1.2", balancerIP, false),
+	}
+
+	if err := runner.rebuildClientECMP("balancer_change"); err != nil {
+		t.Fatalf("missing VIP route should be ignored: %v", err)
+	}
+	if !router.hasRemoveECMPFor(primaryCIDR) {
+		t.Fatalf("expected RemoveECMPRoute(%s) call", primaryCIDR)
+	}
+}
+
+func TestRebuildClientECMP_ZeroHealthy_VIP_PropagatesUnexpectedRemoveError(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "172.20.70.1"
+	primaryCIDR := balancerIP + "/32"
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"},
+	}
+	router := &mockRouter{
+		removeECMPErrorsByDest: map[string]error{
+			primaryCIDR: errors.Join(syscall.EPERM, errors.New("permission denied")),
+		},
+	}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", balancerIP, false),
+		makeTestLink("192.168.1.2", balancerIP, false),
+	}
+
+	err := runner.rebuildClientECMP("balancer_change")
+	if err == nil {
+		t.Fatal("expected unexpected remove error to propagate")
+	}
+	if !strings.Contains(err.Error(), "remove client ECMP route "+primaryCIDR) {
+		t.Fatalf("expected wrapped remove error for %s, got: %v", primaryCIDR, err)
+	}
+}
+
 // TestRebuildClientECMP_ZeroHealthy_Legacy verifies that when all legacy links are
 // unhealthy, RemoveECMPRoute(0.0.0.0/0) is called.
 func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
@@ -905,6 +1070,112 @@ func TestClientIfaceName_DifferentKeysMapToDifferentNames(t *testing.T) {
 			t.Errorf("collision: key %d produced already-seen name %q", i, name)
 		}
 		seen[name] = true
+	}
+}
+
+func TestResolveDSCPPolicies_EndpointViaMaster(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{{Name: "master-01", Endpoints: []string{"endpoint-01"}}},
+	}
+	runner := newTestRunner(newTestNode(topo), &mockRouter{}, &mockFirewall{}, &mockSysctl{})
+
+	resolved := runner.resolveDSCPPolicies(
+		[]RoutingPolicyState{{Name: "streaming", DSCP: 46, Targets: []string{"endpoint-01"}}},
+		map[string]transportInfo{"master-01": {gateway: "10.255.0.41", device: "wg-c1234"}},
+	)
+	if len(resolved) != 1 {
+		t.Fatalf("resolveDSCPPolicies returned %d entries, want 1", len(resolved))
+	}
+	if got := resolved[0].policy.Gateway; got != "10.255.0.41" {
+		t.Fatalf("gateway = %q, want %q", got, "10.255.0.41")
+	}
+	if got := resolved[0].policy.Device; got != "wg-c1234" {
+		t.Fatalf("device = %q, want %q", got, "wg-c1234")
+	}
+	if len(resolved[0].unresolved) != 0 {
+		t.Fatalf("unexpected unresolved targets: %v", resolved[0].unresolved)
+	}
+}
+
+func TestResolveDSCPPolicies_EndpointViaLaterMasterWithTransport(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{
+			{Name: "master-a", Endpoints: []string{"endpoint-01"}},
+			{Name: "master-b", Endpoints: []string{"endpoint-01"}},
+		},
+	}
+	runner := newTestRunner(newTestNode(topo), &mockRouter{}, &mockFirewall{}, &mockSysctl{})
+
+	resolved := runner.resolveDSCPPolicies(
+		[]RoutingPolicyState{{Name: "streaming", DSCP: 46, Targets: []string{"endpoint-01"}}},
+		map[string]transportInfo{"master-b": {gateway: "10.255.0.42", device: "wg-c5678"}},
+	)
+	if len(resolved) != 1 {
+		t.Fatalf("resolveDSCPPolicies returned %d entries, want 1", len(resolved))
+	}
+	if got := resolved[0].policy.Gateway; got != "10.255.0.42" {
+		t.Fatalf("gateway = %q, want %q", got, "10.255.0.42")
+	}
+	if got := resolved[0].policy.Device; got != "wg-c5678" {
+		t.Fatalf("device = %q, want %q", got, "wg-c5678")
+	}
+	if len(resolved[0].unresolved) != 0 {
+		t.Fatalf("unexpected unresolved targets: %v", resolved[0].unresolved)
+	}
+}
+
+func TestResolveDSCPPolicies_UnresolvedTargets(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{
+		Masters: []topology.MasterNode{{Name: "master-01", Endpoints: []string{"endpoint-01"}}},
+	}
+	runner := newTestRunner(newTestNode(topo), &mockRouter{}, &mockFirewall{}, &mockSysctl{})
+
+	resolved := runner.resolveDSCPPolicies(
+		[]RoutingPolicyState{{Name: "streaming", DSCP: 46, Targets: []string{"endpoint-01", "missing-master"}}},
+		map[string]transportInfo{},
+	)
+	if len(resolved) != 1 {
+		t.Fatalf("resolveDSCPPolicies returned %d entries, want 1", len(resolved))
+	}
+	if resolved[0].policy.Gateway != "" || resolved[0].policy.Device != "" {
+		t.Fatalf("expected unresolved policy to keep empty gateway/device, got gateway=%q device=%q", resolved[0].policy.Gateway, resolved[0].policy.Device)
+	}
+	want := []string{"endpoint-01 (via master master-01)", "missing-master"}
+	if strings.Join(resolved[0].unresolved, ",") != strings.Join(want, ",") {
+		t.Fatalf("unresolved targets = %v, want %v", resolved[0].unresolved, want)
+	}
+}
+
+func TestSetupDSCPRouting_NoResolvedPoliciesReturnsError(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+	runner := NewClientRunner(&Node{
+		config: NodeConfig{Name: "test-client", ConfigDir: t.TempDir()},
+		topology: &topology.Topology{
+			Clients: []topology.ClientNode{{
+				Name:            "test-client",
+				RoutingPolicies: []topology.RoutingPolicy{{Name: "streaming", DSCP: 46, Targets: []string{"missing-endpoint"}}},
+			}},
+		},
+		logger: zerolog.New(&logBuf),
+	})
+
+	err := runner.setupDSCPRouting()
+	if err == nil {
+		t.Fatal("setupDSCPRouting returned nil, want unresolved-policy error")
+	}
+	if !strings.Contains(err.Error(), "no configured policies resolved") {
+		t.Fatalf("setupDSCPRouting error = %v, want unresolved-policy error", err)
+	}
+	if got := logBuf.String(); !strings.Contains(got, "unresolved_targets") || !strings.Contains(got, "missing-endpoint") {
+		t.Fatalf("expected structured unresolved-target diagnostics, got log %q", got)
 	}
 }
 
