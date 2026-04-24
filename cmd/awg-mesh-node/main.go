@@ -73,7 +73,7 @@ func main() {
 	}
 
 	node.RegisterMetrics()
-	metricsServer, metricsErr := node.StartMetricsServer(options.metricsAddr)
+	metricsServer, metricsErr := node.StartMetricsServer(options.metricsAddr, options.configDir)
 	if metricsErr != nil {
 		logger.Warn().
 			Err(metricsErr).
