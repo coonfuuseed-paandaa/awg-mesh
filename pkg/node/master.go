@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -533,7 +534,7 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 		return fmt.Errorf("load node transport state: %w", err)
 	}
 
-	peerPublicKey := tunnel.PeerPublicKey.String()
+	peerPublicKey := hex.EncodeToString(tunnel.PeerPublicKey[:])
 	if tunnel.PeerPublicKey.IsZero() {
 		peerPublicKey = ""
 	}
