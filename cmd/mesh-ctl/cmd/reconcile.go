@@ -164,10 +164,17 @@ func reconcileMasterNode(
 		return result
 	}
 
+	caCert := caPath(cfgDir)
+	if _, statErr := os.Stat(caCert); statErr != nil {
+		fmt.Fprintf(os.Stderr, "master %s: CA cert unavailable at %s (%v) — skipping\n", master.Name, caCert, statErr)
+		result.skipped = len(master.Endpoints)
+		return result
+	}
+
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-		Target:   master.GRPCAddr(),
-		Token:    token,
-		Insecure: true,
+		Target:     master.GRPCAddr(),
+		Token:      token,
+		CACertPath: caCert,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "master %s: connect failed (%v) — skipping\n", master.Name, err)
@@ -470,10 +477,17 @@ func reconcileEndpointNode(
 	// (FR-1: transport /30 + master overlay /32 + all overlay range CIDRs).
 	alloc, allocErr := loadOrCreateAllocator(cfgDir, topo)
 
+	caCert := caPath(cfgDir)
+	if _, statErr := os.Stat(caCert); statErr != nil {
+		fmt.Fprintf(os.Stderr, "endpoint %s: CA cert unavailable at %s (%v) — skipping\n", ep.Name, caCert, statErr)
+		result.skipped = len(boundMasters)
+		return result
+	}
+
 	client, err := grpcclient.NewClient(grpcclient.ClientConfig{
-		Target:   ep.GRPCAddr(),
-		Token:    token,
-		Insecure: true,
+		Target:     ep.GRPCAddr(),
+		Token:      token,
+		CACertPath: caCert,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "endpoint %s: connect failed (%v) — skipping\n", ep.Name, err)

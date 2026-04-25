@@ -71,6 +71,9 @@ func TestReconcileMasterNodeAllUnchanged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(masterND, "token"), []byte("master-token"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "ca.crt"), []byte("dummy-ca"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	topo := &topology.Topology{
 		Masters: []topology.MasterNode{
@@ -389,6 +392,9 @@ func TestReconcileCheckEmptyAllowedIPsGracefulOnUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(masterND, "token"), []byte("test-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "ca.crt"), []byte("dummy-ca"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
