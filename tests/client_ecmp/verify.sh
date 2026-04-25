@@ -325,7 +325,7 @@ sleep "${FAILOVER_WAIT}"
 FAILOVER_ROUTE=$(docker exec client-lin ip route show 172.20.70.0/24 2>/dev/null || echo "no route yet")
 log "Client route after failover: ${FAILOVER_ROUTE}"
 
-if echo "${FAILOVER_ROUTE}" | grep -qE "172.31.0.11|via"; then
+if echo "${FAILOVER_ROUTE}" | grep -q "172.31.0.11"; then
     log "US1 PASS: client still has a route to overlay after master-01 failure (via master-02)."
 else
     fail "US1 failover: client lost all overlay routes after master-01 failure. Got: ${FAILOVER_ROUTE}"
@@ -333,7 +333,7 @@ fi
 
 # Sanity: master-01 nexthop must be absent (routing correctly removed the dead path).
 if echo "${FAILOVER_ROUTE}" | grep -q "172.31.0.10"; then
-    log "WARNING: master-01 nexthop (172.31.0.10) still present in route after kill. Healthcheck may need more time."
+    fail "US1 failover: stale dead-master nexthop (172.31.0.10) still present. Got: ${FAILOVER_ROUTE}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -353,8 +353,7 @@ log "Client route after recovery: ${RECOVERY_ROUTE}"
 if echo "${RECOVERY_ROUTE}" | grep -q "172.31.0.10"; then
     log "US1 PASS: master-01 nexthop (172.31.0.10) restored in client route after recovery."
 else
-    log "WARNING: master-01 nexthop not yet re-added after ${RECOVERY_WAIT}s. May need more convergence time."
-    log "Route state: ${RECOVERY_ROUTE}"
+    fail "US1 recovery: master-01 nexthop (172.31.0.10) not restored after ${RECOVERY_WAIT}s. Route state: ${RECOVERY_ROUTE}"
 fi
 
 # ----------------------------------------------------------------------------
