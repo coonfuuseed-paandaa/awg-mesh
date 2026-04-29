@@ -519,21 +519,21 @@ func parseHostPort(addr string) (string, string, error) {
 // It pulls node-specific fields (overlay IP, listen port, etc.) from the topology.
 //
 // B14 fix: the previous implementation stored the raw token under "Token" but
-// the compose templates expect {{.TokenHash}} (a bcrypt hash with $ escaped for
-// Docker Compose). Missing key → text/template renders <no value> → node
-// bootstraps an empty MESH_TOKEN_HASH and rejects every auth attempt.
+// the compose templates expect {{.TokenHash}} (a v2 hash, charset [A-Za-z0-9._-],
+// no dollar signs — no Compose escaping needed). Missing key → text/template
+// renders <no value> → node bootstraps an empty MESH_TOKEN_HASH and rejects
+// every auth attempt.
 func buildComposeData(topo *topology.Topology, nodeName, role, newImage, token, cfgDir string) (map[string]interface{}, error) {
-	// Hash the raw token and escape $ signs for Docker Compose interpolation.
+	// Hash the raw token. v2 hashes use charset [A-Za-z0-9._-] — no $ to escape.
 	hash, err := pkgtls.HashToken(token)
 	if err != nil {
 		return nil, fmt.Errorf("hash token for %s: %w", nodeName, err)
 	}
-	tokenHash := composeEscapeDollar(hash)
 
 	data := map[string]interface{}{
 		"Image":     newImage,
-		"Token":     token,     // kept for backward compat; templates should use TokenHash
-		"TokenHash": tokenHash, // B14 fix: what compose templates actually reference
+		"Token":     token, // kept for backward compat; templates should use TokenHash
+		"TokenHash": hash,  // B14 fix: what compose templates actually reference
 		"ConfigDir": cfgDir,
 	}
 

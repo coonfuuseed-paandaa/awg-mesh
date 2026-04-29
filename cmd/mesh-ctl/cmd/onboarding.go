@@ -140,18 +140,6 @@ func nodeDir(configDir, name string) string {
 	return filepath.Join(configDir, "nodes", name)
 }
 
-// composeEscapeDollar doubles every `$` so Docker Compose does not treat it
-// as variable interpolation when parsing an environment value. Bcrypt hashes
-// always start with `$2a$12$...`, and without this escape Compose expands
-// `$2a` and `$12` to empty strings — the node then rejects the mangled value
-// via bcrypt.Cost(...) and refuses to bootstrap `/config/mesh.token`.
-// Apply only for docker-compose output. RouterOS `.rsc` does not interpolate
-// `$`, so mikrotik deploy scripts carry the raw hash via quoteRouterOSValue.
-func composeEscapeDollar(s string) string {
-	return strings.ReplaceAll(s, "$", "$$")
-}
-
-
 // printNextSteps writes a precise, actionable deploy sequence to stdout/stderr.
 // The compose file already carries MESH_TOKEN_HASH, so the operator never has
 // to ship the token file by hand — the binary bootstraps it on first boot.

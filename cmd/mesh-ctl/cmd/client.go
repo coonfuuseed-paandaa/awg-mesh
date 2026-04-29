@@ -123,9 +123,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:      client.Name,
 					OverlayIP: client.OverlayIP,
 					Image:     resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest", "defaults.image.client"),
-					// Escape $ → $$ to survive Docker Compose variable
-					// interpolation. Bcrypt hashes contain literal `$`.
-					TokenHash: composeEscapeDollar(hash),
+					TokenHash: hash,
 				}
 
 				// B3 fix: write output to configDir/clients/<name>/ instead of CWD.
