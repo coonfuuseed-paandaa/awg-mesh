@@ -19,7 +19,9 @@ All facts are verified against MikroTik's official changelogs at `https://downlo
 | **7.22.x** | **AVOID — known regression** | Default `ip rule` priorities inside containers regressed to consecutive low (1/2/3), breaking DSCP policy routing for awg-mesh client. See §3.3. Reverted in 7.23rc2. |
 | **7.23+** | TIER 1 (canonical, regression-free) | Same dialect as 7.21 (mountlists/list/remote-image). `ip rule` priorities restored. |
 
-**Decision:** `mesh-ctl` MUST be able to generate `.rsc` for 7.5 through 7.21+. The default target is the latest LTS at release time (currently 7.21.x).
+**Decision (target state — tracked in §8):** `mesh-ctl` should generate `.rsc` for 7.5 through 7.21+ via per-tier dialect selection. The default target is the latest LTS at release time (currently 7.21.x).
+
+> **Current shipped behavior (v1.14.0):** the generator emits a single canonical 7.21+ dialect unconditionally — `remote-image=`, `mountlists=`, `/container/mounts/add list=…` (see `pkg/mikrotik/commands.go::buildContainerAddCommand`). There is no `--target-ros` flag, no `target_ros:` topology field, no `selectMikrotikDialect` helper, and no per-tier golden fixtures. Operators on 7.5–7.20 must regenerate against a future v1.15.x build that ships dialect selection (tracked under F-001 CR-002 in §8) before importing the `.rsc` produced today. Cite this paragraph, not §1's table, when an operator asks "what versions can I deploy onto right now".
 
 ---
 
@@ -109,10 +111,10 @@ awg-mesh does NOT use TPROXY or socket match — we route via `ip rule` + standa
 
 **Two-layer remediation** (per project policy "self-heal in container, не раздуваем флаги"):
 
-1. **Generator (offline):** refuses `--target-ros 7.22.x` with operator-friendly error pointing to 7.21 LTS or 7.23+. No silent generation against a known-broken target.
-2. **Container runtime:** `awg-mesh-node` client mode probes `ip rule show` at startup. If `pref 1` / `pref 2` / `pref 3` are detected on `local`/`main`/`default` (signature of 7.22 regression), the runtime normalises them to `200` / `2147483646` / `2147483647` before installing DSCP rules. Idempotent, non-fatal on `ENOENT`. Logs a warning naming the regression.
+1. **Generator (offline) — PLANNED for v1.15.x (CR-002):** will refuse `--target-ros 7.22.x` with an operator-friendly error pointing to 7.21 LTS or 7.23+. No silent generation against a known-broken target. **Not implemented in v1.14.0** — the generator currently has no version flag at all.
+2. **Container runtime — PLANNED for v1.15.x (CR-002):** `awg-mesh-node` client mode will probe `ip rule show` at startup. If `pref 1` / `pref 2` / `pref 3` are detected on `local`/`main`/`default` (signature of 7.22 regression), the runtime will normalise them to `200` / `2147483646` / `2147483647` before installing DSCP rules. Idempotent, non-fatal on `ENOENT`. Logs a warning naming the regression. **Not implemented in v1.14.0** — `pkg/routing/dscp.SetupDSCPPolicyRouting` calls `netlink.RuleAdd` at priority `100 + DSCP` directly with no probe or normalisation step. Operators running RouterOS 7.22 with an awg-mesh-client container today must downgrade the host to 7.21 LTS or upgrade past 7.23 manually before the client's DSCP routing will work.
 
-This means: if an operator targets 7.21 (default) and later upgrades the router to 7.22, the container self-heals at next start without `.rsc` regeneration. If the operator explicitly targets 7.22 in the generator, they get a clear refusal — pointing them at 7.21 or 7.23.
+The intent for v1.15.x is: if an operator targets 7.21 (default) and later upgrades the router to 7.22, the container will self-heal at next start without `.rsc` regeneration; if the operator explicitly targets 7.22 in the generator, they will get a clear refusal pointing them at 7.21 or 7.23. The current v1.14.0 release predates that machinery.
 
 (Earlier playbook v1 dismissed all nftables concerns. That was wrong for the container side. Section 3.1 still holds for host CLI; sections 3.2 + 3.3 are the load-bearing parts for client containers running under RouterOS.)
 
@@ -122,12 +124,14 @@ This means: if an operator targets 7.21 (default) and later upgrades the router 
 
 awg-mesh splits MikroTik compatibility across two layers. Generator stays offline + operator-driven; container handles runtime kernel quirks autonomously. **No auto-deploy** — operator configurations differ too much (CRS vs hAP vs CHR, custom firewall, VLAN trunks, IPv6 layouts) to safely SSH and apply changes.
 
-### 4.1 Generator (offline, operator-driven)
+### 4.1 Generator (offline, operator-driven) — target design (v1.15.x)
+
+> The architecture below is the planned shape under F-001 CR-002, **not** what ships in v1.14.0. v1.14.0 emits a single canonical 7.21+ dialect unconditionally; there is no `--target-ros` flag, no `target_ros:` topology field, no `selectMikrotikDialect` helper, and no per-tier golden files. The diagrams, helper signatures, and per-tier syntax tables below describe v1.15 onward.
 
 `mesh-ctl client deploy <name>` produces a deploy bundle on disk. Operator copies + imports manually following generated `INSTRUCTIONS.md`.
 
 **Bundle layout:**
-```
+```text
 <work-dir>/clients/<name>/
   <name>-mikrotik.rsc        # canonical .rsc for the chosen tier
   INSTRUCTIONS.md            # step-by-step for operator (verify version, /import, troubleshoot)
@@ -160,7 +164,7 @@ Helper `selectMikrotikDialect(version) Dialect` → `DialectLegacy` / `DialectTr
 
 **Per-tier syntax:**
 
-```
+```text
 imagePart(cfg) =
     DialectLegacy        → "image="        + cfg.Image
     DialectTransitional  → "remote-image=" + cfg.Image  (image= still accepted, prefer canonical name)
@@ -175,7 +179,9 @@ mountCreateLine(cfg) =
     else             → "/container/mounts/add name=NAME src=... dst=..."
 ```
 
-### 4.2 Container runtime (self-healing inside `awg-mesh-node`)
+### 4.2 Container runtime (self-healing inside `awg-mesh-node`) — target design (v1.15.x)
+
+> The probe matrix below is the planned shape under F-001 CR-002. v1.14.0 ships none of these probes — the binary calls `nftables.NewNftablesFirewall` directly, falls back to a no-op stub if nftables is unavailable, and assumes the kernel rule layout is well-formed. The 7.22 ip-rule normalisation is documented in §3.3 as PLANNED.
 
 Generator decides `.rsc` syntax. Container handles everything observable from inside the namespace — kernel features, ip-rule layout, netfilter backend availability. No operator flags, no topology fields. Detect → log → remediate-or-fallback. Idempotent.
 
@@ -190,7 +196,7 @@ Generator decides `.rsc` syntax. Container handles everything observable from in
 | Conntrack match | dry-add ct match rule | OK → enable sticky ECMP; FAIL → warn + skip |
 
 Runtime emits a startup table summarising detected features for operator visibility:
-```
+```text
 client-init: kernel features:
   nftables=yes  iptables-legacy=yes  nf_nat=yes  conntrack=yes  tun=yes
   ip-rule-regression=detected-and-fixed (was pref 1/2/3, now 200/big-1/big)
@@ -208,7 +214,7 @@ awg-mesh's MikroTik integration runs against **real RouterOS CHR via QEMU/KVM** 
 
 ### 5.1 Three-layer sim architecture
 
-```
+```text
 ┌─ Host (WSL2 / native Linux / CI runner) — needs only KVM ─┐
 │                                                            │
 │  Docker network: awg-mesh-test (172.21.92.0/24)            │
@@ -247,7 +253,7 @@ Builder script: `tests/simulation/lib/build-chr-baseline.sh CHR_VERSION=7.21.4`.
 
 ### 5.3 Per-test sim flow (`mikrotik-chr-e2e.sh`)
 
-```
+```text
 1. Pre-flight: docker, KVM, baseline image present (build if missing)
 2. Bring up Docker Linux mesh: master-01, master-02, endpoint-01 (compose)
 3. Bring up CHR from baseline:
