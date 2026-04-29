@@ -233,6 +233,10 @@ func TestStorageRootValidation(t *testing.T) {
 		{name: "ampersand", storageRoot: "disk&bg", wantErr: true},
 		{name: "backtick", storageRoot: "disk`cmd`", wantErr: true},
 		{name: "space", storageRoot: "my disk", wantErr: true},
+		// Invalid: leading slash — the generator prepends "/" itself.
+		{name: "leading slash bare", storageRoot: "/disk1", wantErr: true},
+		{name: "leading slash with subpath", storageRoot: "/disk1/sub", wantErr: true},
+		{name: "single slash", storageRoot: "/", wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -260,6 +264,7 @@ func TestStorageRootValidationViaTopology(t *testing.T) {
 		{name: "valid custom root", storageRoot: "disk1", wantErr: false},
 		{name: "path traversal rejected", storageRoot: "../etc", wantErr: true},
 		{name: "metachar rejected", storageRoot: "my$disk", wantErr: true},
+		{name: "leading slash rejected", storageRoot: "/disk1", wantErr: true},
 	}
 
 	for _, tt := range tests {

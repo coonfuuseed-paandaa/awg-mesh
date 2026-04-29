@@ -208,6 +208,13 @@ func ValidateStorageRoot(s string) error {
 	if strings.Contains(s, "..") {
 		return fmt.Errorf("storage_root %q must not contain \"..\" (path traversal)", s)
 	}
+	// The generator prepends a leading "/" when emitting paths
+	// (e.g. /docker/awg-mesh-client-…). A user-supplied leading "/" produces
+	// "//<value>/…" which iproute2 / RouterOS treat as a valid but
+	// unintended path. Reject it so operator misconfiguration fails fast.
+	if strings.HasPrefix(s, "/") {
+		return fmt.Errorf("storage_root %q must not start with \"/\" (the leading slash is added by the generator)", s)
+	}
 	if !storageRootPattern.MatchString(s) {
 		return fmt.Errorf("storage_root %q contains invalid characters: only alphanumeric, underscore, slash, and hyphen are allowed", s)
 	}
