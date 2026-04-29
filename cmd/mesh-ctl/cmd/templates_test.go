@@ -281,8 +281,12 @@ func TestComposeNoEscapeForV2Hash(t *testing.T) {
 						tt.fileName, val)
 				}
 				// The hash must appear verbatim (no transformation).
-				if !strings.Contains(val, v2Hash) {
-					t.Fatalf("%s: MESH_TOKEN_HASH value %q does not contain expected v2 hash %q",
+				// Exact equality (not Contains) — Contains would silently
+				// pass if the template added quotes or any other extra
+				// characters around the hash, weakening the
+				// "embedded verbatim" contract.
+				if val != v2Hash {
+					t.Fatalf("%s: MESH_TOKEN_HASH value %q does not match expected v2 hash %q exactly",
 						tt.fileName, val, v2Hash)
 				}
 			}

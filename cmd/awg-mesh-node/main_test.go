@@ -56,6 +56,19 @@ func TestEnvFallbackString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envVal != "" {
 				t.Setenv(tt.envKey, tt.envVal)
+			} else {
+				// Make the "no env var" path deterministic: if the host or
+				// CI runner pre-set tt.envKey, t.Setenv("", ...) cannot be
+				// used to clear it, so unset it explicitly and restore on
+				// cleanup. Without this the "no env" assertion can flake
+				// when the key happens to be set in the ambient environment.
+				prev, hadPrev := os.LookupEnv(tt.envKey)
+				_ = os.Unsetenv(tt.envKey)
+				t.Cleanup(func() {
+					if hadPrev {
+						_ = os.Setenv(tt.envKey, prev)
+					}
+				})
 			}
 			got := envFallbackString(tt.setFlags, "mode", tt.flagVal, tt.envKey)
 			if got != tt.want {
@@ -91,7 +104,18 @@ func TestEnvFallbackInt(t *testing.T) {
 	})
 
 	t.Run("no env → flag default", func(t *testing.T) {
-		got := envFallbackInt(map[string]bool{}, "listen-port", 51820, "TEST_PORT_D_UNSET")
+		// Same determinism guard as TestEnvFallbackString — explicitly
+		// unset the key so an ambient-env preset cannot make this case
+		// flake.
+		const key = "TEST_PORT_D_UNSET"
+		prev, hadPrev := os.LookupEnv(key)
+		_ = os.Unsetenv(key)
+		t.Cleanup(func() {
+			if hadPrev {
+				_ = os.Setenv(key, prev)
+			}
+		})
+		got := envFallbackInt(map[string]bool{}, "listen-port", 51820, key)
 		if got != 51820 {
 			t.Fatalf("expected flag default 51820, got %d", got)
 		}
