@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.14.0] — Pending — mikrotik onboarding bundle (issue #181)
+## [1.14.0] — 2026-04-29 — mikrotik onboarding bundle (issue #181)
 
 This release bundles three coordinated tracks fixing 13 bugs + 7 requirements
 that blocked `mikrotik-home` (RouterOS 7.21.3 ARM64) onboarding. Wire format
