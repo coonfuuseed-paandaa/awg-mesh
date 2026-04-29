@@ -238,7 +238,7 @@ func TestParseV2_ValidBlob(t *testing.T) {
 func TestParseV2_InvalidPrefix(t *testing.T) {
 	t.Parallel()
 
-	_, _, _, _, _, _, _, err := ParseV2("bcrypt$2a$12$thisisnotav2hash")
+	_, _, _, _, _, _, _, err := ParseV2("v1$thisisnotav2hash")
 	if !errors.Is(err, ErrUnknownTokenFormat) {
 		t.Fatalf("expected ErrUnknownTokenFormat, got %v", err)
 	}

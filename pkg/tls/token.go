@@ -18,7 +18,6 @@ import (
 const (
 	tokenFile    = "mesh.token"
 	tokenByteLen = 32
-	bcryptCost   = 12
 )
 
 // v2 token format constants — argon2id-based, all-ASCII-safe charset.
@@ -47,11 +46,12 @@ var (
 //                        This is what the operator manually copies to the node
 //                        (or stores locally in <nodeDir>/token for gRPC auth).
 //
-//  2. HashToken()      — produces an argon2id hash (delegating to HashTokenV2).
-//                        The resulting "mesh1.<base64url>" string is stored in two places:
+//  2. HashToken()      — argon2id-hashes the raw token (m=4096 KiB, t=1, p=1),
+//                        delegating to HashTokenV2. The resulting v2-format hash
+//                        "mesh1.<base64url>" is stored in two places:
 //                          a. <nodeDir>/mesh.token   — via SaveTokenHash (admin-side)
 //                          b. MESH_TOKEN_HASH env var — embedded in docker-compose
-//                             (safe charset [A-Za-z0-9_-] — no `$` to escape).
+//                             (safe charset [A-Za-z0-9_-], no quoting required).
 //
 //  3. On node first boot — the node reads MESH_TOKEN_HASH, writes it to
 //                          /config/mesh.token (inside the container), then ignores
@@ -61,8 +61,8 @@ var (
 //                        incoming RPC token via VerifyToken(). The raw token from
 //                        <nodeDir>/token is passed by mesh-ctl in RPC calls.
 //
-// MESH_TOKEN_HASH is an argon2id HASH, not the raw token. Writing the raw token to
-// MESH_TOKEN_HASH would cause every gRPC auth to fail.
+// MESH_TOKEN_HASH is a v2-format hash (mesh1.<base64url>), not the raw token.
+// Writing the raw token to MESH_TOKEN_HASH would cause every gRPC auth to fail.
 
 // GenerateToken creates a cryptographically random 64-character hex token
 // (32 random bytes, hex-encoded).
