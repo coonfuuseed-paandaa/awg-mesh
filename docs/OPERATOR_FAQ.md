@@ -4,55 +4,91 @@ Reference for operator-facing semantics that are not obvious from the `--help`
 output of the individual commands. Each entry below is paired with the source
 of truth in the code so you can drill into the mechanics from there.
 
-## Token lifecycle and `MESH_TOKEN_HASH`
+## Token lifecycle and `MESH_TOKEN_HASH` (v2 format — v1.14.0+)
 
-`MESH_TOKEN_HASH` is a bcrypt hash of the raw gRPC auth token, **not** the raw
-token itself. It is identical for all three node modes (master, endpoint, client)
-— no per-mode difference in intent or flow.
+`MESH_TOKEN_HASH` is a v2-format hash of the raw gRPC auth token, **not** the
+raw token itself. v2 format string: `mesh1.<base64url(54-byte blob)>` —
+exactly 78 characters, charset `[A-Za-z0-9._-]`. Identical semantics across
+all three node modes (master, endpoint, client) — no per-mode difference in
+intent or flow.
+
+**Wire format (54-byte blob, BigEndian, fixed offsets):**
+
+| Offset | Size | Field | Value (v1) |
+|--------|------|-------|-----------|
+| 0 | 1 | `format_version` | `0x01` |
+| 1 | 1 | `algo` | `0x01` (argon2id) |
+| 2 | 2 | `m_cost_kb` | `4096` |
+| 4 | 1 | `t_cost` | `1` |
+| 5 | 1 | `parallelism` | `1` |
+| 6 | 16 | `salt` | CSPRNG random |
+| 22 | 32 | `hash` | argon2id key |
+
+54 bytes raw → `base64.RawURLEncoding` (no padding) = 72 chars → prefix
+`mesh1.` = **78 chars total**.
 
 | Artefact | Contents | Where | Who writes |
 |----------|----------|-------|-----------|
 | `<nodeDir>/token` on admin | Raw 64-char hex token (the secret) | Admin-side config dir | `mesh-ctl <mode> prepare` |
-| `<nodeDir>/mesh.token` on admin | Bcrypt hash of the raw token | Admin-side config dir | `mesh-ctl <mode> prepare` |
-| `MESH_TOKEN_HASH` env var | Bcrypt hash | Docker Compose file | `mesh-ctl <mode> prepare` |
-| `/config/mesh.token` on node | Bcrypt hash (same as env var) | Inside the running container | `awg-mesh-node` on **first boot only** |
+| `<nodeDir>/mesh.token` on admin | v2 hash (`mesh1.<...>`) | Admin-side config dir | `mesh-ctl <mode> prepare` |
+| `MESH_TOKEN_HASH` env var | v2 hash | Docker Compose file (raw, no shell quoting needed) | `mesh-ctl <mode> prepare` |
+| `/config/mesh.token` on node | v2 hash (same as env var) | Inside the running container | `awg-mesh-node` on **first boot only** |
 
 **First-boot flow:**
 1. `awg-mesh-node` starts, reads `MESH_TOKEN_HASH` from env.
-2. If `/config/mesh.token` does not exist, the binary validates the hash
-   (`bcrypt.Cost([]byte(hash))`) and writes it to `/config/mesh.token`.
-3. On subsequent boots the existing `/config/mesh.token` wins and the env var
-   is ignored. The startup log still carries the env value; the node does
-   not re-read it.
+2. `bootstrapTokenHash` calls `pkgtls.ParseV2` on the value.
+3. If parse fails (legacy bcrypt `$2a$...`, empty string, malformed blob,
+   unknown prefix): the node emits structured zerolog error
+   `{"event":"token_hash_invalid","format":"unknown","msg":"MESH_TOKEN_HASH must be v2 format"}`
+   and exits non-zero. **There is no fallback to bcrypt.**
+4. On parse success, if `/config/mesh.token` does not exist, the validated
+   hash is written to it.
+5. On subsequent boots the existing `/config/mesh.token` wins and the env
+   var is ignored.
 
 **gRPC auth:**
-- `mesh-ctl` reads the **raw** token from `<nodeDir>/token` and includes it in
-  RPC bearer headers.
+- `mesh-ctl` reads the **raw** token from `<nodeDir>/token` and includes it
+  in RPC bearer headers.
 - `awg-mesh-node` reads the hash from `/config/mesh.token`, and on each
-  incoming RPC calls `bcrypt.CompareHashAndPassword(hash, incomingToken)`.
-- No challenge-response; the token is the bearer secret on the wire. mTLS is
-  layered on top for transport security.
+  incoming RPC calls `pkgtls.VerifyToken(token, hash)` which:
+  - Parses the v2 blob (`ParseV2`).
+  - Computes argon2id with the salt + parameters from the blob.
+  - Compares against the stored key via `subtle.ConstantTimeCompare`
+    (constant-time, timing-attack resistant).
+- No challenge-response; the token is the bearer secret on the wire. mTLS
+  is layered on top for transport security.
 
-**Why the env var holds the hash, not the raw token:**
-First-boot bootstrap is a one-shot operation; after it completes the env var
-is dead weight. Persisting the hash (not the raw value) limits the blast
-radius of a leaked compose file — a compose file containing a bcrypt hash
-cannot be replayed as a valid auth token against the live node. The raw
-token is only held by the admin CLI.
+**Charset / shell-safety:**
+
+v2 hashes contain ZERO shell or RouterOS metacharacters by construction
+(`mesh1.` prefix uses `.`, body uses base64url alphabet `[A-Za-z0-9_-]`).
+This is what enabled the v1.14.0 cleanup of `composeEscapeDollar` (Docker
+Compose `$$` doubling) and `quoteRouterOSValue` wrapping for the
+`MESH_TOKEN_HASH` env var. Operators editing docker-compose files by hand
+no longer need to manually escape `$` characters in the hash.
 
 **Rotation:** `mesh-ctl token rotate <node>` generates a fresh raw token,
-bcrypt-hashes it, sends the hash to the node via the `RotateToken` RPC (the
+v2-hashes it, sends the hash to the node via the `RotateToken` RPC (the
 node overwrites its `/config/mesh.token`), and saves both values locally —
 the raw token to `<nodeDir>/token` (for future mesh-ctl RPC calls) and the
-bcrypt hash to `<nodeDir>/mesh.token`. The `MESH_TOKEN_HASH` env var in the
-node's compose file is the bcrypt hash; re-run `mesh-ctl <role> prepare
+v2 hash to `<nodeDir>/mesh.token`. The `MESH_TOKEN_HASH` env var in the
+node's compose file is the v2 hash; re-run `mesh-ctl <role> prepare
 <node>` to regenerate the compose file with the new hash substituted, OR
 read it directly from `<nodeDir>/mesh.token`. Only pass `--show-token` when
 you actually need the raw token printed to stdout (e.g. bootstrapping a new
 node on a host that does not yet have the `<nodeDir>/token` file). See
-`pkg/tls/token.go:19-44` for the authoritative lifecycle docstring.
+`pkg/tls/token.go` for the authoritative lifecycle docstring.
 
-> Added in v1.12.11/v1.12.12 audit items B5 and B19.
+**v1.14.0 cutover (operator action):**
+
+v1.14.0 is a wire format break — see CHANGELOG.md "Operator Cutover
+Runbook" for the per-node procedure. There is no transition window or
+dual-format dual-accept by design. The node binary fail-fasts on legacy
+bcrypt hashes; rollback to v1.13.0 requires re-preparing nodes with
+bcrypt format from the v1.13.0 `mesh-ctl`.
+
+> Added in v1.12.11/v1.12.12 audit items B5 and B19. Argon2id v2 format
+> introduced in v1.14.0 (issue #181 Track 3 — wire-protocol-token-format-v2).
 
 ## Pubkey admin-side file formats
 

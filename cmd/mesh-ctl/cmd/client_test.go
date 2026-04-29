@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"encoding/hex"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +12,10 @@ import (
 	"text/template"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // TestClientPrepareImage exercises the three precedence branches for image
@@ -63,7 +69,6 @@ func TestClientPrepareImage(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -125,7 +130,6 @@ func TestMasterClientTunnelID(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -187,7 +191,6 @@ func TestMasterClientPreferredTunnelID(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := masterClientPreferredTunnelID("mikrotik-home", tc.tunnels); got != tc.want {
@@ -234,7 +237,6 @@ func TestMasterClientRemovalTunnelIDs(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := masterClientRemovalTunnelIDs("mikrotik-home", tc.tunnels)
@@ -260,7 +262,6 @@ func TestClientPrepareImageFlagValidation(t *testing.T) {
 	}
 
 	for _, ref := range invalidRefs {
-		ref := ref
 		t.Run(ref, func(t *testing.T) {
 			root := NewRootCommand("test")
 			root.SilenceUsage = true
@@ -309,5 +310,133 @@ func TestClientInitMasterPubkeyReadsHexAdminFormat(t *testing.T) {
 	}
 	if hex.EncodeToString(got) != hex.EncodeToString(wantRaw) {
 		t.Fatalf("hex.EncodeToString(got) = %q, want %q", hex.EncodeToString(got), hex.EncodeToString(wantRaw))
+	}
+}
+
+// mockMasterServer is a minimal AwgAgentServer that records AddTunnel calls and
+// validates that the tunnel name is bounded (never raw client.Name when >12 chars).
+//
+// It embeds UnimplementedAwgAgentServer so all other RPCs return Unimplemented.
+type mockMasterServer struct {
+	proto.UnimplementedAwgAgentServer
+
+	// received captures the Name field from every AddTunnel call.
+	received []string
+}
+
+func (m *mockMasterServer) ListTunnels(_ context.Context, _ *proto.Empty) (*proto.TunnelList, error) {
+	// Fresh master: no existing tunnels. masterClientPreferredTunnelID falls
+	// through to the bounded ID (cli-<8hex>) for names that exceed 12 chars.
+	return &proto.TunnelList{}, nil
+}
+
+func (m *mockMasterServer) AddTunnel(_ context.Context, req *proto.AddTunnelRequest) (*proto.AddTunnelResponse, error) {
+	name := strings.TrimSpace(req.GetName())
+	m.received = append(m.received, name)
+
+	// Enforce the server-side regex that Bug 14 was about.
+	// A 13-char raw name like "mikrotik-home" would fail this check and return
+	// InvalidArgument — exactly the failure mode the fix must prevent.
+	serverRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]{1,12}$`)
+	if !serverRegex.MatchString(name) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"tunnel name %q does not match ^[a-zA-Z0-9_-]{1,12}$", name)
+	}
+
+	return &proto.AddTunnelResponse{Success: true}, nil
+}
+
+// TestClientInitLongName verifies that a 13-char client name ("mikrotik-home")
+// is bounded to a ≤12-char hash-derived ID before the AddTunnel RPC reaches
+// the master. This is the regression test for Bug 14.
+//
+// Design: spins up an in-process mock master gRPC server that enforces the
+// server-side name regex (^[a-zA-Z0-9_-]{1,12}$). The test exercises the
+// exact call path used by newClientInitCommand:
+//
+//  1. ListTunnels → empty list (fresh master, no legacy tunnel present)
+//  2. masterClientPreferredTunnelID("mikrotik-home", nil) → bounded name
+//  3. AddTunnel(name=bounded) → mock server validates against regex
+//
+// Anti-stub: if masterClientPreferredTunnelID is replaced with a function that
+// returns raw client.Name, the mock master returns InvalidArgument and the test
+// fails. If AddTunnel is never called, gotName is empty and the final assertion
+// about the bounded pattern fails.
+func TestClientInitLongName(t *testing.T) {
+	t.Parallel()
+
+	const clientName = "mikrotik-home" // 13 chars — exceeds server-side 12-char limit
+
+	// Spin up in-process mock master gRPC server (no TLS — insecure transport).
+	// This matches the pattern used in pkg/grpc/handlers_test.go for unit tests
+	// that exercise the gRPC call path without needing TLS certificate fixtures.
+	mock := &mockMasterServer{}
+	gs := grpc.NewServer()
+	proto.RegisterAwgAgentServer(gs, mock)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = gs.Serve(ln) }()
+	t.Cleanup(func() { gs.GracefulStop() })
+
+	conn, err := grpc.NewClient(
+		ln.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	masterClient := proto.NewAwgAgentClient(conn)
+
+	ctx := context.Background()
+
+	// Step 1: List existing tunnels (fresh master → empty).
+	tunnelList, err := masterClient.ListTunnels(ctx, &proto.Empty{})
+	if err != nil {
+		t.Fatalf("ListTunnels: %v", err)
+	}
+
+	// Step 2: Resolve the tunnel name using the same logic as newClientInitCommand.
+	masterTunnelName := masterClientPreferredTunnelID(clientName, tunnelList.GetTunnels())
+
+	// Verify the name is already bounded before we even call AddTunnel.
+	if masterTunnelName == clientName {
+		t.Fatalf("masterClientPreferredTunnelID(%q) returned raw client name %q — must be bounded to ≤12 chars",
+			clientName, masterTunnelName)
+	}
+	if len(masterTunnelName) > 12 {
+		t.Fatalf("masterClientPreferredTunnelID(%q) = %q (len %d), want ≤12 chars",
+			clientName, masterTunnelName, len(masterTunnelName))
+	}
+
+	// Step 3: Call AddTunnel with the bounded name. The mock enforces the server
+	// regex — an InvalidArgument response here proves Bug 14 would have fired.
+	peerKey := make([]byte, 32)
+	resp, err := masterClient.AddTunnel(ctx, &proto.AddTunnelRequest{
+		Name:          masterTunnelName,
+		PeerPublicKey: peerKey,
+		Weight:        1,
+	})
+	if err != nil {
+		// If the mock returned InvalidArgument, the bounded name was rejected —
+		// which means the production code passed a name that fails the regex.
+		t.Fatalf("AddTunnel(%q) returned error (Bug 14 regression): %v", masterTunnelName, err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("AddTunnel(%q) returned success=false", masterTunnelName)
+	}
+
+	// Confirm the mock received exactly the bounded name.
+	if len(mock.received) != 1 {
+		t.Fatalf("mock received %d AddTunnel calls, want 1", len(mock.received))
+	}
+	gotName := mock.received[0]
+	boundedPattern := regexp.MustCompile(`^cli-[0-9a-f]{8}$`)
+	if !boundedPattern.MatchString(gotName) {
+		t.Fatalf("AddTunnel received name %q, want cli-<8hex> (bounded from %q)", gotName, clientName)
 	}
 }

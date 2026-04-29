@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/google/nftables"
@@ -14,6 +17,10 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
+
+// rtTablesPath is the path to the iproute2 rt_tables.d file written by
+// writeRtTables. Overridable in tests via package-level assignment.
+var rtTablesPath = "/etc/iproute2/rt_tables.d/awg-mesh.conf"
 
 // DSCPPolicy defines a single DSCP->fwmark->table routing policy.
 type DSCPPolicy struct {
@@ -194,6 +201,13 @@ func SetupDSCPPolicyRouting(policies []DSCPPolicy) error {
 		},
 	})
 
+	// Write named routing table entries so 'ip route show table awg-dscp-N'
+	// resolves the table name. Non-fatal: DSCP routing still functions without
+	// the name file; only ops tooling (ip route show) breaks.
+	if err := writeRtTables(policies); err != nil {
+		log.Printf("awg-mesh/routing: writeRtTables: %v (non-fatal)", err)
+	}
+
 	if err := conn.Flush(); err != nil {
 		return fmt.Errorf("nftables flush DSCP rules: %w", err)
 	}
@@ -303,6 +317,39 @@ func shouldCleanupDSCPRule(rule netlink.Rule) bool {
 	}
 	expected := dscpPriorityBase + int(rule.Mark)
 	return rule.Priority == expected && rule.Table == expected
+}
+
+// writeRtTables writes /etc/iproute2/rt_tables.d/awg-mesh.conf (or the path
+// overridden by rtTablesPath) with one line per DSCP policy in the form:
+//
+//	<id> <name>
+//
+// where id = 100 + DSCPValue and name = "awg-dscp-<DSCPValue>".
+// Output is sorted by DSCP value for deterministic, idempotent output.
+// An atomic write (write to .tmp + rename) is used to avoid partial reads.
+func writeRtTables(policies []DSCPPolicy) error {
+	sorted := make([]DSCPPolicy, len(policies))
+	copy(sorted, policies)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].DSCP < sorted[j].DSCP
+	})
+
+	var sb strings.Builder
+	for _, p := range sorted {
+		id := dscpPriorityBase + p.DSCP
+		fmt.Fprintf(&sb, "%d awg-dscp-%d\n", id, p.DSCP)
+	}
+	content := []byte(sb.String())
+
+	tmpPath := rtTablesPath + ".tmp"
+	if err := os.WriteFile(tmpPath, content, 0o644); err != nil {
+		return fmt.Errorf("writeRtTables: write tmp: %w", err)
+	}
+	if err := os.Rename(tmpPath, rtTablesPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("writeRtTables: rename: %w", err)
+	}
+	return nil
 }
 
 // encodeUint32 encodes a uint32 in little-endian byte order for nftables register values.

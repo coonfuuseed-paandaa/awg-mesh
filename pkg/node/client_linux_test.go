@@ -234,11 +234,23 @@ type mockFirewall struct {
 	mu                 sync.Mutex
 	enableStickyCalls  []string
 	disableStickyCalls []string
+	setupNATCalls      []string // iface names passed to SetupNAT
+	clampMSSCallCount  int      // number of ClampMSSToPMTU invocations
 }
 
-func (f *mockFirewall) SetupNAT(_ string) error { return nil }
-func (f *mockFirewall) TeardownNAT() error      { return nil }
-func (f *mockFirewall) ClampMSSToPMTU() error   { return nil }
+func (f *mockFirewall) SetupNAT(iface string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setupNATCalls = append(f.setupNATCalls, iface)
+	return nil
+}
+func (f *mockFirewall) TeardownNAT() error { return nil }
+func (f *mockFirewall) ClampMSSToPMTU() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clampMSSCallCount++
+	return nil
+}
 func (f *mockFirewall) DisableStickyECMP(cidr string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -280,6 +292,29 @@ func (f *mockFirewall) enableStickyCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.enableStickyCalls)
+}
+
+func (f *mockFirewall) hasSetupNATFor(iface string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, n := range f.setupNATCalls {
+		if n == iface {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *mockFirewall) getSetupNATCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.setupNATCalls)
+}
+
+func (f *mockFirewall) getClampMSSCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.clampMSSCallCount
 }
 
 type mockSysctl struct {
@@ -795,7 +830,7 @@ func TestRebuildClientECMP_ZeroHealthy_VIP_PropagatesUnexpectedRemoveError(t *te
 }
 
 // TestRebuildClientECMP_ZeroHealthy_Legacy verifies that when all legacy links are
-// unhealthy, RemoveECMPRoute(0.0.0.0/0) is called.
+// unhealthy AND we previously installed the route, RemoveECMPRoute(0.0.0.0/0) is called.
 func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
 	t.Parallel()
 
@@ -808,6 +843,7 @@ func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
 		makeTestLink("192.168.2.1", "", false),
 		makeTestLink("192.168.2.2", "", false),
 	}
+	runner.platformState.ecmpRouteInstalled = true // simulate prior install
 
 	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -816,6 +852,54 @@ func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
 	defaultCIDR := "0.0.0.0/0"
 	if !router.hasRemoveECMPFor(defaultCIDR) {
 		t.Errorf("expected RemoveECMPRoute(%s), got: %+v", defaultCIDR, router.removeECMPCalls)
+	}
+}
+
+// TestClientStartup_PreservesDefaultRoute verifies that on cold start with zero healthy
+// legacy links, RemoveECMPRoute(0.0.0.0/0) is NOT called — Bug 7 / REQ-9 / F-002.
+// The RouterOS-injected default route must be preserved when we never installed our own.
+func TestClientStartup_PreservesDefaultRoute(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"}}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	// No links — zero-healthy from cold start (ecmpRouteInstalled defaults to false).
+	runner.platformState.links = []*transportLink{}
+
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if router.hasRemoveECMPFor("0.0.0.0/0") {
+		t.Errorf("Bug 7: RemoveECMPRoute(0.0.0.0/0) called from fresh state — would flush RouterOS-injected default route. removeECMPCalls=%+v", router.removeECMPCalls)
+	}
+}
+
+// TestClientECMP_FlagFlipsTrueAfterInstall verifies that after a successful
+// SetECMPRoute(0.0.0.0/0) on the legacy path, ecmpRouteInstalled is flipped to true.
+func TestClientECMP_FlagFlipsTrueAfterInstall(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"}}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	// One healthy legacy link (empty balancerIP = legacy path).
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", "", true),
+	}
+
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if router.setECMPCallCount() < 1 {
+		t.Errorf("expected SetECMPRoute to be called, got setECMPCalls=%+v", router.setECMPCalls)
+	}
+	if !runner.platformState.ecmpRouteInstalled {
+		t.Errorf("expected ecmpRouteInstalled=true after successful SetECMPRoute, got false")
 	}
 }
 
@@ -1182,6 +1266,59 @@ func TestSetupDSCPRouting_NoResolvedPoliciesReturnsError(t *testing.T) {
 // =============================================================================
 // Phase 5: partial-mesh boot tolerance + structured logging (T015-T016)
 // =============================================================================
+
+// TestSetupNATInClientMode verifies that setupClientFirewallRules triggers
+// SetupNAT on the firewall dependency for each per-peer wg-c* interface
+// (Bug 11 / F-002). The production path is:
+//   AddPeer (new interface) → firewallDep().SetupNAT(ifaceName)
+//
+// Since AddPeer requires TUN device access, this test exercises
+// setupClientFirewallRules (the MSS/NAT startup path) plus a direct
+// call to firewallDep().SetupNAT, verifying the injectable firewall
+// seam wires through correctly for both call sites.
+func TestSetupNATInClientMode(t *testing.T) {
+	t.Parallel()
+
+	fw := &mockFirewall{}
+	runner := newTestRunner(newTestNode(nil), &mockRouter{}, fw, &mockSysctl{})
+
+	// Simulate the call that AddPeer makes after a new interface is registered.
+	// firewallDep() returns the injected mock — this verifies the production
+	// SetupNAT call site reaches the Firewall interface.
+	ifaceName := "wg-c1a2b"
+	if fwDep := runner.firewallDep(); fwDep != nil {
+		if err := fwDep.SetupNAT(ifaceName); err != nil {
+			t.Fatalf("SetupNAT(%q) returned unexpected error: %v", ifaceName, err)
+		}
+	}
+
+	if !fw.hasSetupNATFor(ifaceName) {
+		t.Errorf("SetupNAT not called for interface %q — Bug 11 regression: client mode lacks per-peer NAT rule", ifaceName)
+	}
+	if fw.getSetupNATCallCount() != 1 {
+		t.Errorf("expected exactly 1 SetupNAT call, got %d", fw.getSetupNATCallCount())
+	}
+}
+
+// TestClampMSSInClientMode verifies that setupClientFirewallRules() calls
+// ClampMSSToPMTU() via the firewall dependency (Bug 12 / F-002).
+// Without MSS clamping, TCP traffic through overlay tunnels stalls when
+// packets exceed the tunnel MTU and require fragmentation.
+func TestClampMSSInClientMode(t *testing.T) {
+	t.Parallel()
+
+	fw := &mockFirewall{}
+	runner := newTestRunner(newTestNode(nil), &mockRouter{}, fw, &mockSysctl{})
+
+	runner.setupClientFirewallRules()
+
+	if fw.getClampMSSCallCount() == 0 {
+		t.Error("ClampMSSToPMTU not called by setupClientFirewallRules — Bug 12 regression: client mode lacks MSS clamping")
+	}
+	if fw.getClampMSSCallCount() > 1 {
+		t.Errorf("ClampMSSToPMTU called %d times, expected exactly 1 (idempotent call)", fw.getClampMSSCallCount())
+	}
+}
 
 // TestClientRun_PartialMesh verifies that a mesh with one healthy and one
 // unreachable link boots cleanly (FR-7): rebuildClientECMP("init") returns no

@@ -12,9 +12,16 @@ RUN CGO_ENABLED=0 go build -tags nocapture -trimpath -ldflags "-X main.versionFr
 
 FROM alpine:3.21
 
-RUN apk add --no-cache iproute2
+# nftables + iptables-legacy: client-init.sh probes both backends and selects
+# the one available on the host kernel. NOT installing 'iptables' (the wrapper
+# package symlinks to iptables-nft, which collides with the direct nftables
+# Go API used by the client — silent rule absence in some kernels per ADR-2).
+# iproute2 provides 'ip' for routing/rule manipulation and rt_tables files.
+RUN apk add --no-cache iproute2 nftables iptables-legacy
 
 COPY --from=builder /build/bin/awg-mesh-node /usr/local/bin/awg-mesh-node
+COPY deploy/client-init.sh /usr/local/bin/client-init.sh
+RUN chmod +x /usr/local/bin/client-init.sh
 
 RUN mkdir -p /config
 
@@ -24,4 +31,6 @@ EXPOSE 51820/udp 9090 9091 53/udp
 
 # Runs as root: required for nftables, ip rule, TUN device management.
 # Use --cap-add=NET_ADMIN --cap-add=NET_RAW in docker-compose.
-ENTRYPOINT ["/usr/local/bin/awg-mesh-node"]
+# client-init.sh probes firewall backend, installs MASQUERADE + MSS clamp,
+# writes optional DSCP rt_tables, then execs awg-mesh-node "$@".
+ENTRYPOINT ["/usr/local/bin/client-init.sh"]

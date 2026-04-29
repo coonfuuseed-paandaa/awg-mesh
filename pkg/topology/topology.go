@@ -127,6 +127,16 @@ type VethConfig struct {
 	Gateway string `yaml:"gateway,omitempty"`
 }
 
+// MikrotikConfig holds optional MikroTik-specific settings for a client node.
+// When nil, generator defaults apply (e.g. storage_root defaults to "docker").
+type MikrotikConfig struct {
+	// StorageRoot is the container storage root directory on the MikroTik (default: "docker").
+	// Paths become /<storage_root>/... in the generated RouterOS script.
+	// Allowed characters: alphanumeric, underscore, slash, hyphen (^[a-zA-Z0-9_/-]+$).
+	// Must not contain ".." (path traversal) or start with "/" (the leading slash is added by generator).
+	StorageRoot string `yaml:"storage_root,omitempty"`
+}
+
 // ClientNode describes a client node.
 type ClientNode struct {
 	Name      string `yaml:"name"`
@@ -136,7 +146,10 @@ type ClientNode struct {
 	GRPCPort  int    `yaml:"grpc_port,omitempty"`
 	// Veth holds MikroTik veth bridge configuration (mikrotik type only).
 	// B4 fix: nil means use defaults (veth-<name>, 192.168.100.1/24).
-	Veth            *VethConfig     `yaml:"veth,omitempty"`
+	Veth *VethConfig `yaml:"veth,omitempty"`
+	// Mikrotik holds optional MikroTik-specific settings (mikrotik type only).
+	// When nil, all generator defaults apply.
+	Mikrotik        *MikrotikConfig `yaml:"mikrotik,omitempty"`
 	Masters         []string        `yaml:"masters"`
 	RoutingPolicies []RoutingPolicy `yaml:"routing_policies,omitempty"`
 	DNS             *DNSConfig      `yaml:"dns,omitempty"`

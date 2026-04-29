@@ -93,6 +93,21 @@ type clientPlatformState struct {
 	// and call DisableStickyECMP only for retired CIDRs (FR-6).
 	currentStickyCIDRs map[string]bool
 
+	// ecmpRouteInstalled tracks whether this process has successfully called
+	// SetECMPRoute(0.0.0.0/0) at least once (legacy path only).
+	// Initialized false (zero value). Flipped to true after the first successful
+	// SetECMPRoute(defaultDest,...) call, and back to false after a successful
+	// RemoveECMPRoute(defaultDest) so a later zero-link rebuild cannot delete a
+	// default route this process did not install (e.g. a RouterOS-injected
+	// default route via the 100.127.0.1 veth gateway after the original was
+	// withdrawn). Bug 7 / REQ-9 / F-002.
+	//
+	// MUST be read and written only while holding c.platformState.mu —
+	// rebuildClientECMP is invoked from multiple goroutines (healthcheck
+	// onUp/onDown callbacks, gRPC AddPeer/RemovePeer handlers, the init path),
+	// so unsynchronised access is a data race.
+	ecmpRouteInstalled bool
+
 	// Injectable for testing. nil = use production implementations.
 	router   routing.Router
 	firewall routing.Firewall
@@ -178,6 +193,21 @@ func (c *ClientRunner) clientIfaceNameConflicts(name string) bool {
 		return true
 	}
 	return false
+}
+
+// setupClientFirewallRules applies client-mode nftables rules on startup.
+// Currently installs MSS clamping so TCP traffic through overlay tunnels does
+// not stall on fragmented packets. Idempotent: safe to call multiple times.
+// Non-fatal: logs warn on error and continues (nftables may be unavailable).
+func (c *ClientRunner) setupClientFirewallRules() {
+	fw := c.firewallDep()
+	if fw == nil {
+		c.node.logger.Warn().Msg("nftables unavailable — MSS clamping not applied in client mode")
+		return
+	}
+	if err := fw.ClampMSSToPMTU(); err != nil {
+		c.node.logger.Warn().Err(err).Msg("nftables: failed to clamp MSS to PMTU in client mode")
+	}
 }
 
 // routerDep returns the configured router or the production netlink router.
@@ -322,6 +352,15 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	c.platformState.links = nextLinks
 	c.platformState.byKey[pubkeyHex] = newLink
 	c.platformState.mu.Unlock()
+
+	// Apply per-interface MASQUERADE rule so return packets reach the client.
+	// Non-fatal: log warn and continue — overlay routing still works; only NAT
+	// for return traffic through this interface is affected.
+	if fw := c.firewallDep(); fw != nil {
+		if err := fw.SetupNAT(ifaceName); err != nil {
+			c.node.logger.Warn().Err(err).Str("interface", ifaceName).Msg("nftables: SetupNAT failed (non-fatal)")
+		}
+	}
 
 	peerLabel := pubkeyHex
 	if len(peerLabel) > 8 {
@@ -739,6 +778,7 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	c.platformState.mu.Lock()
 	linksSnapshot := append([]*transportLink(nil), c.platformState.links...)
+	ecmpInstalledSnapshot := c.platformState.ecmpRouteInstalled
 	c.platformState.mu.Unlock()
 
 	// Determine routing mode from ALL configured links (includes unhealthy).
@@ -858,6 +898,14 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	defaultCIDR := "0.0.0.0/0"
 
 	if len(healthyLinks) == 0 {
+		if !ecmpInstalledSnapshot {
+			c.node.logger.Info().
+				Str("event", "ecmp_skip_remove_never_installed").
+				Str("dest", defaultCIDR).
+				Str("reason", "no_healthy_links_and_never_installed").
+				Msg("preserving pre-existing default route — we never installed our own")
+			return nil
+		}
 		c.node.logger.Info().
 			Str("event", "ecmp_withdraw").
 			Str("dest", defaultCIDR).
@@ -866,6 +914,13 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 		if err := router.RemoveECMPRoute(defaultDest); err != nil {
 			return fmt.Errorf("remove default ECMP route: %w", err)
 		}
+		// Reset the installed flag under the lock — without this, a later
+		// zero-link rebuild can still delete a default route this process did
+		// not install (e.g. a RouterOS-injected default route that replaced
+		// ours after withdraw).
+		c.platformState.mu.Lock()
+		c.platformState.ecmpRouteInstalled = false
+		c.platformState.mu.Unlock()
 		return nil
 	}
 
@@ -874,6 +929,9 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	if err := router.SetECMPRoute(defaultDest, nexthops); err != nil {
 		return fmt.Errorf("set default ECMP route: %w", err)
 	}
+	c.platformState.mu.Lock()
+	c.platformState.ecmpRouteInstalled = true
+	c.platformState.mu.Unlock()
 
 	// Overlay space is the sticky CIDR for legacy path when available.
 	stickyCIDR := defaultCIDR

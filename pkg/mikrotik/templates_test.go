@@ -45,7 +45,7 @@ func TestGenerateDeployRSC(t *testing.T) {
 		"/ip/route add dst-address=10.10.0.0/16",
 		"awg-mesh: overlay network",
 		// Mount
-		"/container/mounts/add name=AWG_MESH_HOME_CONFIG",
+		"/container/mounts/add list=AWG_MESH_HOME_CONFIG",
 		"src=/docker/etc/awg-mesh-client-mikrotik-home-config",
 		"dst=/config",
 		// Container env vars (only essential ones)
@@ -56,7 +56,7 @@ func TestGenerateDeployRSC(t *testing.T) {
 		// Container add with production settings
 		"/container/add interface=AWG_MESH_HOME",
 		"root-dir=/docker/awg-mesh-client-mikrotik-home",
-		"mounts=AWG_MESH_HOME_CONFIG",
+		"mountlists=AWG_MESH_HOME_CONFIG",
 		"dns=1.1.1.1,8.8.8.8",
 		"logging=yes",
 		"start-on-boot=yes",
@@ -86,6 +86,75 @@ func TestGenerateDeployRSC(t *testing.T) {
 			t.Errorf("script must NOT contain %q, got:\n%s", check, script)
 		}
 	}
+
+	// Ordering assertion: veth MUST be created before bridge-port references it.
+	// RouterOS /import rejects bridge-port add if the veth interface does not yet exist.
+	vethIdx := strings.Index(script, "/interface/veth add name=")
+	bridgePortIdx := strings.Index(script, "/interface/bridge/port add")
+	if vethIdx < 0 {
+		t.Fatalf("script missing /interface/veth add")
+	}
+	if bridgePortIdx < 0 {
+		t.Fatalf("script missing /interface/bridge/port add")
+	}
+	if vethIdx >= bridgePortIdx {
+		t.Fatalf("veth section must precede bridge-port section: veth at %d, bridge/port at %d\nscript:\n%s", vethIdx, bridgePortIdx, script)
+	}
+}
+
+func TestGenerateDeployRSCStorageRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default storage root produces docker paths", func(t *testing.T) {
+		t.Parallel()
+		script, err := GenerateDeployRSC(DeployScript{
+			TopologyName:  "mikrotik-home",
+			ContainerName: "AWG_MESH_HOME",
+			Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+			Veth:          "AWG_MESH_HOME",
+			VethGateway:   "100.127.0.1",
+			OverlayIP:     "10.10.0.10",
+			OverlayNet:    "10.10.0.0/16",
+			TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
+			// StorageRoot intentionally unset — must default to "docker"
+		})
+		if err != nil {
+			t.Fatalf("GenerateDeployRSC returned error: %v", err)
+		}
+		if !strings.Contains(script, "src=/docker/etc/awg-mesh-client-mikrotik-home-config") {
+			t.Errorf("expected default /docker/etc/... path, got:\n%s", script)
+		}
+		if !strings.Contains(script, "root-dir=/docker/awg-mesh-client-mikrotik-home") {
+			t.Errorf("expected default /docker/awg-mesh-... root-dir, got:\n%s", script)
+		}
+	})
+
+	t.Run("custom storage root overrides docker paths", func(t *testing.T) {
+		t.Parallel()
+		script, err := GenerateDeployRSC(DeployScript{
+			TopologyName:  "mikrotik-home",
+			ContainerName: "AWG_MESH_HOME",
+			Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+			Veth:          "AWG_MESH_HOME",
+			VethGateway:   "100.127.0.1",
+			OverlayIP:     "10.10.0.10",
+			OverlayNet:    "10.10.0.0/16",
+			TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
+			StorageRoot:   "disk1",
+		})
+		if err != nil {
+			t.Fatalf("GenerateDeployRSC returned error: %v", err)
+		}
+		if !strings.Contains(script, "src=/disk1/etc/awg-mesh-client-mikrotik-home-config") {
+			t.Errorf("expected /disk1/etc/... path, got:\n%s", script)
+		}
+		if !strings.Contains(script, "root-dir=/disk1/awg-mesh-client-mikrotik-home") {
+			t.Errorf("expected /disk1/awg-mesh-... root-dir, got:\n%s", script)
+		}
+		if strings.Contains(script, "/docker/") {
+			t.Errorf("script must not contain /docker/ when storage_root=disk1, got:\n%s", script)
+		}
+	})
 }
 
 func TestGenerateDeployRSCErrors(t *testing.T) {
@@ -115,7 +184,6 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			current := base
@@ -173,6 +241,75 @@ func TestGenerateRotateRSC(t *testing.T) {
 	}
 }
 
+// TestRouterOSTemplateNoMetacharacters verifies that a v2 token hash
+// (charset [A-Za-z0-9._-]) is emitted without RouterOS quoting — the
+// MESH_TOKEN_HASH value line must contain no double-quote characters.
+func TestRouterOSTemplateNoMetacharacters(t *testing.T) {
+	t.Parallel()
+
+	// v2 hash: only [A-Za-z0-9._-] — zero RouterOS-meaningful characters.
+	v2Hash := "mesh1.AAEBABACAQEABAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKyws"
+
+	script, err := GenerateDeployRSC(DeployScript{
+		TopologyName:  "mikrotik-home",
+		ContainerName: "AWG_MESH_HOME",
+		Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Veth:          "AWG_MESH_HOME",
+		VethGateway:   "100.127.0.1",
+		OverlayIP:     "10.10.0.10",
+		OverlayNet:    "10.10.0.0/16",
+		TokenHash:     v2Hash,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployRSC returned error: %v", err)
+	}
+
+	// The value must appear raw — not wrapped in quotes.
+	rawLine := "key=MESH_TOKEN_HASH value=" + v2Hash
+	if !strings.Contains(script, rawLine) {
+		t.Errorf("expected MESH_TOKEN_HASH emitted raw as %q, got script:\n%s", rawLine, script)
+	}
+
+	// Confirm the hash is NOT wrapped in double quotes.
+	quotedLine := `key=MESH_TOKEN_HASH value="` + v2Hash
+	if strings.Contains(script, quotedLine) {
+		t.Errorf("MESH_TOKEN_HASH must NOT be quoted, but found quoted form in script:\n%s", script)
+	}
+}
+
+// TestRouterOSTemplate_OtherValuesQuoted verifies that non-hash env vars
+// (MESH_MODE, MESH_NAME, MESH_OVERLAY_IP) are still wrapped in double quotes,
+// providing a regression check that the MESH_TOKEN_HASH exemption is narrow.
+func TestRouterOSTemplate_OtherValuesQuoted(t *testing.T) {
+	t.Parallel()
+
+	script, err := GenerateDeployRSC(DeployScript{
+		TopologyName:  "mikrotik-home",
+		ContainerName: "AWG_MESH_HOME",
+		Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Veth:          "AWG_MESH_HOME",
+		VethGateway:   "100.127.0.1",
+		OverlayIP:     "10.10.0.10",
+		OverlayNet:    "10.10.0.0/16",
+		TokenHash:     "mesh1.somev2hash",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployRSC returned error: %v", err)
+	}
+
+	// Each non-hash env var must carry a quoted value.
+	quotedChecks := []string{
+		`key=MESH_MODE value="client"`,
+		`key=MESH_NAME value="mikrotik-home"`,
+		`key=MESH_OVERLAY_IP value="10.10.0.10"`,
+	}
+	for _, check := range quotedChecks {
+		if !strings.Contains(script, check) {
+			t.Errorf("expected quoted env var %q in script, got:\n%s", check, script)
+		}
+	}
+}
+
 func TestGenerateRotateRSCErrors(t *testing.T) {
 	t.Parallel()
 
@@ -191,7 +328,6 @@ func TestGenerateRotateRSCErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := GenerateRotateRSC("container", tt.params)

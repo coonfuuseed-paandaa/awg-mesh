@@ -123,9 +123,7 @@ func newClientPrepareCommand() *cobra.Command {
 					Name:      client.Name,
 					OverlayIP: client.OverlayIP,
 					Image:     resolveImage(imageFlag, topo.Defaults.Image.Client, "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest", "defaults.image.client"),
-					// Escape $ → $$ to survive Docker Compose variable
-					// interpolation. Bcrypt hashes contain literal `$`.
-					TokenHash: composeEscapeDollar(hash),
+					TokenHash: hash,
 				}
 
 				// B3 fix: write output to configDir/clients/<name>/ instead of CWD.
@@ -214,6 +212,7 @@ func newClientPrepareCommand() *cobra.Command {
 					TokenHash:     hash,
 					DNS:           dns,
 					GRPCPort:      grpcPort,
+					StorageRoot:   clientStorageRoot(client),
 				}
 
 				rsc, err := mikrotik.GenerateDeployRSC(ds)
@@ -282,6 +281,15 @@ func resolveClientTarget(topo *topology.Topology, client *topology.ClientNode) (
 
 func resolveClientGRPCAddr(_ *topology.Topology, client *topology.ClientNode) string {
 	return client.GRPCAddr()
+}
+
+// clientStorageRoot returns the topology-configured StorageRoot for a MikroTik client,
+// or "" when unset (letting the generator apply the "docker" default).
+func clientStorageRoot(client *topology.ClientNode) string {
+	if client.Mikrotik != nil && client.Mikrotik.StorageRoot != "" {
+		return client.Mikrotik.StorageRoot
+	}
+	return ""
 }
 
 var masterClientTunnelIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,12}$`)

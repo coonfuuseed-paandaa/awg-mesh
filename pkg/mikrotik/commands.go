@@ -60,9 +60,10 @@ func GenerateContainerCommands(cfg ContainerConfig) []string {
 	var cmds []string
 
 	// Mount for persistent /config
+	// per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
 	if cfg.MountName != "" && cfg.MountSrc != "" {
 		cmds = append(cmds, fmt.Sprintf(
-			"/container/mounts/add name=%s src=%s dst=/config",
+			"/container/mounts/add list=%s src=%s dst=/config",
 			escapeRouterOSToken(cfg.MountName),
 			escapeRouterOSToken(cfg.MountSrc),
 		))
@@ -141,19 +142,36 @@ func GenerateRouteCommands(overlayNet, gateway string) []string {
 }
 
 // GenerateFirewallCommands returns conntrack-aware /ip/firewall/filter rules
-// placed BEFORE defconf drop rules so they actually match on real routers.
+// anchored before the universal action=fasttrack-connection rule (present on
+// every standard RouterOS install). Falls back to chain-end append with a
+// warning log when the fasttrack rule is absent (stripped-install or custom
+// firewall). RouterOS evaluates the if/else at /import time.
+// per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
 func GenerateFirewallCommands(bridgeName string) []string {
 	if bridgeName == "" {
 		bridgeName = defaultBridgeName
 	}
 	safeBridge := escapeRouterOSToken(bridgeName)
-	placeBefore := `place-before=[find where comment~"defconf: drop" chain=forward]`
-	return []string{
-		fmt.Sprintf("/ip/firewall/filter add chain=forward action=accept connection-state=established,related in-interface=%s comment=%s %s",
-			safeBridge, quoteRouterOSValue("awg-mesh: established return traffic"), placeBefore),
-		fmt.Sprintf("/ip/firewall/filter add chain=forward action=accept in-interface=%s comment=%s %s",
-			safeBridge, quoteRouterOSValue("awg-mesh: container outbound"), placeBefore),
-	}
+	established := quoteRouterOSValue("awg-mesh: established return traffic")
+	outbound := quoteRouterOSValue("awg-mesh: container outbound")
+
+	block := fmt.Sprintf(
+		":local fastTrackId [/ip/firewall/filter find where action=fasttrack-connection chain=forward]\n"+
+			":if ([:len $fastTrackId] > 0) do={\n"+
+			"    /ip/firewall/filter add chain=forward action=accept connection-state=established,related in-interface=%s comment=%s place-before=$fastTrackId\n"+
+			"    /ip/firewall/filter add chain=forward action=accept in-interface=%s comment=%s place-before=$fastTrackId\n"+
+			"} else={\n"+
+			"    /ip/firewall/filter add chain=forward action=accept connection-state=established,related in-interface=%s comment=%s\n"+
+			"    /ip/firewall/filter add chain=forward action=accept in-interface=%s comment=%s\n"+
+			"    # WARNING: no fasttrack-connection rule found, appended to chain end\n"+
+			"    :log warning \"awg-mesh: no fasttrack-connection rule, appended to chain end\"\n"+
+			"}",
+		safeBridge, established,
+		safeBridge, outbound,
+		safeBridge, established,
+		safeBridge, outbound,
+	)
+	return []string{block}
 }
 
 func buildEnvCommands(envListName string, envVars map[string]string) []string {
@@ -173,11 +191,21 @@ func buildEnvCommands(envListName string, envVars map[string]string) []string {
 		// RouterOS 7.21+ renamed the /container/envs/add parameter from
 		// `name=` to `list=`. The project documents 7.21 as the minimum
 		// supported release, so we emit `list=` here.
+		//
+		// MESH_TOKEN_HASH uses the v2 charset [A-Za-z0-9._-] — no RouterOS-
+		// meaningful characters — so quoting is unnecessary and may interfere
+		// with template parsing. All other env var values are quoted normally.
+		var emittedValue string
+		if key == "MESH_TOKEN_HASH" {
+			emittedValue = value
+		} else {
+			emittedValue = quoteRouterOSValue(value)
+		}
 		commands = append(commands, fmt.Sprintf(
 			"/container/envs/add list=%s key=%s value=%s",
 			escapeRouterOSToken(envListName),
 			escapeRouterOSToken(key),
-			quoteRouterOSValue(value),
+			emittedValue,
 		))
 	}
 	return commands
@@ -189,10 +217,11 @@ func buildContainerAddCommand(cfg ContainerConfig, envListName string) string {
 		rootDir = "/docker/awg-mesh-client-" + strings.ToLower(strings.TrimSpace(cfg.Name))
 	}
 
+	// per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
 	parts := []string{
 		"/container/add",
 		"interface=" + escapeRouterOSToken(cfg.Interface),
-		"image=" + escapeRouterOSToken(cfg.Image),
+		"remote-image=" + escapeRouterOSToken(cfg.Image), // per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
 		"hostname=" + escapeRouterOSToken(strings.ToLower(cfg.Name)),
 		"root-dir=" + escapeRouterOSToken(rootDir),
 		"envlist=" + escapeRouterOSToken(envListName),
@@ -200,7 +229,7 @@ func buildContainerAddCommand(cfg ContainerConfig, envListName string) string {
 	}
 
 	if cfg.MountName != "" {
-		parts = append(parts, "mounts="+escapeRouterOSToken(cfg.MountName))
+		parts = append(parts, "mountlists="+escapeRouterOSToken(cfg.MountName)) // per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
 	}
 
 	if len(cfg.DNS) > 0 {

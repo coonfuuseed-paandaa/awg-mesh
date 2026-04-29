@@ -5,6 +5,7 @@ import (
 	"testing"
 	"text/template"
 
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,6 +36,10 @@ var hostNetworkTemplates = []string{
 	"docker-compose.client.yml.tmpl",
 }
 
+// sampleV2Hash is a static v2 token hash using charset [A-Za-z0-9._-] — no
+// dollar signs, so no Docker Compose interpolation escaping is needed.
+const sampleV2Hash = "mesh1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 func masterData() any {
 	return struct {
 		Name       string
@@ -49,8 +54,7 @@ func masterData() any {
 		OverlayIP:  "10.0.0.1",
 		Image:      "ghcr.io/example/awg-mesh-node:latest",
 		ListenPort: 443,
-		// Pre-escaped sample hash (production code doubles `$` before render).
-		TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
+		TokenHash:  sampleV2Hash,
 	}
 }
 
@@ -68,8 +72,7 @@ func endpointData() any {
 		OverlayIP:  "10.0.0.2",
 		Image:      "ghcr.io/example/awg-mesh-node:latest",
 		ListenPort: 51820,
-		// Pre-escaped sample hash (production code doubles `$` before render).
-		TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
+		TokenHash:  sampleV2Hash,
 	}
 }
 
@@ -88,9 +91,8 @@ func clientData() any {
 		OverlayIP:  "10.0.0.100",
 		Image:      "ghcr.io/example/awg-mesh-client:latest",
 		ListenPort: 51820,
-		// Pre-escaped sample hash (production code doubles `$` before render).
-		TokenHash: "$$2a$$12$$abcdefghijklmnopqrstuv",
-		Masters:   "master-01,master-02",
+		TokenHash:  sampleV2Hash,
+		Masters:    "master-01,master-02",
 	}
 }
 
@@ -252,20 +254,16 @@ func TestAllTemplatesUseExpectedHostPaths(t *testing.T) {
 	}
 }
 
-// TestAllTemplatesEscapeDollarInTokenHash guards the Docker Compose variable
-// interpolation edge case: bcrypt hashes contain literal `$` characters
-// ("$2a$12$..."), and Compose would interpolate "$2a" / "$12" to empty
-// strings unless every `$` is doubled to `$$`. The Go caller escapes once
-// via composeEscapeDollar; this test renders a sample bcrypt hash through
-// the template stack and confirms only doubled `$$` remain after
-// MESH_TOKEN_HASH=.
-func TestAllTemplatesEscapeDollarInTokenHash(t *testing.T) {
+// TestComposeNoEscapeForV2Hash asserts that v2 token hashes (charset [A-Za-z0-9._-],
+// prefix "mesh1.") are embedded verbatim in rendered Docker Compose templates with no
+// dollar-sign doubling or any other transformation. The legacy dollar-escape helper
+// was removed in v1.10.3 because v2 hashes never contain "$".
+func TestComposeNoEscapeForV2Hash(t *testing.T) {
 	t.Parallel()
-	// Real bcrypt hashes always start with $2a$ or $2b$; the contract tests
-	// already put a sample literal value into TokenHash. The caller in
-	// master.go / endpoint.go / client.go applies composeEscapeDollar
-	// before rendering — simulate that here so the test pins actual prod
-	// behaviour rather than the accidental "no escape" path.
+	// HashTokenV2 produces "mesh1." + base64url(54-byte-blob), charset [A-Za-z0-9_-].
+	// No "$" character can appear, so no Compose variable-interpolation escaping is
+	// needed. Verify using a realistic v2-format hash (same charset, same prefix).
+	const v2Hash = sampleV2Hash
 	for _, tt := range allTemplates {
 		tt := tt
 		t.Run(tt.Name, func(t *testing.T) {
@@ -277,27 +275,29 @@ func TestAllTemplatesEscapeDollarInTokenHash(t *testing.T) {
 					continue
 				}
 				val := strings.TrimPrefix(trimmed, "- MESH_TOKEN_HASH=")
-				// The sample fixture value in renderTemplate already has
-				// "$" — it must either be entirely doubled ($$), or the
-				// caller in production code has not applied
-				// composeEscapeDollar and this template is unsafe.
-				// Walk the string character by character and fail if any
-				// lone `$` is followed by a character other than `$`.
-				for i := 0; i < len(val); i++ {
-					if val[i] != '$' {
-						continue
-					}
-					if i+1 >= len(val) || val[i+1] != '$' {
-						t.Fatalf("%s: MESH_TOKEN_HASH contains unescaped '$' "+
-							"(position %d, value=%q). Caller must apply "+
-							"composeEscapeDollar before render.", tt.fileName, i, val)
-					}
-					i++ // skip the paired $
+				// v2 hashes must never be dollar-escaped.
+				if strings.Contains(val, "$$") {
+					t.Fatalf("%s: MESH_TOKEN_HASH contains escaped '$$' — v2 hashes must not be escaped: %q",
+						tt.fileName, val)
+				}
+				// The hash must appear verbatim (no transformation).
+				// Exact equality (not Contains) — Contains would silently
+				// pass if the template added quotes or any other extra
+				// characters around the hash, weakening the
+				// "embedded verbatim" contract.
+				if val != v2Hash {
+					t.Fatalf("%s: MESH_TOKEN_HASH value %q does not match expected v2 hash %q exactly",
+						tt.fileName, val, v2Hash)
 				}
 			}
 		})
 	}
 }
+
+// Ensure pkgtls is referenced so the import is not dropped by goimports.
+// HashTokenV2 is the authoritative v2 hash generator; sampleV2Hash mimics
+// its output format for fixture purposes.
+var _ = pkgtls.HashTokenV2
 
 func isHostNetwork(fileName string) bool {
 	for _, n := range hostNetworkTemplates {

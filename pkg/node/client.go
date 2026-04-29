@@ -71,6 +71,10 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 		}
 	}()
 
+	// Apply MSS clamping so TCP traffic through overlay tunnels does not stall
+	// on fragmented packets. Idempotent and non-fatal. Bug 12 / F-002.
+	c.setupClientFirewallRules()
+
 	if err := c.reconcileFromTransportState(); err != nil {
 		// Partial-mesh boot tolerance (FR-7): reconcile errors are non-fatal.
 		// Some tunnels may have been set up successfully even if others failed.

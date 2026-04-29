@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/logging"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/rs/zerolog"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const (
@@ -41,11 +41,41 @@ type nodeOptions struct {
 	metricsAddr string
 }
 
+// newClientLogRotator returns a lumberjack rotating file writer for client-mode
+// log output. The log file is placed in configDir so it co-locates with other
+// persistent node state (keys, token). Parameters:
+//   - MaxSize 10 MB — keeps logs well within the ~64 MB RouterOS storage budget
+//   - MaxBackups 3 — three generations of rotated files before oldest is removed
+//   - MaxAge 0 — no age-based deletion; size is the only eviction trigger
+//   - LocalTime true — timestamps in log file names use the host clock timezone
+//   - Compress false — uncompressed for immediate human-readable access
+func newClientLogRotator(configDir string) *lumberjack.Logger {
+	return &lumberjack.Logger{
+		Filename:   filepath.Join(configDir, "awg-mesh-client.log"),
+		MaxSize:    10,
+		MaxBackups: 3,
+		MaxAge:     0,
+		LocalTime:  true,
+		Compress:   false,
+	}
+}
+
 func main() {
 	options := parseNodeOptions()
 
 	logging.SetGlobalLevel(options.logLevel)
-	logger := logging.NewLogger("awg-mesh-node")
+
+	var logger zerolog.Logger
+	if options.mode == modeClient {
+		rotator := newClientLogRotator(options.configDir)
+		logger = zerolog.New(rotator).
+			With().
+			Timestamp().
+			Str("component", "awg-mesh-node").
+			Logger()
+	} else {
+		logger = logging.NewLogger("awg-mesh-node")
+	}
 
 	if !isValidMode(options.mode) {
 		logger.Fatal().
@@ -172,13 +202,30 @@ func envFallbackInt(setFlags map[string]bool, flagName string, flagValue int, en
 }
 
 // bootstrapTokenHash copies the MESH_TOKEN_HASH env var into <configDir>/mesh.token
-// on first boot. Invalid bcrypt input fails fast — the binary refuses to start
-// with a corrupt or plaintext token value, keeping auth state on the node correct.
+// on first boot. The value must be a v2 argon2id hash (prefix "mesh1."); bcrypt and
+// plaintext values are rejected with a structured error so the node refuses to start
+// with an invalid token, keeping auth state on the node correct.
 // Subsequent boots see an existing token file and leave the env var untouched.
 func bootstrapTokenHash(configDir string, logger zerolog.Logger) error {
-	hash := strings.TrimSpace(os.Getenv("MESH_TOKEN_HASH"))
+	rawVal, set := os.LookupEnv("MESH_TOKEN_HASH")
+	if !set {
+		return nil // env var absent entirely — no-op on subsequent boots
+	}
+	hash := strings.TrimSpace(rawVal)
 	if hash == "" {
-		return nil
+		logger.Error().
+			Str("event", "token_hash_invalid").
+			Str("format", "unknown").
+			Msg("MESH_TOKEN_HASH must be v2 format")
+		return errors.New("MESH_TOKEN_HASH is set but empty — must be a v2 argon2id hash")
+	}
+
+	if _, _, _, _, _, _, _, err := pkgtls.ParseV2(hash); err != nil {
+		logger.Error().
+			Str("event", "token_hash_invalid").
+			Str("format", "unknown").
+			Msg("MESH_TOKEN_HASH must be v2 format")
+		return fmt.Errorf("MESH_TOKEN_HASH is not a valid v2 token hash: %w", err)
 	}
 
 	cleanDir := strings.TrimSpace(configDir)
@@ -191,10 +238,6 @@ func bootstrapTokenHash(configDir string, logger zerolog.Logger) error {
 		return nil // token already present; env var ignored on subsequent boots
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat token file %q: %w", tokenPath, err)
-	}
-
-	if _, err := bcrypt.Cost([]byte(hash)); err != nil {
-		return fmt.Errorf("MESH_TOKEN_HASH is not a valid bcrypt hash: %w", err)
 	}
 
 	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
