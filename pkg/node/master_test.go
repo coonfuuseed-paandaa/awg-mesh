@@ -535,7 +535,7 @@ func TestSaveTransportState_PersistsAdminAllowedIPs(t *testing.T) {
 			break
 		}
 	}
-	if found == nil { //nolint:staticcheck // SA5011: t.Fatal exits — AllowedIPs access below safe
+	if found == nil {
 		t.Fatal("pl-01 not found in persisted state")
 	}
 	want := []string{"10.255.0.24/30", "172.20.70.34/32", "172.20.70.32/27"}

@@ -274,7 +274,7 @@ func TestClientModeLogRotation(t *testing.T) {
 	configDir := "/config"
 	rotator := newClientLogRotator(configDir)
 
-	if rotator == nil { //nolint:staticcheck // SA5011: t.Fatal exits — assertions below are safe
+	if rotator == nil {
 		t.Fatal("expected non-nil lumberjack.Logger from newClientLogRotator")
 	}
 

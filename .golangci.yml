@@ -11,3 +11,16 @@ linters:
         - (*os.File).Close
         - (*net.UDPConn).Close
         - (net.Conn).SetDeadline
+  exclusions:
+    rules:
+      # SA5011 in test files: t.Fatal / t.Fatalf is treated as a regular
+      # branch by staticcheck (it does not encode (*testing.T).Fatal as
+      # noreturn). The pattern `if x == nil { t.Fatal(...) }; x.field`
+      # is canonical Go test code and is safe — t.Fatal exits the test.
+      # Excluding SA5011 in *_test.go is the standard fix; alternatives
+      # (per-line //nolint) are positional and break easily on line shifts.
+      - linters:
+          - staticcheck
+        text: "SA5011"
+        paths:
+          - ".*_test\\.go"
