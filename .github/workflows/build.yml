@@ -145,7 +145,13 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
-      CHR_VERSION: 7.16.2
+      # v1.14.0 onboarding bundle targets RouterOS 7.21.x as the canonical
+      # tier (mountlists=, remote-image=, /container/mounts list= syntax).
+      # The lint gate MUST exercise the canonical tier — running it against
+      # 7.16 would only validate the legacy syntax path that the v1.14.0
+      # generator no longer emits, masking 7.21+ regressions. See
+      # docs/MIKROTIK-VERSION-COMPAT.md §1 for the support tier table.
+      CHR_VERSION: 7.21.3
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -168,7 +174,14 @@ jobs:
 
       - name: Install QEMU + tools
         if: steps.filter.outputs.mikrotik == 'true'
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 sshpass unzip curl
+        # `expect` is required by chr-import-lint.sh to drive the
+        # RouterOS first-boot password-change interactive dialog, which
+        # plain sshpass cannot satisfy (sshpass(1) only fills the initial
+        # SSH password prompt). `netcat-openbsd` provides `nc -z` for
+        # the SSH-port readiness probe.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 sshpass unzip curl expect netcat-openbsd
 
       - name: Cache CHR image
         if: steps.filter.outputs.mikrotik == 'true'
@@ -444,17 +457,40 @@ jobs:
             echo "::endgroup::"
           done
 
-          # On tag push, additionally verify the semver tag is reachable on
-          # both registries (catches the partial-publish incident class
-          # documented in AGENTS.md release-tag parity rule).
+          # On tag push, verify the FULL alias set produced by
+          # docker/metadata-action is reachable on both registries.
+          # metadata-action emits the following tags for a vX.Y.Z push
+          # (matches the patterns in steps.meta-primary / meta-alias):
+          #   - vX.Y.Z          (type=semver,pattern=v{{version}})
+          #   - X.Y.Z           (type=semver,pattern={{version}})
+          #   - X.Y             (type=semver,pattern={{major}}.{{minor}})
+          #   - X               (type=semver,pattern={{major}}, only when X != 0)
+          #
+          # Verifying only ${{ github.ref_name }} (== vX.Y.Z) misses
+          # X.Y.Z, X.Y, and X — a partial-publish there still passes
+          # this gate. Operators pinning to ":1.14" or ":1" would then
+          # silently break on a partial publish. Catch every alias.
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            REF_NAME="${{ github.ref_name }}"          # e.g. v1.14.0
+            STRIPPED="${REF_NAME#v}"                    # e.g. 1.14.0
+            MAJOR="${STRIPPED%%.*}"                     # 1
+            REST="${STRIPPED#*.}"                       # 14.0
+            MINOR="${REST%%.*}"                         # 14
+            ALIASES=( "${REF_NAME}" "${STRIPPED}" "${MAJOR}.${MINOR}" )
+            # metadata-action only publishes the major-only alias when
+            # MAJOR != 0 (enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}).
+            if [[ "${MAJOR}" != "0" ]]; then
+              ALIASES+=( "${MAJOR}" )
+            fi
             for registry in \
                 "ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}" \
                 "${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}"; do
-              echo "::group::Verify semver tag ${registry}:${{ github.ref_name }}"
-              docker buildx imagetools inspect "${registry}:${{ github.ref_name }}" >/dev/null \
-                || (echo "::error::${registry}: semver tag ${{ github.ref_name }} missing" && exit 1)
-              echo "::endgroup::"
+              for alias in "${ALIASES[@]}"; do
+                echo "::group::Verify alias ${registry}:${alias}"
+                docker buildx imagetools inspect "${registry}:${alias}" >/dev/null \
+                  || (echo "::error::${registry}: alias tag ${alias} missing" && exit 1)
+                echo "::endgroup::"
+              done
             done
           fi
 
