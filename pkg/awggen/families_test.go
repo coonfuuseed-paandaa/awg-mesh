@@ -73,10 +73,10 @@ func TestRandomFamily(t *testing.T) {
 
 	for attempt := 0; attempt < 20; attempt++ {
 		selected := RandomFamily()
-		if selected == nil {
+		if selected == nil { //nolint:staticcheck // SA5011: t.Fatalf exits — Name access below is safe
 			t.Fatalf("RandomFamily returned nil")
 		}
-		if _, exists := known[selected.Name]; !exists { //nolint:staticcheck // SA5011: t.Fatalf above guards selected
+		if _, exists := known[selected.Name]; !exists {
 			t.Fatalf("RandomFamily returned unknown family %q", selected.Name)
 		}
 	}

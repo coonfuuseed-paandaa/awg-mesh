@@ -274,13 +274,12 @@ func TestClientModeLogRotation(t *testing.T) {
 	configDir := "/config"
 	rotator := newClientLogRotator(configDir)
 
-	if rotator == nil {
+	if rotator == nil { //nolint:staticcheck // SA5011: t.Fatal exits — assertions below are safe
 		t.Fatal("expected non-nil lumberjack.Logger from newClientLogRotator")
 	}
-	// rotator is non-nil after the t.Fatal guard; assertions below are safe.
 
 	wantFilename := "/config/awg-mesh-client.log"
-	if rotator.Filename != wantFilename { //nolint:staticcheck // SA5011: t.Fatal guards rotator above
+	if rotator.Filename != wantFilename {
 		t.Errorf("Filename: got %q, want %q", rotator.Filename, wantFilename)
 	}
 	if rotator.MaxSize != 10 {

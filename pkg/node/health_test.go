@@ -66,7 +66,7 @@ func TestNewHealthChecker(t *testing.T) {
 	}
 
 	checker := NewHealthChecker(cfg, zerolog.Nop(), nil)
-	if checker == nil {
+	if checker == nil { //nolint:staticcheck // SA5011: t.Fatal exits — cfg access below safe
 		t.Fatal("expected checker instance")
 	}
 	if checker.cfg != cfg {

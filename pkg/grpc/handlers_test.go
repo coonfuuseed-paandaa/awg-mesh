@@ -1934,7 +1934,7 @@ func TestGetTransportState(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetTransportState returned unexpected error: %v", err)
 			}
-			if resp == nil {
+			if resp == nil { //nolint:staticcheck // SA5011: t.Fatal exits — fields access below safe
 				t.Fatal("GetTransportState returned nil response")
 			}
 			if resp.Mode != tt.wantMode {
@@ -2094,10 +2094,10 @@ func TestRotateKeypair_Happy(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("unexpected error: %v", rpcErr)
 	}
-	if resp == nil {
+	if resp == nil { //nolint:staticcheck // SA5011: t.Fatal exits — resp access below is safe
 		t.Fatal("nil response")
 	}
-	if !bytes.Equal(resp.NewPublicKey, expectedPubKey[:]) { //nolint:staticcheck // SA5011: t.Fatal above guards resp
+	if !bytes.Equal(resp.NewPublicKey, expectedPubKey[:]) {
 		t.Errorf("public key mismatch:\n  want %s\n  got  %s",
 			hex.EncodeToString(expectedPubKey[:]),
 			hex.EncodeToString(resp.NewPublicKey))
