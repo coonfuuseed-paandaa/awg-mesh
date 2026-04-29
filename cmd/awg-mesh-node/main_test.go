@@ -240,3 +240,46 @@ func TestBootstrapTokenHash_RejectEmpty(t *testing.T) {
 		t.Fatal("expected error for empty MESH_TOKEN_HASH, got nil")
 	}
 }
+
+// TestClientModeLogRotation verifies that newClientLogRotator returns a
+// lumberjack.Logger with the correct rotation parameters for client mode.
+func TestClientModeLogRotation(t *testing.T) {
+	configDir := "/config"
+	rotator := newClientLogRotator(configDir)
+
+	if rotator == nil {
+		t.Fatal("expected non-nil lumberjack.Logger from newClientLogRotator")
+	}
+
+	wantFilename := "/config/awg-mesh-client.log"
+	if rotator.Filename != wantFilename {
+		t.Errorf("Filename: got %q, want %q", rotator.Filename, wantFilename)
+	}
+	if rotator.MaxSize != 10 {
+		t.Errorf("MaxSize: got %d, want 10 (MB)", rotator.MaxSize)
+	}
+	if rotator.MaxBackups != 3 {
+		t.Errorf("MaxBackups: got %d, want 3", rotator.MaxBackups)
+	}
+	if rotator.MaxAge != 0 {
+		t.Errorf("MaxAge: got %d, want 0 (no age limit)", rotator.MaxAge)
+	}
+	if !rotator.LocalTime {
+		t.Error("LocalTime: got false, want true")
+	}
+	if rotator.Compress {
+		t.Error("Compress: got true, want false")
+	}
+}
+
+// TestClientModeLogRotation_CustomDir verifies that the log file path respects
+// a non-default configDir (e.g. when MESH_CONFIG_DIR is customised).
+func TestClientModeLogRotation_CustomDir(t *testing.T) {
+	dir := t.TempDir()
+	rotator := newClientLogRotator(dir)
+
+	wantFilename := dir + "/awg-mesh-client.log"
+	if rotator.Filename != wantFilename {
+		t.Errorf("Filename: got %q, want %q", rotator.Filename, wantFilename)
+	}
+}
