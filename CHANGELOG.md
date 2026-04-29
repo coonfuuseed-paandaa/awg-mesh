@@ -44,9 +44,13 @@ breaking change — see Operator Cutover Runbook below.
   `-update` commit fails CI.
 - **CHR import lint CI job** — every PR touching `pkg/mikrotik/`,
   `cmd/mesh-ctl/`, or `pkg/topology/` boots ephemeral RouterOS CHR
-  (`7.16.2`) via QEMU and runs `/import` on the golden fixture. Failure
-  patterns (`failure`/`syntax error`/`invalid value`/`unknown parameter`)
-  detected in addition to exit code.
+  (`7.21.3`, the canonical tier targeted by v1.14.0 — `mountlists=`,
+  `remote-image=`, `/container/mounts list=` syntax) via QEMU and runs
+  `/import` on the golden fixture. Failure patterns
+  (`failure`/`syntax error`/`invalid value`/`unknown parameter`)
+  detected in addition to exit code. First-boot password seeding via
+  `expect` so the in-session RouterOS password-change dialog (which
+  plain `sshpass` cannot satisfy) is answered automatically.
 
 ### Track 2 — Client image rebuild (F-002)
 
