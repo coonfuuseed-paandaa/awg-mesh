@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.1] — 2026-04-29 — release-quality patch
+
+Patch release clearing technical debt observed during v1.14.0 ship:
+
+### Fixed
+- **Race detector flake on `overlayRouterFn`** (pkg/node/endpoint_routes_linux.go) — `TestEndpointRebuildAllOverlayRoutes` and `TestEndpointReconcilePeerKey` both had `t.Parallel()` while mutating package-level seam vars. Go race detector caught real concurrent r/w in v1.14.0 tag-build CI; re-run masked the bug. Fix: removed `t.Parallel()` from both tests, aligning with the documented pattern used by `TestEndpointReconcileIsIdempotent` / `TestEndpointReconcileCreatesNIfaces` / `TestEndpointReconcileSkipsStaleTunnel`. Verified: 10× `go test -race` runs in Docker `golang:1.25-alpine` PASS without race. (PR #92)
+
+### CI
+- **Removed `chr-lint` job** from build.yml — boots a real RouterOS CHR via QEMU usermode networking on standard GHA runners, but without KVM acceleration CHR cold-boot exceeds 5 minutes and SSH auth subsystem stays unresponsive. Two reproductions on PR #92 confirmed. Coverage replaced by:
+  - `pkg/mikrotik/golden_test.go` — compile-time golden-fixture diff that catches generator regressions deterministically.
+  - `tests/simulation/mikrotik-chr-e2e.sh` — operator-side full E2E with real CHR via QEMU/KVM. AGENTS.md release gate already mandates this passes locally before tag (currently 10/10 PASS on CHR 7.16.2).
+
+### Docs
+- AGENTS.md release gate updated: `go test -race` mandatory, CHR e2e step added, golden-fixture step added, chr-lint reference removed. CHANGELOG date stamp `2026-04-29` for v1.14.0 (was `Pending`, fixed in PR #91).
+
+### Compatibility
+No wire format change. Drop-in replacement for v1.14.0.
+
 ## [1.14.0] — 2026-04-29 — mikrotik onboarding bundle (issue #181)
 
 This release bundles three coordinated tracks fixing 13 bugs + 7 requirements
