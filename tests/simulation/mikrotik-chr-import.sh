@@ -94,6 +94,14 @@ if ! command -v ssh >/dev/null 2>&1; then
     echo "ERROR: ssh not in PATH (apt-get install -y openssh-client)" >&2
     exit 2
 fi
+# nc is used at the SSH-port readiness probe below (`nc -z 127.0.0.1 ...`).
+# Without this pre-flight check, a missing nc lets the wait-loop run all
+# its iterations against an unconditionally-failing command, masking the
+# real cause of the timeout.
+if ! command -v nc >/dev/null 2>&1; then
+    echo "ERROR: nc not in PATH (apt-get install -y netcat-openbsd)" >&2
+    exit 2
+fi
 
 # KVM check — non-fatal warning; CHR boot will likely fail without it on
 # x86_64 hosts but the QEMU TCG fallback exists in some CHR images.

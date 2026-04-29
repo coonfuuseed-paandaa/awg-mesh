@@ -1463,25 +1463,29 @@ else
             -c "${R11B_INNER_CMD}" 2>&1) && R11B_RUN_RC=0 || R11B_RUN_RC=$?
         if [[ "${R11B_RUN_RC}" -ne 0 ]]; then
             fail "R11b: docker run failed (rc=${R11B_RUN_RC}): ${R11B_RUN_OUT}"
-            R11B_READY=-1  # sentinel — skip ready loop
+            # Skip the readiness loop entirely — there is no container to
+            # poll. The previous code set a `R11B_READY=-1` sentinel only
+            # to overwrite it with `R11B_READY=0` on the next line, so
+            # the 30-second loop ran for every failed startup.
+            R11B_READY=0
+        else
+            # Wait for gRPC ready (up to 30s).
+            R11B_READY=0
+            for i in $(seq 1 30); do
+                if docker logs "${R11B_CTR}" 2>&1 | grep -q "gRPC server listening"; then
+                    R11B_READY=1
+                    break
+                fi
+                sleep 1
+            done
         fi
 
-        # Wait for gRPC ready (up to 30s).
-        R11B_READY=0
-        for i in $(seq 1 30); do
-            if docker logs "${R11B_CTR}" 2>&1 | grep -q "gRPC server listening"; then
-                R11B_READY=1
-                break
-            fi
-            sleep 1
-        done
-
-        if [[ "${R11B_READY}" -eq 0 ]]; then
+        if [[ "${R11B_RUN_RC}" -eq 0 && "${R11B_READY}" -eq 0 ]]; then
             fail "R11b: master without --topology did not become gRPC ready within 30s"
             echo "  --- R11b container logs (last 30 lines) ---" >&2
             docker logs --tail 30 "${R11B_CTR}" 2>&1 | sed 's/^/    /' >&2 || true
             echo "  --- end logs ---" >&2
-        else
+        elif [[ "${R11B_READY}" -eq 1 ]]; then
             # Run mesh-ctl master init against the no-topology master.
             R11B_INIT_OUT=$(${MESHCTL_BIN} \
                 --topology "${R11B_TOPO}" \

@@ -371,7 +371,7 @@ TOKEN_ENDPOINT_01=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_01}/mesh.token")
 TOKEN_ENDPOINT_02=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_02}/mesh.token")
 TOKEN_MIKROTIK=$(cat "${CTL_CONFIG_DIR}/nodes/${CLIENT_MIKROTIK}/mesh.token")
 
-# Escape $ for docker-compose interpolation (bcrypt hashes contain $2a$...).
+# Escape $ for docker-compose interpolation (argon2id hashes contain $argon2id$... in v1.14.0+).
 TOKEN_MASTER_01_ESC="${TOKEN_MASTER_01//\$/\$\$}"
 TOKEN_MASTER_02_ESC="${TOKEN_MASTER_02//\$/\$\$}"
 TOKEN_ENDPOINT_01_ESC="${TOKEN_ENDPOINT_01//\$/\$\$}"
@@ -712,8 +712,8 @@ for dscp_val in "${DSCP_CLASSES[@]}"; do
     # ip rule entries for DSCP use the dscp value directly via fwmark or
     # via 'tos' match. The client may use either mechanism depending on
     # implementation. Check for the dscp value's presence in ip rule output.
-    # fwmark format: client sets mark = dscp_val * 1000 (implementation-specific),
-    # or uses 'tos 0xNN' where NN = dscp_val << 2.
+    # fwmark format: client sets mark == dscp_val (invariant fwmark == DSCP, see
+    # pkg/routing/dscp.go), or kernel may show 'tos 0xNN' where NN = dscp_val << 2.
     tos_hex=$(printf '%02x' $(( dscp_val * 4 )))
     if echo "${IP_RULES}" | grep -qE "dscp ${dscp_val}|fwmark.*${dscp_val}|tos 0x${tos_hex}"; then
         info "  DSCP ${dscp_val}: rule found"
@@ -768,16 +768,20 @@ else
         # tcpdump -v prints MSS as "mss <N>" in the options field.
         CAPTURED_MSS=$(echo "${TCPDUMP_OUT}" | grep -oE 'mss [0-9]+' | awk '{print $2}' | head -1)
         if [[ -z "${CAPTURED_MSS}" ]]; then
+            # Inconclusive — emit a warn and DO NOT increment PASSES. The
+            # earlier `pass` here inflated the green-count and could mask
+            # a real MSS clamp regression behind two consecutive WARN
+            # lines that the test still reported as green.
             warn "A4: tcpdump captured SYN but could not parse MSS option; packet may not have MSS set"
-            pass "A4: SYN captured on ${WG_CLIENT_IFACE} (MSS parse inconclusive — mark as WARN)"
+            warn "A4: SYN captured on ${WG_CLIENT_IFACE} (MSS parse inconclusive — manual verification needed)"
         elif [[ "${CAPTURED_MSS}" -le "${MSS_CLAMP_MAX}" ]]; then
             pass "A4: MSS=${CAPTURED_MSS} <= ${MSS_CLAMP_MAX} on ${WG_CLIENT_IFACE}"
         else
             fail "A4: MSS=${CAPTURED_MSS} > ${MSS_CLAMP_MAX} on ${WG_CLIENT_IFACE} — clamp not applied"
         fi
     else
-        warn "A4: no TCP SYN captured on ${WG_CLIENT_IFACE} within timeout — tunnel may not carry SYNs yet"
-        pass "A4: WARN only — no SYN captured, MSS clamp cannot be verified; mark for follow-up"
+        # No SYN captured — likewise inconclusive, do not call pass.
+        warn "A4: no TCP SYN captured on ${WG_CLIENT_IFACE} within timeout — MSS clamp unverified"
     fi
 fi
 
