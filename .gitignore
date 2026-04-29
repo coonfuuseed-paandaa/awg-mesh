@@ -59,3 +59,8 @@ bin/diag.sh
 bin/mesh-ctl
 bin/sim-*.log
 *.go.5*
+
+# Local build/test artifacts
+_build_test.sh
+coverage
+
