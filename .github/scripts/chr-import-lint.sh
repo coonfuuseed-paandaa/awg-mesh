@@ -107,22 +107,20 @@ spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o PreferredAuthentications=password -o PubkeyAuthentication=no \
     -p ${SSH_PORT} ${SSH_USER}@127.0.0.1
 expect {
-    -re "(yes/no.*)"           { send "yes\r"; exp_continue }
-    -re "[Pp]assword:"         { send "${SSH_PASS}\r" }
+    -re {(yes/no.*)}           { send "yes\r"; exp_continue }
+    -re {[Pp]assword:}         { send "${SSH_PASS}\r" }
     timeout                    { send_user "TIMEOUT-AT-LOGIN\n"; exit 11 }
 }
 expect {
-    -re "Permission denied"    {
-        # Already-set lintpass failed → fall through to first-boot flow
-        # (handled by the lower expect block).
+    -re {Permission denied}    {
         send_user "PASSWORD-NOT-YET-SET\n"
         exit 12
     }
-    -re "EULA.*\\\\(y/n\\\\)"  { send "y\r"; exp_continue }
-    -re "new password>"        { send "${SSH_PASS}\r"; exp_continue }
-    -re "repeat new password>" { send "${SSH_PASS}\r"; exp_continue }
-    -re "\\[admin@.*\\] >"     { send ":put \"chr-ready\"\r"; exp_continue }
-    -re "chr-ready"            { send "/quit\r"; exp_continue }
+    -re {EULA.*\(y/n\)}        { send "y\r"; exp_continue }
+    -re {new password>}        { send "${SSH_PASS}\r"; exp_continue }
+    -re {repeat new password>} { send "${SSH_PASS}\r"; exp_continue }
+    -re {\[admin@.*\] >}       { send ":put \"chr-ready\"\r"; exp_continue }
+    -re {chr-ready}            { send "/quit\r"; exp_continue }
     eof                        { exit 0 }
     timeout                    { send_user "TIMEOUT-AT-PROMPT\n"; exit 13 }
 }
@@ -141,16 +139,16 @@ spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o PreferredAuthentications=password -o PubkeyAuthentication=no \
     -p ${SSH_PORT} ${SSH_USER}@127.0.0.1
 expect {
-    -re "(yes/no.*)"           { send "yes\r"; exp_continue }
-    -re "[Pp]assword:"         { send "\r" }
+    -re {(yes/no.*)}           { send "yes\r"; exp_continue }
+    -re {[Pp]assword:}         { send "\r" }
     timeout                    { send_user "TIMEOUT-FIRST-BOOT-LOGIN\n"; exit 21 }
 }
 expect {
-    -re "EULA.*\\\\(y/n\\\\)"  { send "y\r"; exp_continue }
-    -re "new password>"        { send "${SSH_PASS}\r"; exp_continue }
-    -re "repeat new password>" { send "${SSH_PASS}\r"; exp_continue }
-    -re "\\[admin@.*\\] >"     { send ":put \"chr-ready\"\r"; exp_continue }
-    -re "chr-ready"            { send "/quit\r"; exp_continue }
+    -re {EULA.*\(y/n\)}        { send "y\r"; exp_continue }
+    -re {new password>}        { send "${SSH_PASS}\r"; exp_continue }
+    -re {repeat new password>} { send "${SSH_PASS}\r"; exp_continue }
+    -re {\[admin@.*\] >}       { send ":put \"chr-ready\"\r"; exp_continue }
+    -re {chr-ready}            { send "/quit\r"; exp_continue }
     eof                        { exit 0 }
     timeout                    { send_user "TIMEOUT-FIRST-BOOT-DIALOG\n"; exit 22 }
 }
