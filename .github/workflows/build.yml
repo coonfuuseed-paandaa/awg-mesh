@@ -422,16 +422,41 @@ jobs:
       # matrix declared. Catches silent regressions where a config change
       # drops an arch (the Bug 13 failure mode). Uses SHA tag (always
       # present regardless of ref — branch, tag, or both).
-      - name: Verify multi-arch manifest
+      #
+      # Per AGENTS.md mandatory release tagging rule: every release tag MUST
+      # publish to BOTH GHCR and Docker Hub. The verification iterates both
+      # registries; any missing tag/platform fails the release and triggers
+      # the retag workflow per AGENTS.md operator runbook.
+      - name: Verify multi-arch manifest (GHCR + Docker Hub)
         if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name == 'push'
         run: |
           set -e
-          MANIFEST=$(docker buildx imagetools inspect ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}:${{ github.sha }})
-          echo "$MANIFEST"
-          for platform in linux/amd64 linux/386 linux/arm64 linux/arm/v7 linux/arm/v6; do
-            echo "$MANIFEST" | grep -q "$platform" || \
-              (echo "::error::manifest missing $platform" && exit 1)
+          for registry in \
+              "ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}" \
+              "${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}"; do
+            echo "::group::Verify ${registry}:${{ github.sha }}"
+            MANIFEST=$(docker buildx imagetools inspect "${registry}:${{ github.sha }}")
+            echo "$MANIFEST"
+            for platform in linux/amd64 linux/386 linux/arm64 linux/arm/v7 linux/arm/v6; do
+              echo "$MANIFEST" | grep -q "$platform" || \
+                (echo "::error::${registry}: manifest missing $platform" && exit 1)
+            done
+            echo "::endgroup::"
           done
+
+          # On tag push, additionally verify the semver tag is reachable on
+          # both registries (catches the partial-publish incident class
+          # documented in AGENTS.md release-tag parity rule).
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            for registry in \
+                "ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}" \
+                "${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}"; do
+              echo "::group::Verify semver tag ${registry}:${{ github.ref_name }}"
+              docker buildx imagetools inspect "${registry}:${{ github.ref_name }}" >/dev/null \
+                || (echo "::error::${registry}: semver tag ${{ github.ref_name }} missing" && exit 1)
+              echo "::endgroup::"
+            done
+          fi
 
   # Retroactively tag existing images without rebuilding. Uses
   # `buildx imagetools create --tag` which mutates the registry's tag
