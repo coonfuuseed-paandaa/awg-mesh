@@ -7,28 +7,160 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [1.14.0] — Pending — mikrotik onboarding bundle (issue #181)
 
-- **Client data-plane hardening (#165)** — 11 runtime fixes making the client fully
-  operational end-to-end: bounded deterministic tunnel ID for long client names,
-  master pubkey hex decode, cert NotBefore backdate, EnableL4Hash non-fatal in Docker,
-  overlay ECMP route `src` hint, client AllowedIPs in AddTunnel, master uses request
-  AllowedIPs, healthcheck initial unhealthy→healthy transition, idempotent tunnel
-  re-create on master init.
-- **MikroTik config generator overhaul (#165)** — generated .rsc scripts are now
-  production-ready: bridge + IP + bridge-port for L2/L3 connectivity, srcnat
-  masquerade + dstnat for gRPC, conntrack-aware firewall rules with `place-before`
-  defconf drop, persistent `/config` mount (separate from root-dir), DNS servers
-  (default 1.1.1.1, 8.8.8.8), `logging=yes`, `start-on-boot=yes`, CAPS naming
-  convention (`AWG_MESH_<NAME>`), default veth subnet changed to 100.127.0.0/24
-  (CGN/RFC 6598).
-- **Linux docker-compose templates** — added `dns`, `mem_limit: 256m`, `shm_size: 64m`,
-  `logging` with json-file driver, `stop_grace_period: 10s`.
+This release bundles three coordinated tracks fixing 13 bugs + 7 requirements
+that blocked `mikrotik-home` (RouterOS 7.21.3 ARM64) onboarding. Wire format
+breaking change — see Operator Cutover Runbook below.
+
+### Track 1 — MikroTik generator fixes (F-001)
+
+- **Bug 1: Veth section before Bridge** in deploy template — bridge-port references
+  veth, so veth must exist first. Reordered `deployScriptTemplate`.
+- **Bug 2: Firewall anchor** universalized to `action=fasttrack-connection`
+  (auto-installed on every standard RouterOS install) instead of the
+  user-renameable `comment~"defconf: drop"`. Adds RouterOS scripting if/else
+  with chain-end fallback + `:log warning` when fasttrack is absent.
+- **Bug 3a/3b/5: RouterOS 7.21+ parameter renames.** `/container/mounts/add`
+  `name=` → `list=`. `/container/add` `mounts=` → `mountlists=`,
+  `image=` → `remote-image=`. Each emission line carries source-link comment
+  to MikroTik canonical docs (`help.mikrotik.com`).
+- **Bug 14: Bounded tunnel ID** — audit confirmed every `AddTunnel`/`RemoveTunnel`/
+  `AddPeer` in `cmd/mesh-ctl/cmd/client.go` already uses
+  `masterClientPreferredTunnelID`/`masterClientRemovalTunnelIDs` helpers.
+  Added `TestClientInitLongName` regression test (13-char `mikrotik-home`).
+- **`mikrotik.storage_root`** topology field — operators with USB/disk1 storage
+  can override the default `/docker/...` path prefix:
+  ```yaml
+  clients:
+    - name: mikrotik-home
+      mikrotik:
+        storage_root: disk1   # paths become /disk1/etc/awg-mesh-client-...
+  ```
+  Validated regex `^[a-zA-Z0-9_/-]+$` + path-traversal `..` rejection.
+- **Golden-file regression test** — `pkg/mikrotik/golden_test.go` byte-for-byte
+  checks generated `.rsc` against `pkg/mikrotik/testdata/deploy-golden.rsc`.
+  Re-seed via `go test -update`. Drift in generator output without an explicit
+  `-update` commit fails CI.
+- **CHR import lint CI job** — every PR touching `pkg/mikrotik/`,
+  `cmd/mesh-ctl/`, or `pkg/topology/` boots ephemeral RouterOS CHR
+  (`7.16.2`) via QEMU and runs `/import` on the golden fixture. Failure
+  patterns (`failure`/`syntax error`/`invalid value`/`unknown parameter`)
+  detected in addition to exit code.
+
+### Track 2 — Client image rebuild (F-002)
+
+- **Bug 7 (REQ-9): NEVER-FLUSH default route.** `clientPlatformState` gains
+  `ecmpRouteInstalled bool` flag (initialised false). Flag flips true only
+  after first successful `SetECMPRoute(0.0.0.0/0, ...)`. Guards
+  `RemoveECMPRoute(defaultDest)` so we only flush routes we ourselves
+  installed — preserves RouterOS-injected default routes on cold start.
+  VIP-path `RemoveECMPRoute(balancerIP/32)` unchanged.
+- **Bugs 11+12: SetupNAT + ClampMSSToPMTU in client mode.** Client mode
+  previously omitted both — TCP traffic stalled on fragmented packets and
+  return packets failed without MASQUERADE. Now called on `Run()` startup
+  (idempotent, non-fatal) and after each successful `AddPeer` for `wg-c*`
+  interfaces.
+- **Bug 13: DSCP rt_tables** — `pkg/routing/dscp.writeRtTables` writes
+  `/etc/iproute2/rt_tables.d/awg-mesh.conf` with named routing tables
+  (`100+N awg-dscp-N`). Atomic write, deterministic sort, idempotent.
+  Without it, `ip route show table awg-dscp-10` returned `argument invalid`
+  and ops tooling broke.
+- **Client init shell entrypoint** — `deploy/client-init.sh` (POSIX `sh`,
+  shellcheck-clean) detects firewall backend (nftables / iptables-legacy),
+  installs wildcard MASQUERADE on `wg-c*` + MSS clamp, writes optional
+  rt_tables from `/config/client-state.yml`, then `exec`s the Go binary.
+  NEVER calls `ip route flush table main`.
+- **Bug 9: Log rotation** via `lumberjack.v2` v2.2.1 — client mode wraps
+  zerolog output in 10MB/file × 3 backups, no compression, local timestamps.
+  Master and endpoint modes log to stdout/stderr unchanged.
+- **Dockerfile.client rewrite** — alpine 3.21 + `apk add iproute2 nftables
+  iptables-legacy` (NOT `iptables`, which symlinks to `iptables-nft` and
+  collides with the direct nftables Go API per ADR-2). Bundles
+  client-init.sh as ENTRYPOINT. Image size 43.6 MB compressed (≤ 50 MB
+  budget per FR-12).
+- **Docker Hub manifest parity gate** — CI now verifies BOTH
+  `ghcr.io/coonfuuseed-paandaa/awg-mesh-{node,client}:vX.Y.Z` AND
+  `docker.io/coonfuuseedpaandaa/awg-mesh-{node,client}:vX.Y.Z` resolve
+  with all 5 architectures present. Catches partial-publish incidents
+  documented in AGENTS.md tagging invariants rule.
+
+### Track 3 — Wire protocol token format v2 (F-003) — BREAKING
+
+- **NEW token format `mesh1.<base64url>`** (78 chars). Charset
+  `[A-Za-z0-9._-]` — zero shell metacharacters, RouterOS-safe, Docker
+  Compose-safe. Replaces bcrypt-`$2a$...` hashes that broke `/import`
+  on RouterOS 7.21+ via `$$` interpolation.
+- **argon2id parameters** — m=4096 KiB, t=1 iteration, p=1 parallelism,
+  16-byte CSPRNG salt, 32-byte key. All parameters stored in the 54-byte
+  blob (BigEndian: `format_version=0x01`, `algo=0x01`, `m_cost_kb=4096`,
+  `t_cost=1`, `parallelism=1`, `salt[16]`, `hash[32]`) for forward
+  compatibility (NFR-4).
+- **`pkgtls.HashTokenV2` + `pkgtls.ParseV2`** + sentinel errors
+  `ErrUnknownTokenFormat`, `ErrMalformedTokenBlob`. `HashToken` (caller
+  API stable) now delegates to `HashTokenV2`.
+- **`VerifyToken` rewritten** — argon2id-only single path with
+  `subtle.ConstantTimeCompare`. Signature changed `bool` → `error`
+  (returns `ErrInvalidToken` on mismatch). Caller sites updated
+  (`pkg/grpc/server.go`).
+- **Bootstrap fail-fast** — `bootstrapTokenHash` now validates via
+  `pkgtls.ParseV2`. Bcrypt-format hashes (`$2a$...`) and empty
+  `MESH_TOKEN_HASH` produce a structured zerolog error
+  (`event=token_hash_invalid format=unknown`) and non-zero exit.
+  Eliminates Bug 4 silent-empty path.
+- **`composeEscapeDollar` deleted** — v2 hashes have no `$` characters,
+  so Docker Compose interpolation escape is dead code. Function +
+  4 call sites + old `$$` doubling test removed.
+  `TestComposeNoEscapeForV2Hash` verifies rendered output for v2 hash
+  contains zero `$$` artifacts.
+- **RouterOS template `MESH_TOKEN_HASH` raw emission** — no
+  `quoteRouterOSValue` wrapping (charset is shell-safe by construction).
+  Other env vars still quoted.
+- **bcrypt traces removed** — `bcryptCost` const, lifecycle docstring,
+  bcrypt-related tests all cleaned. `git grep -i bcrypt pkg/tls/`
+  returns 0 matches. `git grep composeEscapeDollar` returns 0 matches.
 
 ### Removed
 
-- Dead environment variables from generated configs: `MESH_MASTERS`, `MESH_AWG_CONFIG`,
-  `MESH_CONFIG_DIR` — none were read by the node binary.
+- Dead environment variables from earlier generator passes:
+  `MESH_MASTERS`, `MESH_AWG_CONFIG`, `MESH_CONFIG_DIR` — never read by
+  the node binary.
+- `composeEscapeDollar` helper + 4 call sites + matching `$$` doubling test.
+- `bcryptCost = 12` const + bcrypt import from `pkg/tls/token.go`.
+- `bcrypt.Cost` validation from `cmd/awg-mesh-node/main.go`.
+
+### Operator Cutover Runbook (CLEAN CUTOVER — no transition window)
+
+v1.14.0 ships a wire format break. Operators MUST re-prepare every
+client + endpoint + master that holds an old `MESH_TOKEN_HASH`. The
+node binary fail-fasts on legacy bcrypt hashes — no silent acceptance.
+
+**Pre-cutover checklist:**
+1. Confirm dev stand: 6 nodes (`ru-01`, `ru-02`, `pl-01`, `us-01`,
+   `kz-inferno`, `kz-ruvdz`) reachable via gRPC.
+2. Back up `/config/mesh.token` on every node (operator's own
+   backup — `mesh-ctl` does not back this up automatically).
+3. Tag a maintenance window: 5–15 minutes per node depending on
+   gRPC latency.
+
+**Per-node cutover (idempotent):**
+1. From admin host: `mesh-ctl <role> prepare <name>` — generates new
+   v2 hash + new docker-compose / `.rsc`.
+2. Deploy: `mesh-ctl <role> deploy <name>` (or RouterOS-side
+   `/import file=...rsc`).
+3. Init: `mesh-ctl <role> init <name>` — node receives the new hash
+   via `MESH_TOKEN_HASH` env var, writes to `/config/mesh.token`.
+4. Verify: `mesh-ctl status --node <name> --verify-data-plane` —
+   gRPC auth must succeed AND data plane must respond.
+
+**Rollback path:** `mesh-ctl upgrade rollback v1.13.0` (existing
+recovery primitive). v1.13.0 binary refuses v2 hashes, so rollback
+requires re-preparing nodes with bcrypt format from v1.13.0
+`mesh-ctl`. There is NO format dual-accept — by design.
+
+**Why no transition window:** no production deploy yet (issue #181
+context); 6 dev nodes are operator-managed in a single batch; clean
+cutover removes the dual-format complexity tax permanently.
 
 ## v1.12.12 — 2026-04-21
 

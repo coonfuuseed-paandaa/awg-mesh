@@ -1267,7 +1267,7 @@ Primary healthcheck: ICMP ping to the transport peer IP. Fallback: WireGuard han
 The gRPC management port (`:9090`) requires **both** mTLS and a bearer token. A connection is rejected if either credential is absent or invalid.
 
 - **mTLS**: each node holds a unique certificate signed by the mesh CA. `mesh-ctl prepare` generates the CA on first use and issues node certificates at `init` time. Certificates are hot-reloaded on `SIGHUP` — no container restart required.
-- **Bearer token**: a random token generated at `prepare` time, hashed with bcrypt and stored at `/config/mesh.token`. The plaintext is kept only in `~/.mesh-ctl/nodes/<name>/`. Rotate independently with `mesh-ctl token rotate`.
+- **Bearer token**: a random token generated at `prepare` time, hashed with **argon2id** (m=4096 KiB, t=1, p=1; v1.14.0+) and stored at `/config/mesh.token`. v2 hash format `mesh1.<base64url>` (78 chars, charset `[A-Za-z0-9._-]`, RouterOS- and shell-safe). The plaintext is kept only in `~/.mesh-ctl/nodes/<name>/`. Rotate independently with `mesh-ctl token rotate`. Constant-time comparison via `crypto/subtle.ConstantTimeCompare`. See [docs/OPERATOR_FAQ.md](docs/OPERATOR_FAQ.md) for the wire format and v1.14.0 cutover runbook.
 
 ### AWG parameter rotation
 
