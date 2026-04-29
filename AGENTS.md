@@ -120,3 +120,46 @@ not that it works.
 
 This rule was added 2026-04-19 after v1.12.0 shipped broken because e2e
 was skipped. v1.12.0 had to be reverted.
+
+## LOCAL TOOLING — github-panda (NOT committed)
+
+Repo uses `coonfuuseed-paandaa` GitHub account, but default `gh auth` for
+multi-repo developers is often a different identity (e.g. `thebtf` for the
+maintainer). Using the wrong identity leaks account linkage via PR/issue
+comments.
+
+`tools/github-panda/` (gitignored — not in repo) wraps `gh` / `git push` /
+`curl` with the correct PAT inline:
+
+| File | Shell |
+|------|-------|
+| `tools/github-panda/github-panda.sh` | bash / WSL / git-bash |
+| `tools/github-panda/github-panda.ps1` | Windows PowerShell |
+
+The tool is self-bootstrapping: subcommands include `whoami`, `gh <args>`,
+`api <path>`, `pr <subcmd>`, `push [<branch>]`, `curl <url>`, `env`. Read
+the script header for full usage.
+
+**Why .gitignored:** the wrapper hardcodes the PAT for ergonomics. Putting it
+in git would publish the token. The directory entry `tools/github-panda/`
+is in `.gitignore` (line 52). `git status` periodically to verify drift hasn't
+re-added it.
+
+**How to install on a new machine:**
+
+1. Create directory `tools/github-panda/` in this repo (it's gitignored).
+2. Copy the latest `github-panda.sh` + `github-panda.ps1` from the previous
+   machine via rsync / scp / USB / encrypted transfer (NOT through this git
+   repo — they're not in it).
+3. Optional alias: `alias gp='bash tools/github-panda/github-panda.sh'`
+   (bash) or `function gp { & "$PWD\tools\github-panda\github-panda.ps1" @args }`
+   (PowerShell `$PROFILE`).
+4. Verify: `gp whoami` — must print `coonfuuseed-paandaa`.
+
+**Token rotation:** update both `.sh` and `.ps1` inline, then `gp whoami` to
+verify. Old token revoked on github.com/settings/tokens.
+
+**Cross-platform note:** PowerShell does not support bash-style env-prefix
+syntax (`GH_TOKEN=foo gh ...`). The wrapper handles this by setting the env
+var inside the script and removing it on exit. Use the matching wrapper for
+your shell.
