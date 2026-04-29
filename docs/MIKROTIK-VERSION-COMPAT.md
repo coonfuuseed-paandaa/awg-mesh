@@ -202,30 +202,98 @@ Operators run RouterOS in heterogeneous setups: hAP/CRS hardware, CHR on KVM/VMw
 
 ---
 
-## 5. Test matrix (sim)
+## 5. Test architecture — CHR-only, alpine proxy DEPRECATED
 
-`tests/simulation/mikrotik-chr-import.sh` MUST be parameterized to run against ≥3 CHR versions covering each tier:
+awg-mesh's MikroTik integration runs against **real RouterOS CHR via QEMU/KVM** in Docker. The earlier alpine-proxy sim (`tests/simulation/mikrotik-onboard.sh`) is DEPRECATED — emulation is dishonest, syntax + container + firewall behaviour live in actual RouterOS userspace, not a Linux container with veth pre-injected from the host.
 
-| Tier | CHR tag | Why included |
-|------|---------|--------------|
-| TIER 1 (canonical) | `7.21.4` | Latest LTS, default target |
-| TIER 1.5 (transitional) | `7.20.8` | Last 7.20 patch — verifies `remote-image=` accepted, `mounts=` still works |
-| TIER 2 (legacy) | `7.16.2` | Common deployed version pre-`remote-image` — verifies legacy dialect |
+### 5.1 Three-layer sim architecture
 
-The test script accepts `CHR_VERSION` env var; CI matrix dispatches three jobs in parallel (sequential locally if `/dev/kvm` is single-threaded). PASS criterion per version:
-- I.1 `.rsc` upload succeeds (scp).
-- I.2 `/import` exits 0.
-- I.3 No `Script Error: syntax error` in `/import` output.
-- I.4 No regression of Bug 1 ordering (Veth before Bridge).
-- I.5 Canonical params accepted (3a/3b/5).
-- V.1 `AWG_MESH_*` interfaces present after import.
-
-**Failure mode that this matrix catches** (already observed against `7.16.2` in v1.14.0-pre dev run):
 ```
-/container/mounts/add list=AWG_MESH_MIKROTIK_HOME_CONFIG src=...
-Script Error: syntax error (line 42 column 11)
+┌─ Host (WSL2 / native Linux / CI runner) — needs only KVM ─┐
+│                                                            │
+│  Docker network: awg-mesh-test (172.21.92.0/24)            │
+│  ├── master-01     (Docker Linux)  — mesh master           │
+│  ├── master-02     (Docker Linux)  — mesh master           │
+│  ├── endpoint-01   (Docker Linux)  — mesh endpoint         │
+│  └── chr-mikrotik  (Docker QEMU)   — real RouterOS CHR     │
+│       ↑                                                    │
+│       │ SSH + SCP from host                                │
+│       │ /import deploy.rsc                                 │
+│       │ /container start awg-mesh-client                   │
+│       │                                                    │
+│       └── INSIDE CHR userspace:                            │
+│           /interface/veth/add → BR_AWG_MESH                │
+│           /container/awg-mesh-client (running)             │
+│           handshake → master-01/02 over overlay            │
+│           172.21.92.34/27 → ping endpoint-01 ↔ CHR ↔ ...   │
+└────────────────────────────────────────────────────────────┘
 ```
-With version-aware generator producing `name=` instead of `list=` for the legacy tier, that line becomes `/container/mounts/add name=...` and imports cleanly.
+
+No netns injection from host — everything happens inside CHR via RouterOS native CLI. Host only needs `/dev/kvm`. Works identically on WSL2+Docker, native Linux, GitHub Actions Linux runner.
+
+### 5.2 Baseline CHR image cache
+
+Each CHR version (`7.16.2`, `7.20.8`, `7.21.4`) has a pre-baked baseline Docker image: `awg-mesh-chr-baseline:${VERSION}`. Built ONCE per dev machine / CI cache. Each baseline contains:
+
+| State | Why |
+|-------|-----|
+| Admin password set (`lintpass`) | Skip first-boot password dance every run |
+| `/system/device-mode update container=yes` | Container support enabled (cold-reboot completed) |
+| Container storage configured (`/disk add` or external mount) | Skip 30s storage init per run |
+| Registry config set (`/container/config registry-url=...`) | Allow image pull |
+| `awg-mesh-client:test` pre-pulled into CHR | Skip per-sim Docker Hub fetch |
+
+Builder script: `tests/simulation/lib/build-chr-baseline.sh CHR_VERSION=7.21.4`. Idempotent — checks `docker image inspect awg-mesh-chr-baseline:${VERSION}` before doing work.
+
+### 5.3 Per-test sim flow (`mikrotik-chr-e2e.sh`)
+
+```
+1. Pre-flight: docker, KVM, baseline image present (build if missing)
+2. Bring up Docker Linux mesh: master-01, master-02, endpoint-01 (compose)
+3. Bring up CHR from baseline:
+     docker run -d --device /dev/kvm --device /dev/net/tun \
+                  --network awg-mesh-test --name chr-mikrotik \
+                  awg-mesh-chr-baseline:${CHR_VERSION}
+4. Wait CHR SSH ready (~15s — already-warm baseline)
+5. mesh-ctl master init mst-01 ; mst-02 ; ep-01 (Linux side)
+6. mesh-ctl client deploy mikrotik-home --target-ros ${CHR_VERSION}
+     → produces clients/mikrotik-home/{mikrotik-home.rsc, INSTRUCTIONS.md, README-target-ros.md}
+7. scp clients/mikrotik-home/mikrotik-home.rsc admin@chr:
+8. ssh admin@chr '/import file-name=mikrotik-home.rsc verbose=yes'
+9. ssh admin@chr '/container/start AWG_MESH_MIKROTIK_HOME'
+10. Wait container running (~20s, includes pull from local registry)
+11. mesh-ctl client init mikrotik-home (Linux side — write tunnel pubkey)
+12. Verify (HOST):
+    - ssh admin@chr '/container/print where name=AWG_MESH_MIKROTIK_HOME' → status=running
+    - ssh admin@chr '/interface/wireguard/peers/print' → handshake non-zero
+13. Verify (DATA PLANE):
+    - ssh admin@chr '/ping count=4 172.21.92.34' (endpoint overlay) → 0% loss
+    - docker exec endpoint-01 ping -c4 172.21.92.<chr-overlay> → 0% loss
+14. Cleanup (or NO_CLEANUP=1 for inspection)
+```
+
+PASS criteria per CHR version:
+
+| Check | Layer |
+|-------|-------|
+| Generated `.rsc` accepted by `/import` (no syntax errors) | RouterOS CLI |
+| `/container/print` shows `awg-mesh-client` running | RouterOS container |
+| WireGuard handshake established (CHR ↔ master) | overlay control plane |
+| CHR pings endpoint overlay IP | overlay data plane outbound |
+| Endpoint pings CHR overlay IP | overlay data plane inbound |
+
+### 5.4 Matrix dispatcher
+
+`tests/simulation/mikrotik-version-matrix.sh` runs `mikrotik-chr-e2e.sh` for each CHR version sequentially (single `/dev/kvm` lane locally; CI parallelizes across runners). Aggregates per-version PASS/FAIL into a final matrix table.
+
+### 5.5 Migration plan
+
+| Sim | State | Replacement |
+|-----|-------|-------------|
+| `mikrotik-onboard.sh` (alpine proxy) | DEPRECATED | `mikrotik-chr-e2e.sh` |
+| `mikrotik-chr-import.sh` (just `/import`, no container) | folded into | `mikrotik-chr-e2e.sh` extends — covers import + start + verify |
+
+Removal: `mikrotik-onboard.sh` deleted in v1.16.0 once CHR matrix is stable in CI for two release cycles.
 
 ---
 
