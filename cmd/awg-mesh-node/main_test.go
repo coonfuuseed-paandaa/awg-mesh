@@ -171,10 +171,14 @@ func TestBootstrapTokenHash(t *testing.T) {
 		dir := t.TempDir()
 		// Ensure the env var is absent for this sub-test; restore after.
 		prev, wasPrev := os.LookupEnv("MESH_TOKEN_HASH")
-		os.Unsetenv("MESH_TOKEN_HASH")
+		if err := os.Unsetenv("MESH_TOKEN_HASH"); err != nil {
+			t.Fatalf("os.Unsetenv: %v", err)
+		}
 		t.Cleanup(func() {
 			if wasPrev {
-				os.Setenv("MESH_TOKEN_HASH", prev)
+				if err := os.Setenv("MESH_TOKEN_HASH", prev); err != nil {
+					t.Errorf("os.Setenv restore: %v", err)
+				}
 			}
 		})
 		if err := bootstrapTokenHash(dir, zerolog.Nop()); err != nil {
@@ -273,9 +277,10 @@ func TestClientModeLogRotation(t *testing.T) {
 	if rotator == nil {
 		t.Fatal("expected non-nil lumberjack.Logger from newClientLogRotator")
 	}
+	// rotator is non-nil after the t.Fatal guard; assertions below are safe.
 
 	wantFilename := "/config/awg-mesh-client.log"
-	if rotator.Filename != wantFilename {
+	if rotator.Filename != wantFilename { //nolint:staticcheck // SA5011: t.Fatal guards rotator above
 		t.Errorf("Filename: got %q, want %q", rotator.Filename, wantFilename)
 	}
 	if rotator.MaxSize != 10 {

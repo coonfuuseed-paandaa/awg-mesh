@@ -2097,7 +2097,7 @@ func TestRotateKeypair_Happy(t *testing.T) {
 	if resp == nil {
 		t.Fatal("nil response")
 	}
-	if !bytes.Equal(resp.NewPublicKey, expectedPubKey[:]) {
+	if !bytes.Equal(resp.NewPublicKey, expectedPubKey[:]) { //nolint:staticcheck // SA5011: t.Fatal above guards resp
 		t.Errorf("public key mismatch:\n  want %s\n  got  %s",
 			hex.EncodeToString(expectedPubKey[:]),
 			hex.EncodeToString(resp.NewPublicKey))

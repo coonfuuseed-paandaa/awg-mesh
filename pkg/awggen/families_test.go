@@ -76,7 +76,7 @@ func TestRandomFamily(t *testing.T) {
 		if selected == nil {
 			t.Fatalf("RandomFamily returned nil")
 		}
-		if _, exists := known[selected.Name]; !exists {
+		if _, exists := known[selected.Name]; !exists { //nolint:staticcheck // SA5011: t.Fatalf above guards selected
 			t.Fatalf("RandomFamily returned unknown family %q", selected.Name)
 		}
 	}

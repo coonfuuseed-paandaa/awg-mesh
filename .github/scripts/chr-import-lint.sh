@@ -53,12 +53,15 @@ for cmd in qemu-system-x86_64 nc sshpass scp ssh expect; do
 done
 
 echo "Booting CHR via QEMU (SSH forwarded to host port ${SSH_PORT})..."
+# -display none + -daemonize: -nographic is incompatible with -daemonize.
+# Serial console output is discarded (acceptable for CI lint — we drive
+# the box via SSH only). PID is captured in /tmp/chr-qemu.pid for cleanup.
 qemu-system-x86_64 \
     -drive "file=${CHR_IMAGE},format=raw,if=virtio" \
     -netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22" \
     -device virtio-net-pci,netdev=net0 \
     -m 256 \
-    -nographic \
+    -display none \
     -daemonize \
     -pidfile /tmp/chr-qemu.pid
 
