@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGenerateToken(t *testing.T) {
@@ -35,11 +36,60 @@ func TestHashAndVerifyToken(t *testing.T) {
 		t.Fatalf("HashToken returned error: %v", err)
 	}
 
-	if !VerifyToken("secret-token", hash) {
-		t.Fatalf("expected token verification to succeed")
+	if err := VerifyToken("secret-token", hash); err != nil {
+		t.Fatalf("expected token verification to succeed, got: %v", err)
 	}
-	if VerifyToken("wrong-token", hash) {
+	if err := VerifyToken("wrong-token", hash); err == nil {
 		t.Fatalf("expected token verification to fail for wrong token")
+	}
+}
+
+func TestVerifyTokenV2_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const raw = "round-trip-secret-token"
+	hash, err := HashTokenV2(raw)
+	if err != nil {
+		t.Fatalf("HashTokenV2 returned error: %v", err)
+	}
+
+	if err := VerifyToken(raw, hash); err != nil {
+		t.Fatalf("VerifyToken returned non-nil on correct token: %v", err)
+	}
+}
+
+func TestVerifyTokenV2_WrongToken(t *testing.T) {
+	t.Parallel()
+
+	hash, err := HashTokenV2("correct-token")
+	if err != nil {
+		t.Fatalf("HashTokenV2 returned error: %v", err)
+	}
+
+	err = VerifyToken("wrong-token", hash)
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken, got: %v", err)
+	}
+}
+
+func TestArgon2idVerifyTime_AMD64(t *testing.T) {
+	// Informational: record how long one argon2id verify round takes.
+	// Flag if > 30 ms — that would indicate unexpected CPU contention or
+	// misconfigured parameters in CI.
+	hash, err := HashTokenV2("timing-test-token")
+	if err != nil {
+		t.Fatalf("HashTokenV2 returned error: %v", err)
+	}
+
+	start := time.Now()
+	if err := VerifyToken("timing-test-token", hash); err != nil {
+		t.Fatalf("VerifyToken returned error: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	t.Logf("argon2id verify time: %d ms", elapsed.Milliseconds())
+	if elapsed.Milliseconds() > 30 {
+		t.Errorf("argon2id verify took %d ms (> 30 ms threshold) — check CPU contention or params", elapsed.Milliseconds())
 	}
 }
 

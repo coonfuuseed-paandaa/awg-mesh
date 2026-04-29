@@ -388,7 +388,7 @@ func makeUnaryAuthInterceptor(tokenProvider func() string, logger zerolog.Logger
 				raw := vals[0]
 				if strings.HasPrefix(raw, "Bearer ") {
 					token := strings.TrimPrefix(raw, "Bearer ")
-					if pkgtls.VerifyToken(token, tokenProvider()) {
+					if err := pkgtls.VerifyToken(token, tokenProvider()); err == nil {
 						return handler(ctx, req)
 					}
 					logEvt := logger.Warn().Str("method", info.FullMethod)

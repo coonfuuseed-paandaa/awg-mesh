@@ -2,6 +2,7 @@ package tls
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -12,7 +13,6 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -34,10 +34,11 @@ const (
 	tokenBlobLen             = 54
 )
 
-// Sentinel errors for v2 token parsing.
+// Sentinel errors for v2 token parsing and verification.
 var (
 	ErrUnknownTokenFormat = errors.New("unknown token format")
 	ErrMalformedTokenBlob = errors.New("malformed token blob")
+	ErrInvalidToken       = errors.New("invalid token")
 )
 
 // Token lifecycle (B5/B19 clarification):
@@ -46,13 +47,11 @@ var (
 //                        This is what the operator manually copies to the node
 //                        (or stores locally in <nodeDir>/token for gRPC auth).
 //
-//  2. HashToken()      — bcrypt-hashes the raw token (cost 12).
-//                        The resulting "$2a$12$…" string is stored in two places:
+//  2. HashToken()      — produces an argon2id hash (delegating to HashTokenV2).
+//                        The resulting "mesh1.<base64url>" string is stored in two places:
 //                          a. <nodeDir>/mesh.token   — via SaveTokenHash (admin-side)
 //                          b. MESH_TOKEN_HASH env var — embedded in docker-compose
-//                             (apply composeEscapeDollar before writing — `$` in
-//                              bcrypt hashes would be interpolated by Docker Compose
-//                              and silently truncated to empty strings).
+//                             (safe charset [A-Za-z0-9_-] — no `$` to escape).
 //
 //  3. On node first boot — the node reads MESH_TOKEN_HASH, writes it to
 //                          /config/mesh.token (inside the container), then ignores
@@ -62,8 +61,8 @@ var (
 //                        incoming RPC token via VerifyToken(). The raw token from
 //                        <nodeDir>/token is passed by mesh-ctl in RPC calls.
 //
-// MESH_TOKEN_HASH is a bcrypt HASH, not the raw token. Writing the raw token to
-// MESH_TOKEN_HASH would cause every gRPC auth to fail with bcrypt cost mismatch.
+// MESH_TOKEN_HASH is an argon2id HASH, not the raw token. Writing the raw token to
+// MESH_TOKEN_HASH would cause every gRPC auth to fail.
 
 // GenerateToken creates a cryptographically random 64-character hex token
 // (32 random bytes, hex-encoded).
@@ -75,21 +74,28 @@ func GenerateToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// HashToken returns a bcrypt hash of token for secure storage.
+// HashToken hashes token for secure storage. Delegates to HashTokenV2 (argon2id).
 func HashToken(token string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(token), bcryptCost)
+	return HashTokenV2(token)
+}
+
+// VerifyToken verifies rawToken against a v2 hash produced by HashTokenV2.
+// Returns nil on a correct match, ErrInvalidToken on mismatch, or a sentinel
+// error (ErrUnknownTokenFormat / ErrMalformedTokenBlob) on malformed input.
+// The comparison is constant-time to prevent timing side-channels.
+func VerifyToken(rawToken, hash string) error {
+	_, _, mCostKB, tCost, parallelism, salt, key, err := ParseV2(hash)
 	if err != nil {
-		return "", fmt.Errorf("hash token: %w", err)
+		return err
 	}
-	return string(hash), nil
+	computed := argon2.IDKey([]byte(rawToken), salt, uint32(tCost), uint32(mCostKB), parallelism, uint32(len(key)))
+	if subtle.ConstantTimeCompare(computed, key) != 1 {
+		return ErrInvalidToken
+	}
+	return nil
 }
 
-// VerifyToken reports whether token matches the stored bcrypt hash.
-func VerifyToken(token string, hash string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(token)) == nil
-}
-
-// SaveTokenHash writes the bcrypt hash to <dir>/mesh.token with 0600 permissions.
+// SaveTokenHash writes the token hash to <dir>/mesh.token with 0600 permissions.
 // Uses atomic write (temp file + rename) to prevent partial reads.
 func SaveTokenHash(dir string, hash string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -109,7 +115,7 @@ func SaveTokenHash(dir string, hash string) error {
 	return nil
 }
 
-// LoadTokenHash reads the bcrypt hash from <dir>/mesh.token.
+// LoadTokenHash reads the token hash from <dir>/mesh.token.
 func LoadTokenHash(dir string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(dir, tokenFile))
 	if err != nil {
