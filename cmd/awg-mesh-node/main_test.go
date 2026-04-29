@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/rs/zerolog"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestEnvFallbackString(t *testing.T) {
@@ -100,14 +100,14 @@ func TestEnvFallbackInt(t *testing.T) {
 }
 
 func TestBootstrapTokenHash(t *testing.T) {
-	validHash, err := bcrypt.GenerateFromPassword([]byte("test-token"), bcrypt.MinCost)
+	validHash, err := pkgtls.HashTokenV2("test-token")
 	if err != nil {
-		t.Fatalf("generate test hash: %v", err)
+		t.Fatalf("generate test v2 hash: %v", err)
 	}
 
 	t.Run("writes hash when token file missing", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("MESH_TOKEN_HASH", string(validHash))
+		t.Setenv("MESH_TOKEN_HASH", validHash)
 
 		if err := bootstrapTokenHash(dir, zerolog.Nop()); err != nil {
 			t.Fatalf("bootstrapTokenHash returned error: %v", err)
@@ -117,7 +117,7 @@ func TestBootstrapTokenHash(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read token file: %v", err)
 		}
-		if string(data) != string(validHash) {
+		if string(data) != validHash {
 			t.Fatalf("token file contents mismatch:\n got  %q\n want %q", data, validHash)
 		}
 	})
@@ -129,7 +129,7 @@ func TestBootstrapTokenHash(t *testing.T) {
 		if err := os.WriteFile(tokenPath, existing, 0o600); err != nil {
 			t.Fatalf("seed token file: %v", err)
 		}
-		t.Setenv("MESH_TOKEN_HASH", string(validHash))
+		t.Setenv("MESH_TOKEN_HASH", validHash)
 
 		if err := bootstrapTokenHash(dir, zerolog.Nop()); err != nil {
 			t.Fatalf("bootstrapTokenHash returned error: %v", err)
@@ -146,6 +146,14 @@ func TestBootstrapTokenHash(t *testing.T) {
 
 	t.Run("no env var is a no-op", func(t *testing.T) {
 		dir := t.TempDir()
+		// Ensure the env var is absent for this sub-test; restore after.
+		prev, wasPrev := os.LookupEnv("MESH_TOKEN_HASH")
+		os.Unsetenv("MESH_TOKEN_HASH")
+		t.Cleanup(func() {
+			if wasPrev {
+				os.Setenv("MESH_TOKEN_HASH", prev)
+			}
+		})
 		if err := bootstrapTokenHash(dir, zerolog.Nop()); err != nil {
 			t.Fatalf("bootstrapTokenHash returned error: %v", err)
 		}
@@ -154,9 +162,9 @@ func TestBootstrapTokenHash(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid bcrypt hash causes error", func(t *testing.T) {
+	t.Run("invalid hash causes error", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("MESH_TOKEN_HASH", "not-a-bcrypt-hash")
+		t.Setenv("MESH_TOKEN_HASH", "not-a-valid-hash")
 		err := bootstrapTokenHash(dir, zerolog.Nop())
 		if err == nil {
 			t.Fatal("expected error for invalid hash, got nil")
@@ -172,9 +180,63 @@ func TestBootstrapTokenHash(t *testing.T) {
 	})
 
 	t.Run("empty config dir is an error", func(t *testing.T) {
-		t.Setenv("MESH_TOKEN_HASH", string(validHash))
+		t.Setenv("MESH_TOKEN_HASH", validHash)
 		if err := bootstrapTokenHash("", zerolog.Nop()); err == nil {
 			t.Fatal("expected error for empty config dir")
 		}
 	})
+}
+
+// TestBootstrapTokenHash_V2 verifies that a valid v2 argon2id hash is accepted
+// and written to the token file without error.
+func TestBootstrapTokenHash_V2(t *testing.T) {
+	token, err := pkgtls.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	hash, err := pkgtls.HashTokenV2(token)
+	if err != nil {
+		t.Fatalf("hash token v2: %v", err)
+	}
+
+	dir := t.TempDir()
+	t.Setenv("MESH_TOKEN_HASH", hash)
+
+	if err := bootstrapTokenHash(dir, zerolog.Nop()); err != nil {
+		t.Fatalf("expected no error for valid v2 hash, got: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "mesh.token"))
+	if err != nil {
+		t.Fatalf("read token file: %v", err)
+	}
+	if string(data) != hash {
+		t.Fatalf("token file contents mismatch: got %q, want %q", data, hash)
+	}
+}
+
+// TestBootstrapTokenHash_RejectBcryptLegacy verifies that a bcrypt-format hash
+// ($2a$...) is rejected because it lacks the "mesh1." v2 prefix.
+func TestBootstrapTokenHash_RejectBcryptLegacy(t *testing.T) {
+	// A syntactically valid-looking bcrypt hash that does NOT start with "mesh1."
+	bcryptStyleHash := "$2a$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+	dir := t.TempDir()
+	t.Setenv("MESH_TOKEN_HASH", bcryptStyleHash)
+
+	err := bootstrapTokenHash(dir, zerolog.Nop())
+	if err == nil {
+		t.Fatal("expected error for bcrypt-format hash, got nil")
+	}
+}
+
+// TestBootstrapTokenHash_RejectEmpty verifies that MESH_TOKEN_HASH set to an
+// empty (or whitespace-only) value is rejected with an error.
+func TestBootstrapTokenHash_RejectEmpty(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MESH_TOKEN_HASH", "   ") // set but whitespace-only → trimmed to ""
+
+	err := bootstrapTokenHash(dir, zerolog.Nop())
+	if err == nil {
+		t.Fatal("expected error for empty MESH_TOKEN_HASH, got nil")
+	}
 }
