@@ -214,6 +214,85 @@ func TestValidateTopologyDSCPRange(t *testing.T) {
 	}
 }
 
+func TestStorageRootValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		storageRoot string
+		wantErr     bool
+	}{
+		// Valid values
+		{name: "default docker", storageRoot: "docker", wantErr: false},
+		{name: "usb disk path", storageRoot: "disk1/sub-path", wantErr: false},
+		{name: "alphanumeric with underscores", storageRoot: "my_storage_01", wantErr: false},
+		{name: "hyphen and slash", storageRoot: "flash-disk/awg", wantErr: false},
+		// Invalid: path traversal
+		{name: "path traversal", storageRoot: "../etc", wantErr: true},
+		{name: "embedded traversal", storageRoot: "disk/../etc", wantErr: true},
+		// Invalid: shell metacharacters
+		{name: "dollar sign", storageRoot: "my$disk", wantErr: true},
+		{name: "semicolon", storageRoot: "disk;rm", wantErr: true},
+		{name: "ampersand", storageRoot: "disk&bg", wantErr: true},
+		{name: "backtick", storageRoot: "disk`cmd`", wantErr: true},
+		{name: "space", storageRoot: "my disk", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateStorageRoot(tt.storageRoot)
+			if tt.wantErr && err == nil {
+				t.Fatalf("ValidateStorageRoot(%q): expected error, got nil", tt.storageRoot)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("ValidateStorageRoot(%q): expected nil, got %v", tt.storageRoot, err)
+			}
+		})
+	}
+}
+
+func TestStorageRootValidationViaTopology(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		storageRoot string
+		wantErr     bool
+	}{
+		{name: "valid custom root", storageRoot: "disk1", wantErr: false},
+		{name: "path traversal rejected", storageRoot: "../etc", wantErr: true},
+		{name: "metachar rejected", storageRoot: "my$disk", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			top := validTopologyForValidation()
+			top.Clients[0].Mikrotik = &MikrotikConfig{StorageRoot: tt.storageRoot}
+
+			errs := ValidateTopology(top)
+			hasStorageErr := false
+			for _, e := range errs {
+				if strings.Contains(e.Field, "storage_root") {
+					hasStorageErr = true
+					break
+				}
+			}
+
+			if tt.wantErr && !hasStorageErr {
+				t.Fatalf("expected storage_root error for %q, got %#v", tt.storageRoot, errs)
+			}
+			if !tt.wantErr && hasStorageErr {
+				t.Fatalf("unexpected storage_root error for %q, got %#v", tt.storageRoot, errs)
+			}
+		})
+	}
+}
+
 func validTopologyForValidation() *Topology {
 	return &Topology{
 		Overlay: OverlayConfig{

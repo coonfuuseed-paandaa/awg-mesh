@@ -4,7 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
+	"strings"
 )
+
+var storageRootPattern = regexp.MustCompile(`^[a-zA-Z0-9_/-]+$`)
 
 // ErrInvalidDSCP is returned when a DSCP value falls outside the allowed range 1..63.
 var ErrInvalidDSCP = errors.New("dscp out of range 1..63")
@@ -104,6 +108,7 @@ func ValidateTopology(t *Topology) []ValidationError {
 	validateUniqueOverlayIPs(t, addError)
 	validateReferences(t, addError)
 	validateClientDSCPPolicies(t, addError)
+	validateClientStorageRoots(t, addError)
 
 	return errors
 }
@@ -195,6 +200,33 @@ func isRangeWithinOverlay(overlay netip.Prefix, candidate netip.Prefix) bool {
 	first := maskedCandidate.Addr()
 	last := prefixLastAddr(maskedCandidate)
 	return overlay.Contains(first) && overlay.Contains(last)
+}
+
+// ValidateStorageRoot checks that a storage_root value is safe to use in generated paths.
+// Returns a non-nil error when the value is invalid.
+func ValidateStorageRoot(s string) error {
+	if strings.Contains(s, "..") {
+		return fmt.Errorf("storage_root %q must not contain \"..\" (path traversal)", s)
+	}
+	if !storageRootPattern.MatchString(s) {
+		return fmt.Errorf("storage_root %q contains invalid characters: only alphanumeric, underscore, slash, and hyphen are allowed", s)
+	}
+	return nil
+}
+
+func validateClientStorageRoots(t *Topology, addError func(field string, message string, severity string)) {
+	for i, client := range t.Clients {
+		if client.Mikrotik == nil || client.Mikrotik.StorageRoot == "" {
+			continue
+		}
+		if err := ValidateStorageRoot(client.Mikrotik.StorageRoot); err != nil {
+			addError(
+				fmt.Sprintf("clients[%d].mikrotik.storage_root", i),
+				fmt.Sprintf("client %q: %v", client.Name, err),
+				"error",
+			)
+		}
+	}
 }
 
 func validateClientDSCPPolicies(t *Topology, addError func(field string, message string, severity string)) {

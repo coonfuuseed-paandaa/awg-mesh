@@ -214,6 +214,7 @@ func newClientPrepareCommand() *cobra.Command {
 					TokenHash:     hash,
 					DNS:           dns,
 					GRPCPort:      grpcPort,
+					StorageRoot:   clientStorageRoot(client),
 				}
 
 				rsc, err := mikrotik.GenerateDeployRSC(ds)
@@ -282,6 +283,15 @@ func resolveClientTarget(topo *topology.Topology, client *topology.ClientNode) (
 
 func resolveClientGRPCAddr(_ *topology.Topology, client *topology.ClientNode) string {
 	return client.GRPCAddr()
+}
+
+// clientStorageRoot returns the topology-configured StorageRoot for a MikroTik client,
+// or "" when unset (letting the generator apply the "docker" default).
+func clientStorageRoot(client *topology.ClientNode) string {
+	if client.Mikrotik != nil && client.Mikrotik.StorageRoot != "" {
+		return client.Mikrotik.StorageRoot
+	}
+	return ""
 }
 
 var masterClientTunnelIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,12}$`)

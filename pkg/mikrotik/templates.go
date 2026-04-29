@@ -84,6 +84,7 @@ type DeployScript struct {
 	TokenHash     string   // bcrypt hash of bearer token
 	DNS           []string // DNS servers (default: ["1.1.1.1", "8.8.8.8"])
 	GRPCPort      int      // gRPC management port for dstnat (default: 9090)
+	StorageRoot   string   // container storage root on MikroTik (default: "docker" when empty)
 }
 
 // GenerateDeployRSC generates a full .rsc script importable via /import.
@@ -94,13 +95,17 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 
 	envVars := buildDeployEnvVars(ds)
 	mountName := DeriveMountName(ds.ContainerName)
-	mountSrc := "/docker/etc/awg-mesh-client-" + strings.ToLower(ds.TopologyName) + "-config"
+	storageRoot := ds.StorageRoot
+	if storageRoot == "" {
+		storageRoot = "docker"
+	}
+	mountSrc := "/" + storageRoot + "/etc/awg-mesh-client-" + strings.ToLower(ds.TopologyName) + "-config"
 
 	containerCfg := ContainerConfig{
 		Name:      ds.ContainerName,
 		Image:     ds.Image,
 		Interface: ds.Veth,
-		RootDir:   "/docker/awg-mesh-client-" + strings.ToLower(ds.TopologyName),
+		RootDir:   "/" + storageRoot + "/awg-mesh-client-" + strings.ToLower(ds.TopologyName),
 		MountName: mountName,
 		MountSrc:  mountSrc,
 		DNS:       ds.DNS,

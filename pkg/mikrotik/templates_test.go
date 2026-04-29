@@ -102,6 +102,61 @@ func TestGenerateDeployRSC(t *testing.T) {
 	}
 }
 
+func TestGenerateDeployRSCStorageRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default storage root produces docker paths", func(t *testing.T) {
+		t.Parallel()
+		script, err := GenerateDeployRSC(DeployScript{
+			TopologyName:  "mikrotik-home",
+			ContainerName: "AWG_MESH_HOME",
+			Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+			Veth:          "AWG_MESH_HOME",
+			VethGateway:   "100.127.0.1",
+			OverlayIP:     "10.10.0.10",
+			OverlayNet:    "10.10.0.0/16",
+			TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
+			// StorageRoot intentionally unset — must default to "docker"
+		})
+		if err != nil {
+			t.Fatalf("GenerateDeployRSC returned error: %v", err)
+		}
+		if !strings.Contains(script, "src=/docker/etc/awg-mesh-client-mikrotik-home-config") {
+			t.Errorf("expected default /docker/etc/... path, got:\n%s", script)
+		}
+		if !strings.Contains(script, "root-dir=/docker/awg-mesh-client-mikrotik-home") {
+			t.Errorf("expected default /docker/awg-mesh-... root-dir, got:\n%s", script)
+		}
+	})
+
+	t.Run("custom storage root overrides docker paths", func(t *testing.T) {
+		t.Parallel()
+		script, err := GenerateDeployRSC(DeployScript{
+			TopologyName:  "mikrotik-home",
+			ContainerName: "AWG_MESH_HOME",
+			Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+			Veth:          "AWG_MESH_HOME",
+			VethGateway:   "100.127.0.1",
+			OverlayIP:     "10.10.0.10",
+			OverlayNet:    "10.10.0.0/16",
+			TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
+			StorageRoot:   "disk1",
+		})
+		if err != nil {
+			t.Fatalf("GenerateDeployRSC returned error: %v", err)
+		}
+		if !strings.Contains(script, "src=/disk1/etc/awg-mesh-client-mikrotik-home-config") {
+			t.Errorf("expected /disk1/etc/... path, got:\n%s", script)
+		}
+		if !strings.Contains(script, "root-dir=/disk1/awg-mesh-client-mikrotik-home") {
+			t.Errorf("expected /disk1/awg-mesh-... root-dir, got:\n%s", script)
+		}
+		if strings.Contains(script, "/docker/") {
+			t.Errorf("script must not contain /docker/ when storage_root=disk1, got:\n%s", script)
+		}
+	})
+}
+
 func TestGenerateDeployRSCErrors(t *testing.T) {
 	t.Parallel()
 
