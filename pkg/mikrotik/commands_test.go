@@ -32,7 +32,7 @@ func TestGenerateContainerCommands(t *testing.T) {
 	joined := strings.Join(commands, "\n")
 
 	mustContain := []string{
-		"/container/mounts/add name=AWG_MESH_HOME_CONFIG",
+		"/container/mounts/add list=AWG_MESH_HOME_CONFIG",
 		"src=/docker/etc/awg-mesh-client-home-config",
 		"dst=/config",
 		"list=AWG_MESH_HOME_ENVS",
@@ -40,7 +40,8 @@ func TestGenerateContainerCommands(t *testing.T) {
 		"key=MESH_NAME",
 		"/container/add interface=AWG_MESH_HOME",
 		"root-dir=/docker/awg-mesh-client-home",
-		"mounts=AWG_MESH_HOME_CONFIG",
+		"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		"mountlists=AWG_MESH_HOME_CONFIG",
 		"dns=1.1.1.1,8.8.8.8",
 		"logging=yes",
 		"start-on-boot=yes",
@@ -116,22 +117,59 @@ func TestGenerateFirewallCommands(t *testing.T) {
 	t.Parallel()
 
 	cmds := GenerateFirewallCommands("BR_AWG_MESH")
-	if len(cmds) != 2 {
-		t.Fatalf("expected 2 firewall commands, got %d", len(cmds))
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 firewall script block, got %d", len(cmds))
 	}
 
+	// The generated block is a RouterOS scripting if/else construct anchored on
+	// action=fasttrack-connection, which is universal across standard installs.
 	mustContain := []string{
+		":local fastTrackId [/ip/firewall/filter find where action=fasttrack-connection chain=forward]",
+		":if ([:len $fastTrackId] > 0) do={",
 		"connection-state=established,related",
 		"in-interface=BR_AWG_MESH",
-		`place-before=`,
-		`awg-mesh: established return traffic`,
-		`awg-mesh: container outbound`,
+		"place-before=$fastTrackId",
+		`"awg-mesh: established return traffic"`,
+		`"awg-mesh: container outbound"`,
 	}
 	joined := strings.Join(cmds, "\n")
 	for _, check := range mustContain {
 		if !strings.Contains(joined, check) {
-			t.Errorf("expected firewall commands to contain %q, got:\n%s", check, joined)
+			t.Errorf("expected firewall script to contain %q, got:\n%s", check, joined)
 		}
+	}
+}
+
+func TestGenerateFirewallCommandsFallback(t *testing.T) {
+	t.Parallel()
+
+	// GenerateFirewallCommands always emits a RouterOS if/else block; the else
+	// branch handles stripped-install routers where action=fasttrack-connection
+	// does not exist. Both branches are always present in the generated output;
+	// RouterOS evaluates which path to take at /import time.
+	cmds := GenerateFirewallCommands("BR_AWG_MESH")
+	joined := strings.Join(cmds, "\n")
+
+	// Else branch: warning comment + no place-before= on the fallback rules.
+	if !strings.Contains(joined, "# WARNING: no fasttrack-connection rule found, appended to chain end") {
+		t.Errorf("firewall script missing fallback warning comment, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "} else={") {
+		t.Errorf("firewall script missing else branch, got:\n%s", joined)
+	}
+
+	// The else branch must include the rules WITHOUT place-before=.
+	// Verify the else block contains the firewall adds sans place-before.
+	elseIdx := strings.Index(joined, "} else={")
+	if elseIdx < 0 {
+		t.Fatalf("else block not found in:\n%s", joined)
+	}
+	elseBlock := joined[elseIdx:]
+	if strings.Contains(elseBlock, "place-before=") {
+		t.Errorf("else branch must NOT contain place-before=, got:\n%s", elseBlock)
+	}
+	if !strings.Contains(elseBlock, "action=accept connection-state=established,related") {
+		t.Errorf("else branch must contain established rule, got:\n%s", elseBlock)
 	}
 }
 

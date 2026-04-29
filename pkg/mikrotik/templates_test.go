@@ -45,7 +45,7 @@ func TestGenerateDeployRSC(t *testing.T) {
 		"/ip/route add dst-address=10.10.0.0/16",
 		"awg-mesh: overlay network",
 		// Mount
-		"/container/mounts/add name=AWG_MESH_HOME_CONFIG",
+		"/container/mounts/add list=AWG_MESH_HOME_CONFIG",
 		"src=/docker/etc/awg-mesh-client-mikrotik-home-config",
 		"dst=/config",
 		// Container env vars (only essential ones)
@@ -56,7 +56,7 @@ func TestGenerateDeployRSC(t *testing.T) {
 		// Container add with production settings
 		"/container/add interface=AWG_MESH_HOME",
 		"root-dir=/docker/awg-mesh-client-mikrotik-home",
-		"mounts=AWG_MESH_HOME_CONFIG",
+		"mountlists=AWG_MESH_HOME_CONFIG",
 		"dns=1.1.1.1,8.8.8.8",
 		"logging=yes",
 		"start-on-boot=yes",
