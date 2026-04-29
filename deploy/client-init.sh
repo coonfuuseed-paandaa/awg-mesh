@@ -78,45 +78,74 @@ else
 fi
 
 ###############################################################################
-# 4. Write rt_tables from /config/client-state.yml (optional — no yq needed)
+# 4. Write rt_tables from /config/client-state.yml routing_policies section
 ###############################################################################
-# Expected YAML structure (lines of interest):
-#   rt_tables:
-#     - id: 100
-#       name: awg_dscp_af11
-#     - id: 101
-#       name: awg_dscp_af21
+# saveClientState (pkg/node/client_state.go) persists the schema below:
 #
-# awk extracts id/name pairs and writes them as "id name" lines.
+#   routing_policies:
+#     - name: af11
+#       dscp: 10
+#       targets: [...]
+#     - name: af21
+#       dscp: 18
+#       targets: [...]
+#
+# The Go writer pkg/routing/dscp.writeRtTables produces lines of the form
+# "<id> awg-dscp-<DSCP>" where id = 100 + DSCP. We mirror that exact convention
+# here so a fresh container can resolve `ip route show table awg-dscp-N`
+# *before* awg-mesh-node has had a chance to invoke the writer itself; if the
+# Go binary later runs writeRtTables it overwrites this file with identical
+# content, so the two paths converge.
+#
+# Atomic write via temp file + rename — without it a partial read could see a
+# half-written rt_tables.d/awg-mesh.conf and break iproute2 lookups.
+#
+# No-op when:
+#   - client-state.yml is missing (cold container, init not yet run)
+#   - the routing_policies section is absent or empty
 ###############################################################################
 
 CLIENT_STATE="/config/client-state.yml"
 
 if [ -f "${CLIENT_STATE}" ]; then
     RT_TABLES_FILE="/etc/iproute2/rt_tables.d/awg-mesh.conf"
+    RT_TABLES_TMP="${RT_TABLES_FILE}.tmp.$$"
     mkdir -p /etc/iproute2/rt_tables.d
 
+    # Extract `dscp:` integer values inside the `routing_policies:` list.
+    # Convention: id = 100 + dscp ; name = "awg-dscp-<dscp>" — matches the Go
+    # writer in pkg/routing/dscp.go (writeRtTables).
     awk '
-        /rt_tables:/ { in_section = 1; next }
-        in_section && /^[^ ]/ && !/^-/ && !/^  / { in_section = 0 }
-        in_section && /id:/ {
-            sub(/.*id:[[:space:]]*/, "")
-            sub(/[[:space:]]*$/, "")
-            table_id = $0
-        }
-        in_section && /name:/ {
-            sub(/.*name:[[:space:]]*/, "")
-            sub(/[[:space:]]*$/, "")
-            table_name = $0
-            if (table_id != "" && table_name != "") {
-                print table_id "\t" table_name
-                table_id = ""
-                table_name = ""
+        BEGIN { in_section = 0 }
+        # Section header
+        /^routing_policies:[[:space:]]*$/ { in_section = 1; next }
+        # End of section: any non-indented, non-blank, non-list-item line
+        in_section && /^[^[:space:]-]/ { in_section = 0 }
+        in_section && /dscp:[[:space:]]*[0-9]+/ {
+            line = $0
+            sub(/.*dscp:[[:space:]]*/, "", line)
+            sub(/[^0-9].*$/, "", line)
+            if (line ~ /^[0-9]+$/) {
+                dscp = line + 0
+                if (dscp >= 1 && dscp <= 63) {
+                    printf "%d awg-dscp-%d\n", 100 + dscp, dscp
+                }
             }
         }
-    ' "${CLIENT_STATE}" > "${RT_TABLES_FILE}"
+    ' "${CLIENT_STATE}" > "${RT_TABLES_TMP}"
 
-    echo "client-init: wrote ${RT_TABLES_FILE}"
+    # Only publish when at least one rt_table line was generated. An empty
+    # rt_tables.d/awg-mesh.conf is benign for iproute2 but signals to
+    # operators that something went wrong; refusing to overwrite an existing
+    # populated file with empty content avoids that confusion when the YAML
+    # is missing routing_policies (e.g. early bootstrap state).
+    if [ -s "${RT_TABLES_TMP}" ]; then
+        mv "${RT_TABLES_TMP}" "${RT_TABLES_FILE}"
+        echo "client-init: wrote ${RT_TABLES_FILE} ($(wc -l < "${RT_TABLES_FILE}") tables)"
+    else
+        rm -f "${RT_TABLES_TMP}"
+        echo "client-init: client-state.yml has no routing_policies — skipping ${RT_TABLES_FILE}"
+    fi
 fi
 
 ###############################################################################
