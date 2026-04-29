@@ -70,3 +70,5 @@ func (c *ClientRunner) SetBalancerIP(_, _ string) {}
 func (c *ClientRunner) startDNSServer(_ context.Context) {}
 
 func (c *ClientRunner) SaveClientState() error { return nil }
+
+func (c *ClientRunner) setupClientFirewallRules() {}

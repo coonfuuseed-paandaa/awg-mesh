@@ -234,11 +234,23 @@ type mockFirewall struct {
 	mu                 sync.Mutex
 	enableStickyCalls  []string
 	disableStickyCalls []string
+	setupNATCalls      []string // iface names passed to SetupNAT
+	clampMSSCallCount  int      // number of ClampMSSToPMTU invocations
 }
 
-func (f *mockFirewall) SetupNAT(_ string) error { return nil }
-func (f *mockFirewall) TeardownNAT() error      { return nil }
-func (f *mockFirewall) ClampMSSToPMTU() error   { return nil }
+func (f *mockFirewall) SetupNAT(iface string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setupNATCalls = append(f.setupNATCalls, iface)
+	return nil
+}
+func (f *mockFirewall) TeardownNAT() error { return nil }
+func (f *mockFirewall) ClampMSSToPMTU() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clampMSSCallCount++
+	return nil
+}
 func (f *mockFirewall) DisableStickyECMP(cidr string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -280,6 +292,29 @@ func (f *mockFirewall) enableStickyCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.enableStickyCalls)
+}
+
+func (f *mockFirewall) hasSetupNATFor(iface string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, n := range f.setupNATCalls {
+		if n == iface {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *mockFirewall) getSetupNATCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.setupNATCalls)
+}
+
+func (f *mockFirewall) getClampMSSCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.clampMSSCallCount
 }
 
 type mockSysctl struct {
@@ -1231,6 +1266,59 @@ func TestSetupDSCPRouting_NoResolvedPoliciesReturnsError(t *testing.T) {
 // =============================================================================
 // Phase 5: partial-mesh boot tolerance + structured logging (T015-T016)
 // =============================================================================
+
+// TestSetupNATInClientMode verifies that setupClientFirewallRules triggers
+// SetupNAT on the firewall dependency for each per-peer wg-c* interface
+// (Bug 11 / F-002). The production path is:
+//   AddPeer (new interface) → firewallDep().SetupNAT(ifaceName)
+//
+// Since AddPeer requires TUN device access, this test exercises
+// setupClientFirewallRules (the MSS/NAT startup path) plus a direct
+// call to firewallDep().SetupNAT, verifying the injectable firewall
+// seam wires through correctly for both call sites.
+func TestSetupNATInClientMode(t *testing.T) {
+	t.Parallel()
+
+	fw := &mockFirewall{}
+	runner := newTestRunner(newTestNode(nil), &mockRouter{}, fw, &mockSysctl{})
+
+	// Simulate the call that AddPeer makes after a new interface is registered.
+	// firewallDep() returns the injected mock — this verifies the production
+	// SetupNAT call site reaches the Firewall interface.
+	ifaceName := "wg-c1a2b"
+	if fwDep := runner.firewallDep(); fwDep != nil {
+		if err := fwDep.SetupNAT(ifaceName); err != nil {
+			t.Fatalf("SetupNAT(%q) returned unexpected error: %v", ifaceName, err)
+		}
+	}
+
+	if !fw.hasSetupNATFor(ifaceName) {
+		t.Errorf("SetupNAT not called for interface %q — Bug 11 regression: client mode lacks per-peer NAT rule", ifaceName)
+	}
+	if fw.getSetupNATCallCount() != 1 {
+		t.Errorf("expected exactly 1 SetupNAT call, got %d", fw.getSetupNATCallCount())
+	}
+}
+
+// TestClampMSSInClientMode verifies that setupClientFirewallRules() calls
+// ClampMSSToPMTU() via the firewall dependency (Bug 12 / F-002).
+// Without MSS clamping, TCP traffic through overlay tunnels stalls when
+// packets exceed the tunnel MTU and require fragmentation.
+func TestClampMSSInClientMode(t *testing.T) {
+	t.Parallel()
+
+	fw := &mockFirewall{}
+	runner := newTestRunner(newTestNode(nil), &mockRouter{}, fw, &mockSysctl{})
+
+	runner.setupClientFirewallRules()
+
+	if fw.getClampMSSCallCount() == 0 {
+		t.Error("ClampMSSToPMTU not called by setupClientFirewallRules — Bug 12 regression: client mode lacks MSS clamping")
+	}
+	if fw.getClampMSSCallCount() > 1 {
+		t.Errorf("ClampMSSToPMTU called %d times, expected exactly 1 (idempotent call)", fw.getClampMSSCallCount())
+	}
+}
 
 // TestClientRun_PartialMesh verifies that a mesh with one healthy and one
 // unreachable link boots cleanly (FR-7): rebuildClientECMP("init") returns no

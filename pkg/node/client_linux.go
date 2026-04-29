@@ -195,6 +195,21 @@ func (c *ClientRunner) clientIfaceNameConflicts(name string) bool {
 	return false
 }
 
+// setupClientFirewallRules applies client-mode nftables rules on startup.
+// Currently installs MSS clamping so TCP traffic through overlay tunnels does
+// not stall on fragmented packets. Idempotent: safe to call multiple times.
+// Non-fatal: logs warn on error and continues (nftables may be unavailable).
+func (c *ClientRunner) setupClientFirewallRules() {
+	fw := c.firewallDep()
+	if fw == nil {
+		c.node.logger.Warn().Msg("nftables unavailable — MSS clamping not applied in client mode")
+		return
+	}
+	if err := fw.ClampMSSToPMTU(); err != nil {
+		c.node.logger.Warn().Err(err).Msg("nftables: failed to clamp MSS to PMTU in client mode")
+	}
+}
+
 // routerDep returns the configured router or the production netlink router.
 func (c *ClientRunner) routerDep() routing.Router {
 	if c.platformState.router != nil {
@@ -337,6 +352,15 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	c.platformState.links = nextLinks
 	c.platformState.byKey[pubkeyHex] = newLink
 	c.platformState.mu.Unlock()
+
+	// Apply per-interface MASQUERADE rule so return packets reach the client.
+	// Non-fatal: log warn and continue — overlay routing still works; only NAT
+	// for return traffic through this interface is affected.
+	if fw := c.firewallDep(); fw != nil {
+		if err := fw.SetupNAT(ifaceName); err != nil {
+			c.node.logger.Warn().Err(err).Str("interface", ifaceName).Msg("nftables: SetupNAT failed (non-fatal)")
+		}
+	}
 
 	peerLabel := pubkeyHex
 	if len(peerLabel) > 8 {
