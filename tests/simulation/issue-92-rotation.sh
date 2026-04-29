@@ -1027,6 +1027,14 @@ fi
 # R7.2: Endpoint-a pings endpoint-b overlay IP via kernel policy routing.
 # The route goes through one of the per-master tunnels (wg-mst-ru-01 or
 # wg-mst-ru-02) — kernel selects based on policy routing table.
+#
+# Same handshake-warmup pattern as R10: post-rotation handshakes between
+# endpoint-a and the masters may be stale until the next persistent_keepalive
+# (25s). Production behaviour is correct (keepalive refreshes); sim races the
+# timer with -W 2 timeout. Pre-warm via best-effort -W 5 attempts.
+docker exec "${CTR_ENDPOINT_ASIA_01}" ping -c 1 -W 5 "${ENDPOINT_ASIA_02_OVERLAY}" > /dev/null 2>&1 || true
+docker exec "${CTR_ENDPOINT_ASIA_01}" ping -c 1 -W 5 "${ENDPOINT_ASIA_02_OVERLAY}" > /dev/null 2>&1 || true
+
 PING_R72_RC=0
 docker exec "${CTR_ENDPOINT_ASIA_01}" \
     ping -c 5 -W 2 "${ENDPOINT_ASIA_02_OVERLAY}" > /dev/null 2>&1 \
