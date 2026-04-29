@@ -434,8 +434,9 @@ func TestEndpointRemoveOverlayRoutes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEndpointRebuildAllOverlayRoutes(t *testing.T) {
-	t.Parallel()
-
+	// NOT parallel: mutates package-level seam overlayRouterFn. Running with
+	// t.Parallel() races against TestEndpointReconcilePeerKey, which reads
+	// the same global via createInterface → rebuildAllOverlayRoutes.
 	topo := &topology.Topology{
 		Masters: []topology.MasterNode{
 			{Name: "master-a", Endpoints: []string{"endpoint-a", "endpoint-b"}},
