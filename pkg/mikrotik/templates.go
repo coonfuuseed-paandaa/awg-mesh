@@ -20,13 +20,13 @@ const deployScriptTemplate = `# awg-mesh RouterOS deployment script
 # from the admin workstation. The init RPC reads the node's public key and
 # registers it with all masters via gRPC — no manual key exchange needed.
 
-# === Bridge (idempotent — shared across awg-mesh containers) ===
-{{- range .BridgeCommands }}
+# === Veth ===
+{{- range .VethCommands }}
 {{ . }}
 {{- end }}
 
-# === Veth ===
-{{- range .VethCommands }}
+# === Bridge (idempotent — shared across awg-mesh containers) ===
+{{- range .BridgeCommands }}
 {{ . }}
 {{- end }}
 

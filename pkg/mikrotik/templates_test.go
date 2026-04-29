@@ -86,6 +86,20 @@ func TestGenerateDeployRSC(t *testing.T) {
 			t.Errorf("script must NOT contain %q, got:\n%s", check, script)
 		}
 	}
+
+	// Ordering assertion: veth MUST be created before bridge-port references it.
+	// RouterOS /import rejects bridge-port add if the veth interface does not yet exist.
+	vethIdx := strings.Index(script, "/interface/veth add name=")
+	bridgePortIdx := strings.Index(script, "/interface/bridge/port add")
+	if vethIdx < 0 {
+		t.Fatalf("script missing /interface/veth add")
+	}
+	if bridgePortIdx < 0 {
+		t.Fatalf("script missing /interface/bridge/port add")
+	}
+	if vethIdx >= bridgePortIdx {
+		t.Fatalf("veth section must precede bridge-port section: veth at %d, bridge/port at %d\nscript:\n%s", vethIdx, bridgePortIdx, script)
+	}
 }
 
 func TestGenerateDeployRSCErrors(t *testing.T) {
