@@ -24,8 +24,10 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestEndpointReconcilePeerKey(t *testing.T) {
-	t.Parallel()
-
+	// NOT parallel: mutates package-level seam vars (endpointCreateIfaceFn,
+	// endpointConfigureIfaceFn, endpointSetIfaceUpFn, endpointAddInterfaceAddress)
+	// AND reads overlayRouterFn via createInterface → rebuildAllOverlayRoutes.
+	// Running with t.Parallel() races against TestEndpointRebuildAllOverlayRoutes.
 	configDir := t.TempDir()
 	peerKeyHex := "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 	peerKeyBytes, err := hex.DecodeString(peerKeyHex)
