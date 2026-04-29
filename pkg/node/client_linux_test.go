@@ -795,7 +795,7 @@ func TestRebuildClientECMP_ZeroHealthy_VIP_PropagatesUnexpectedRemoveError(t *te
 }
 
 // TestRebuildClientECMP_ZeroHealthy_Legacy verifies that when all legacy links are
-// unhealthy, RemoveECMPRoute(0.0.0.0/0) is called.
+// unhealthy AND we previously installed the route, RemoveECMPRoute(0.0.0.0/0) is called.
 func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
 	t.Parallel()
 
@@ -808,6 +808,7 @@ func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
 		makeTestLink("192.168.2.1", "", false),
 		makeTestLink("192.168.2.2", "", false),
 	}
+	runner.platformState.ecmpRouteInstalled = true // simulate prior install
 
 	if err := runner.rebuildClientECMP("init"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -816,6 +817,54 @@ func TestRebuildClientECMP_ZeroHealthy_Legacy(t *testing.T) {
 	defaultCIDR := "0.0.0.0/0"
 	if !router.hasRemoveECMPFor(defaultCIDR) {
 		t.Errorf("expected RemoveECMPRoute(%s), got: %+v", defaultCIDR, router.removeECMPCalls)
+	}
+}
+
+// TestClientStartup_PreservesDefaultRoute verifies that on cold start with zero healthy
+// legacy links, RemoveECMPRoute(0.0.0.0/0) is NOT called — Bug 7 / REQ-9 / F-002.
+// The RouterOS-injected default route must be preserved when we never installed our own.
+func TestClientStartup_PreservesDefaultRoute(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"}}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	// No links — zero-healthy from cold start (ecmpRouteInstalled defaults to false).
+	runner.platformState.links = []*transportLink{}
+
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if router.hasRemoveECMPFor("0.0.0.0/0") {
+		t.Errorf("Bug 7: RemoveECMPRoute(0.0.0.0/0) called from fresh state — would flush RouterOS-injected default route. removeECMPCalls=%+v", router.removeECMPCalls)
+	}
+}
+
+// TestClientECMP_FlagFlipsTrueAfterInstall verifies that after a successful
+// SetECMPRoute(0.0.0.0/0) on the legacy path, ecmpRouteInstalled is flipped to true.
+func TestClientECMP_FlagFlipsTrueAfterInstall(t *testing.T) {
+	t.Parallel()
+
+	topo := &topology.Topology{Overlay: topology.OverlayConfig{Space: "10.0.0.0/8"}}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	// One healthy legacy link (empty balancerIP = legacy path).
+	runner.platformState.links = []*transportLink{
+		makeTestLink("192.168.1.1", "", true),
+	}
+
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if router.setECMPCallCount() < 1 {
+		t.Errorf("expected SetECMPRoute to be called, got setECMPCalls=%+v", router.setECMPCalls)
+	}
+	if !runner.platformState.ecmpRouteInstalled {
+		t.Errorf("expected ecmpRouteInstalled=true after successful SetECMPRoute, got false")
 	}
 }
 

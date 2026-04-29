@@ -93,6 +93,21 @@ type clientPlatformState struct {
 	// and call DisableStickyECMP only for retired CIDRs (FR-6).
 	currentStickyCIDRs map[string]bool
 
+	// ecmpRouteInstalled tracks whether this process has successfully called
+	// SetECMPRoute(0.0.0.0/0) at least once (legacy path only).
+	// Initialized false (zero value). Flipped to true after the first successful
+	// SetECMPRoute(defaultDest,...) call.
+	//
+	// Guards RemoveECMPRoute(defaultDest) so we only flush a default route that
+	// we ourselves installed — prevents flushing a RouterOS-injected default
+	// route (via 100.127.0.1 veth gateway) on startup with zero healthy links
+	// (Bug 7 / REQ-9 / F-002).
+	//
+	// ecmpRouteInstalled — accessed only from rebuildClientECMP, which is
+	// always called from a single serialized goroutine per ClientRunner. No
+	// separate lock needed beyond the existing platformState.mu snapshot pattern.
+	ecmpRouteInstalled bool
+
 	// Injectable for testing. nil = use production implementations.
 	router   routing.Router
 	firewall routing.Firewall
@@ -858,6 +873,14 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	defaultCIDR := "0.0.0.0/0"
 
 	if len(healthyLinks) == 0 {
+		if !c.platformState.ecmpRouteInstalled {
+			c.node.logger.Info().
+				Str("event", "ecmp_skip_remove_never_installed").
+				Str("dest", defaultCIDR).
+				Str("reason", "no_healthy_links_and_never_installed").
+				Msg("preserving pre-existing default route — we never installed our own")
+			return nil
+		}
 		c.node.logger.Info().
 			Str("event", "ecmp_withdraw").
 			Str("dest", defaultCIDR).
@@ -874,6 +897,7 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	if err := router.SetECMPRoute(defaultDest, nexthops); err != nil {
 		return fmt.Errorf("set default ECMP route: %w", err)
 	}
+	c.platformState.ecmpRouteInstalled = true
 
 	// Overlay space is the sticky CIDR for legacy path when available.
 	stickyCIDR := defaultCIDR
