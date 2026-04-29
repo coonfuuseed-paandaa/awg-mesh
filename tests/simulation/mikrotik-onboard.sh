@@ -44,7 +44,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-COMPOSE_PROJECT="mktorik"
+COMPOSE_PROJECT="mikrotik"
 
 # Ephemeral files (cleaned up on EXIT).
 CTL_CONFIG_DIR=$(mktemp -d /tmp/mikrotik-onboard-ctl-XXXXXX)
@@ -97,7 +97,9 @@ VETH_GUEST="veth-mikrotik"
 VETH_HOST="veth-mikrotik-host"
 CGN_GW_IP="100.127.0.1"
 CGN_GW_CIDR="100.127.0.1/24"
-CGN_GUEST_IP="100.127.0.2"
+# CGN_GUEST_CIDR drives the guest-side route injection; the bare-IP form
+# was previously assigned to CGN_GUEST_IP but never read — removed to keep
+# the constants list honest.
 CGN_GUEST_CIDR="100.127.0.2/24"
 
 # Timing.
@@ -187,17 +189,6 @@ meshctl() {
         --topology "${TOPO_FILE}" \
         --config-dir "${CTL_CONFIG_DIR}" \
         "$@"
-}
-
-# assert_exit0 <label> <cmd...> — runs command; pass/fail based on exit code.
-assert_exit0() {
-    local label="$1"
-    shift
-    if "$@" > /dev/null 2>&1; then
-        pass "${label}"
-    else
-        fail "${label}"
-    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -397,7 +388,7 @@ services:
     environment:
       MESH_TOKEN_HASH: "${TOKEN_MASTER_01_ESC}"
     networks:
-      mktorik:
+      mikrotik:
         ipv4_address: ${MASTER_01_BRIDGE}
     ports:
       - "${MASTER_01_GRPC}:9090"
@@ -421,7 +412,7 @@ services:
     environment:
       MESH_TOKEN_HASH: "${TOKEN_MASTER_02_ESC}"
     networks:
-      mktorik:
+      mikrotik:
         ipv4_address: ${MASTER_02_BRIDGE}
     ports:
       - "${MASTER_02_GRPC}:9090"
@@ -445,7 +436,7 @@ services:
     environment:
       MESH_TOKEN_HASH: "${TOKEN_ENDPOINT_01_ESC}"
     networks:
-      mktorik:
+      mikrotik:
         ipv4_address: ${ENDPOINT_01_BRIDGE}
     ports:
       - "${ENDPOINT_01_GRPC}:9090"
@@ -469,7 +460,7 @@ services:
     environment:
       MESH_TOKEN_HASH: "${TOKEN_ENDPOINT_02_ESC}"
     networks:
-      mktorik:
+      mikrotik:
         ipv4_address: ${ENDPOINT_02_BRIDGE}
     ports:
       - "${ENDPOINT_02_GRPC}:9090"
@@ -485,7 +476,7 @@ services:
           --listen-port ${WG_LISTEN_PORT}
 
 networks:
-  mktorik:
+  mikrotik:
     driver: bridge
     ipam:
       config:
@@ -520,18 +511,26 @@ fi
 echo ""
 echo "[M2] Initialising masters and endpoints..."
 
-meshctl master init "${MASTER_01}" && pass "M2a: master init ${MASTER_01}" || {
+if meshctl master init "${MASTER_01}"; then
+    pass "M2a: master init ${MASTER_01}"
+else
     fail "M2a: master init ${MASTER_01} failed"
-}
-meshctl master init "${MASTER_02}" && pass "M2b: master init ${MASTER_02}" || {
+fi
+if meshctl master init "${MASTER_02}"; then
+    pass "M2b: master init ${MASTER_02}"
+else
     fail "M2b: master init ${MASTER_02} failed"
-}
-meshctl endpoint init "${ENDPOINT_01}" && pass "M2c: endpoint init ${ENDPOINT_01}" || {
+fi
+if meshctl endpoint init "${ENDPOINT_01}"; then
+    pass "M2c: endpoint init ${ENDPOINT_01}"
+else
     fail "M2c: endpoint init ${ENDPOINT_01} failed"
-}
-meshctl endpoint init "${ENDPOINT_02}" && pass "M2d: endpoint init ${ENDPOINT_02}" || {
+fi
+if meshctl endpoint init "${ENDPOINT_02}"; then
+    pass "M2d: endpoint init ${ENDPOINT_02}"
+else
     fail "M2d: endpoint init ${ENDPOINT_02} failed"
-}
+fi
 
 # ---------------------------------------------------------------------------
 # Spawn mikrotik-equivalent container with delayed binary start.
@@ -563,7 +562,7 @@ docker run -d \
     --cap-add NET_ADMIN \
     --cap-add NET_RAW \
     --entrypoint sh \
-    --network "${COMPOSE_PROJECT}_mktorik" \
+    --network "${COMPOSE_PROJECT}_mikrotik" \
     --ip "${MIKROTIK_BRIDGE}" \
     --publish "${MIKROTIK_GRPC}:9090" \
     --env "MESH_TOKEN_HASH=${TOKEN_MIKROTIK}" \
@@ -805,7 +804,14 @@ else
     )
     TOTAL_LINES=$(docker exec "${CTR_MIKROTIK}" wc -l < "${LOG_PATH}" 2>/dev/null || echo "0")
 
-    if [[ "${NON_JSON_LINES}" -eq 0 ]]; then
+    if [[ "${TOTAL_LINES}" -eq 0 ]]; then
+        # Empty log file is not a JSON-validity failure but it IS a real
+        # regression — the client never logged anything during the test
+        # window. Without this check the JSON-validity branch below
+        # would silently pass `0/0 line(s) valid`.
+        fail "A5: ${LOG_PATH} exists but is empty — client produced no log output during the test"
+        docker exec "${CTR_MIKROTIK}" ls -l "${LOG_PATH}" >&2 || true
+    elif [[ "${NON_JSON_LINES}" -eq 0 ]]; then
         pass "A5: ${LOG_PATH} exists and all ${TOTAL_LINES} line(s) are valid JSON"
     else
         fail "A5: ${LOG_PATH} has ${NON_JSON_LINES}/${TOTAL_LINES} non-JSON line(s)"
