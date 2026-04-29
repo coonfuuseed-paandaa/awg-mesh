@@ -184,7 +184,6 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			current := base
@@ -329,7 +328,6 @@ func TestGenerateRotateRSCErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := GenerateRotateRSC("container", tt.params)

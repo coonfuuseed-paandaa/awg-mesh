@@ -97,7 +97,6 @@ func TestValidateTopologyFindings(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -146,7 +145,6 @@ func TestValidateDSCP(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 			err := ValidateDSCP(tt.dscp)
@@ -185,7 +183,6 @@ func TestValidateTopologyDSCPRange(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 
@@ -239,7 +236,6 @@ func TestStorageRootValidation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := ValidateStorageRoot(tt.storageRoot)
@@ -267,7 +263,6 @@ func TestStorageRootValidationViaTopology(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

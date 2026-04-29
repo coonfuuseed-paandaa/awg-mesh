@@ -69,7 +69,6 @@ func TestClientPrepareImage(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -131,7 +130,6 @@ func TestMasterClientTunnelID(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -193,7 +191,6 @@ func TestMasterClientPreferredTunnelID(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := masterClientPreferredTunnelID("mikrotik-home", tc.tunnels); got != tc.want {
@@ -240,7 +237,6 @@ func TestMasterClientRemovalTunnelIDs(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := masterClientRemovalTunnelIDs("mikrotik-home", tc.tunnels)
@@ -266,7 +262,6 @@ func TestClientPrepareImageFlagValidation(t *testing.T) {
 	}
 
 	for _, ref := range invalidRefs {
-		ref := ref
 		t.Run(ref, func(t *testing.T) {
 			root := NewRootCommand("test")
 			root.SilenceUsage = true

@@ -78,7 +78,6 @@ func TestGenerateVethCommands(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			commands := GenerateVethCommands("AWG_MESH_TEST", tt.gateway)
@@ -256,7 +255,6 @@ func TestEscapeRouterOSToken(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := escapeRouterOSToken(tt.input)
