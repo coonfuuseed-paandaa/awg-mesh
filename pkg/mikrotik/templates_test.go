@@ -242,6 +242,75 @@ func TestGenerateRotateRSC(t *testing.T) {
 	}
 }
 
+// TestRouterOSTemplateNoMetacharacters verifies that a v2 token hash
+// (charset [A-Za-z0-9._-]) is emitted without RouterOS quoting — the
+// MESH_TOKEN_HASH value line must contain no double-quote characters.
+func TestRouterOSTemplateNoMetacharacters(t *testing.T) {
+	t.Parallel()
+
+	// v2 hash: only [A-Za-z0-9._-] — zero RouterOS-meaningful characters.
+	v2Hash := "mesh1.AAEBABACAQEABAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKyws"
+
+	script, err := GenerateDeployRSC(DeployScript{
+		TopologyName:  "mikrotik-home",
+		ContainerName: "AWG_MESH_HOME",
+		Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Veth:          "AWG_MESH_HOME",
+		VethGateway:   "100.127.0.1",
+		OverlayIP:     "10.10.0.10",
+		OverlayNet:    "10.10.0.0/16",
+		TokenHash:     v2Hash,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployRSC returned error: %v", err)
+	}
+
+	// The value must appear raw — not wrapped in quotes.
+	rawLine := "key=MESH_TOKEN_HASH value=" + v2Hash
+	if !strings.Contains(script, rawLine) {
+		t.Errorf("expected MESH_TOKEN_HASH emitted raw as %q, got script:\n%s", rawLine, script)
+	}
+
+	// Confirm the hash is NOT wrapped in double quotes.
+	quotedLine := `key=MESH_TOKEN_HASH value="` + v2Hash
+	if strings.Contains(script, quotedLine) {
+		t.Errorf("MESH_TOKEN_HASH must NOT be quoted, but found quoted form in script:\n%s", script)
+	}
+}
+
+// TestRouterOSTemplate_OtherValuesQuoted verifies that non-hash env vars
+// (MESH_MODE, MESH_NAME, MESH_OVERLAY_IP) are still wrapped in double quotes,
+// providing a regression check that the MESH_TOKEN_HASH exemption is narrow.
+func TestRouterOSTemplate_OtherValuesQuoted(t *testing.T) {
+	t.Parallel()
+
+	script, err := GenerateDeployRSC(DeployScript{
+		TopologyName:  "mikrotik-home",
+		ContainerName: "AWG_MESH_HOME",
+		Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Veth:          "AWG_MESH_HOME",
+		VethGateway:   "100.127.0.1",
+		OverlayIP:     "10.10.0.10",
+		OverlayNet:    "10.10.0.0/16",
+		TokenHash:     "mesh1.somev2hash",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployRSC returned error: %v", err)
+	}
+
+	// Each non-hash env var must carry a quoted value.
+	quotedChecks := []string{
+		`key=MESH_MODE value="client"`,
+		`key=MESH_NAME value="mikrotik-home"`,
+		`key=MESH_OVERLAY_IP value="10.10.0.10"`,
+	}
+	for _, check := range quotedChecks {
+		if !strings.Contains(script, check) {
+			t.Errorf("expected quoted env var %q in script, got:\n%s", check, script)
+		}
+	}
+}
+
 func TestGenerateRotateRSCErrors(t *testing.T) {
 	t.Parallel()
 

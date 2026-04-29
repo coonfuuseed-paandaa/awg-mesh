@@ -191,11 +191,21 @@ func buildEnvCommands(envListName string, envVars map[string]string) []string {
 		// RouterOS 7.21+ renamed the /container/envs/add parameter from
 		// `name=` to `list=`. The project documents 7.21 as the minimum
 		// supported release, so we emit `list=` here.
+		//
+		// MESH_TOKEN_HASH uses the v2 charset [A-Za-z0-9._-] — no RouterOS-
+		// meaningful characters — so quoting is unnecessary and may interfere
+		// with template parsing. All other env var values are quoted normally.
+		var emittedValue string
+		if key == "MESH_TOKEN_HASH" {
+			emittedValue = value
+		} else {
+			emittedValue = quoteRouterOSValue(value)
+		}
 		commands = append(commands, fmt.Sprintf(
 			"/container/envs/add list=%s key=%s value=%s",
 			escapeRouterOSToken(envListName),
 			escapeRouterOSToken(key),
-			quoteRouterOSValue(value),
+			emittedValue,
 		))
 	}
 	return commands

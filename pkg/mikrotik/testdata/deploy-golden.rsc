@@ -43,7 +43,7 @@
 /container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_MODE value="client"
 /container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_NAME value="mikrotik-home"
 /container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_OVERLAY_IP value="10.10.0.10"
-/container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_TOKEN_HASH value="mesh1.AAEBABACAQEABAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKyws"
+/container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_TOKEN_HASH value=mesh1.AAEBABACAQEABAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKyws
 /container/add interface=AWG_MESH_HOME remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v1.14.0 hostname=awg_mesh_home root-dir=/disk1/awg-mesh-client-mikrotik-home envlist=AWG_MESH_HOME_ENVS name=AWG_MESH_HOME mountlists=AWG_MESH_HOME_CONFIG dns=1.1.1.1,8.8.8.8 logging=yes start-on-boot=yes
 
 /container/start [find where name=AWG_MESH_HOME]
