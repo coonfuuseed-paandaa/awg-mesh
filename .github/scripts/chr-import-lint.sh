@@ -87,32 +87,36 @@ for i in $(seq 1 120); do
     sleep 1
 done
 
-# Port-open != sshd-ready. RouterOS opens listener early but the auth
-# handler may not respond to password prompts until cloud-init finishes
-# seeding admin password state. Probe the SSH banner with a short-timeout
-# connection until we see "SSH-2.0" — that proves the daemon's protocol
-# layer is alive. Then wait an extra cushion for the password subsystem
-# to be ready (RouterOS first-boot has a measurable gap between banner
-# emission and accepting auth).
-echo "Waiting for SSH banner..."
-for i in $(seq 1 60); do
-    banner=$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/${SSH_PORT}; head -c 32 <&3" 2>/dev/null || true)
+# Port-open != sshd-ready. CHR opens TCP listener long before the SSH
+# daemon is actually answering — observed: port-open at 1s into boot,
+# but sshd does not emit "SSH-2.0" banner until cloud-init seeds the
+# admin password (~60-120 s into boot on QEMU usermode networking).
+# Banner-detect via /dev/tcp + head -c 32 fails because the half-open
+# connection blocks indefinitely waiting for the server to write — and
+# the server isn't writing yet.
+#
+# Empirical: 180 s after port-open is sufficient on RouterOS 7.21+ for
+# the auth subsystem to be live. This is a lot of wall-clock budget but
+# CHR cold-boot is genuinely slow on a non-KVM host runner.
+echo "Sleeping 180s for CHR boot + cloud-init + sshd auth subsystem..."
+sleep 180
+
+# Now probe the SSH banner — by this point sshd MUST be ready. If the
+# banner is still missing the box is broken and we should fail fast
+# rather than hand off to a 90 s expect timeout.
+echo "Verifying SSH banner..."
+for i in $(seq 1 30); do
+    banner=$(timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/${SSH_PORT}; head -c 32 <&3" 2>/dev/null || true)
     if echo "$banner" | grep -q "SSH-2.0"; then
         echo "SSH banner received after ${i} attempts: ${banner}"
         break
     fi
-    if [ "$i" -eq 60 ]; then
-        echo "ERROR: SSH banner not received within 60 seconds" >&2
+    if [ "$i" -eq 30 ]; then
+        echo "ERROR: SSH banner not received within 150 seconds after sleep" >&2
         exit 1
     fi
-    sleep 1
+    sleep 5
 done
-
-# Cushion for RouterOS auth-subsystem readiness. Empirical: 7.21+ on
-# QEMU usermode networking needs ~20-30 s after banner before password
-# prompts complete reliably.
-echo "Waiting 30s for auth subsystem..."
-sleep 30
 
 # Drive RouterOS first-boot password-change interactively via expect.
 # This is the canonical fix for the limitation that sshpass only answers
