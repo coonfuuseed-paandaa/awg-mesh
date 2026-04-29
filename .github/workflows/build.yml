@@ -165,6 +165,8 @@ jobs:
               - 'pkg/mikrotik/**'
               - 'pkg/topology/**'
               - 'cmd/mesh-ctl/**'
+              - '.github/scripts/chr-import-lint.sh'
+              - '.github/workflows/build.yml'
 
       - name: Skip if no generator changes
         if: steps.filter.outputs.mikrotik != 'true'
