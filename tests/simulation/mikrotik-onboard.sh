@@ -54,11 +54,11 @@ COMPOSE_FILE=$(mktemp /tmp/mikrotik-onboard-compose-XXXXXX.yml)
 # ---------------------------------------------------------------------------
 # Node names
 # ---------------------------------------------------------------------------
-MASTER_01="mst-onboard-01"
-MASTER_02="mst-onboard-02"
-ENDPOINT_01="ep-onboard-01"
-ENDPOINT_02="ep-onboard-02"
-CLIENT_MIKROTIK="mikrotik-home"
+MASTER_01="mst-onb-01"
+MASTER_02="mst-onb-02"
+ENDPOINT_01="ep-onb-01"
+ENDPOINT_02="ep-onb-02"
+CLIENT_MIKROTIK="mikrotik-hom"
 
 CTR_MASTER_01="${COMPOSE_PROJECT}-${MASTER_01}"
 CTR_MASTER_02="${COMPOSE_PROJECT}-${MASTER_02}"
@@ -562,13 +562,14 @@ docker run -d \
     --privileged \
     --cap-add NET_ADMIN \
     --cap-add NET_RAW \
-    --network "mktorik" \
+    --entrypoint sh \
+    --network "${COMPOSE_PROJECT}_mktorik" \
     --ip "${MIKROTIK_BRIDGE}" \
     --publish "${MIKROTIK_GRPC}:9090" \
     --env "MESH_TOKEN_HASH=${TOKEN_MIKROTIK}" \
     --volume "${MIKROTIK_INIT_SCRIPT}:/entrypoint.sh:ro" \
     "${CLIENT_IMAGE}" \
-    sh /entrypoint.sh
+    /entrypoint.sh
 
 # Retrieve the container's init PID (the sh process running the entrypoint).
 MIKROTIK_PID=$(docker inspect -f '{{.State.Pid}}' "${CTR_MIKROTIK}")
