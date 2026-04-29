@@ -43,6 +43,10 @@ func (f *NftablesFirewall) ensureTable() {
 }
 
 // SetupNAT creates a masquerade rule for outbound traffic on iface.
+// Idempotent: if a rule with identical (oifname == iface, masquerade) shape
+// already exists in nat_postrouting (e.g. installed by the client-init shell
+// entrypoint or a prior call), this is a no-op. Without this dedupe every
+// startup and every new peer would accumulate duplicate kernel rules.
 func (f *NftablesFirewall) SetupNAT(iface string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -57,9 +61,25 @@ func (f *NftablesFirewall) SetupNAT(iface string) error {
 		Priority: nftables.ChainPriorityNATSource,
 	})
 
+	// Flush the chain creation before reading rules — GetRules requires the
+	// chain to exist on the kernel side.
+	if err := f.conn.Flush(); err != nil {
+		return fmt.Errorf("nftables: ensure nat_postrouting chain on %s: %w", iface, err)
+	}
+
 	// Pad interface name to 16 bytes (IFNAMSIZ)
 	ifaceBytes := make([]byte, 16)
 	copy(ifaceBytes, iface)
+
+	// Idempotency check: skip if a rule with the same oifname+masquerade
+	// shape already exists.
+	if existing, err := f.conn.GetRules(f.table, chain); err == nil {
+		for _, rule := range existing {
+			if ruleMatchesMasqOnIface(rule, ifaceBytes) {
+				return nil
+			}
+		}
+	}
 
 	f.conn.AddRule(&nftables.Rule{
 		Table: f.table,
@@ -81,7 +101,58 @@ func (f *NftablesFirewall) SetupNAT(iface string) error {
 	return nil
 }
 
+// ruleMatchesMasqOnIface reports whether rule is a (Meta OIFNAME, Cmp Eq
+// ifaceBytes, Masq) triple — the canonical SetupNAT shape. Allows the rule
+// to carry trailing expressions added by the kernel without rejecting it.
+func ruleMatchesMasqOnIface(rule *nftables.Rule, ifaceBytes []byte) bool {
+	if len(rule.Exprs) < 3 {
+		return false
+	}
+	meta, ok := rule.Exprs[0].(*expr.Meta)
+	if !ok || meta.Key != expr.MetaKeyOIFNAME {
+		return false
+	}
+	cmp, ok := rule.Exprs[1].(*expr.Cmp)
+	if !ok || cmp.Op != expr.CmpOpEq || !bytes.Equal(cmp.Data, ifaceBytes) {
+		return false
+	}
+	if _, ok := rule.Exprs[2].(*expr.Masq); !ok {
+		return false
+	}
+	return true
+}
+
+// ruleMatchesMSSClamp reports whether rule installs MSS clamping for TCP SYN.
+// Identifies the canonical ClampMSSToPMTU shape by spotting (Meta L4PROTO,
+// Cmp == TCP) at the head followed by the Rt{Key:RtTCPMSS} expression
+// somewhere in the rule body. The kernel's TCP-MSS-clamping rule is reliably
+// detected by the presence of the MSS routing-info expression — that
+// expression is unique to MSS clamping in our table.
+func ruleMatchesMSSClamp(rule *nftables.Rule) bool {
+	if len(rule.Exprs) < 3 {
+		return false
+	}
+	meta, ok := rule.Exprs[0].(*expr.Meta)
+	if !ok || meta.Key != expr.MetaKeyL4PROTO {
+		return false
+	}
+	cmp, ok := rule.Exprs[1].(*expr.Cmp)
+	if !ok || cmp.Op != expr.CmpOpEq || len(cmp.Data) != 1 || cmp.Data[0] != unix.IPPROTO_TCP {
+		return false
+	}
+	for _, e := range rule.Exprs[2:] {
+		if rt, ok := e.(*expr.Rt); ok && rt.Key == expr.RtTCPMSS {
+			return true
+		}
+	}
+	return false
+}
+
 // ClampMSSToPMTU adds a rule to clamp TCP MSS to path MTU on forwarded packets.
+// Idempotent: if a rule of the same shape already exists on forward_mss
+// (installed e.g. by the client-init shell entrypoint or a prior call),
+// this is a no-op. Without dedupe every startup would accumulate duplicate
+// kernel rules.
 func (f *NftablesFirewall) ClampMSSToPMTU() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -95,6 +166,19 @@ func (f *NftablesFirewall) ClampMSSToPMTU() error {
 		Hooknum:  nftables.ChainHookForward,
 		Priority: nftables.ChainPriorityFilter,
 	})
+
+	// Flush chain creation before listing rules.
+	if err := f.conn.Flush(); err != nil {
+		return fmt.Errorf("nftables: ensure forward_mss chain: %w", err)
+	}
+
+	if existing, err := f.conn.GetRules(f.table, chain); err == nil {
+		for _, rule := range existing {
+			if ruleMatchesMSSClamp(rule) {
+				return nil
+			}
+		}
+	}
 
 	f.conn.AddRule(&nftables.Rule{
 		Table: f.table,

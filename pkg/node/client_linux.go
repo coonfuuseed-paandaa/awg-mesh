@@ -96,16 +96,16 @@ type clientPlatformState struct {
 	// ecmpRouteInstalled tracks whether this process has successfully called
 	// SetECMPRoute(0.0.0.0/0) at least once (legacy path only).
 	// Initialized false (zero value). Flipped to true after the first successful
-	// SetECMPRoute(defaultDest,...) call.
+	// SetECMPRoute(defaultDest,...) call, and back to false after a successful
+	// RemoveECMPRoute(defaultDest) so a later zero-link rebuild cannot delete a
+	// default route this process did not install (e.g. a RouterOS-injected
+	// default route via the 100.127.0.1 veth gateway after the original was
+	// withdrawn). Bug 7 / REQ-9 / F-002.
 	//
-	// Guards RemoveECMPRoute(defaultDest) so we only flush a default route that
-	// we ourselves installed — prevents flushing a RouterOS-injected default
-	// route (via 100.127.0.1 veth gateway) on startup with zero healthy links
-	// (Bug 7 / REQ-9 / F-002).
-	//
-	// ecmpRouteInstalled — accessed only from rebuildClientECMP, which is
-	// always called from a single serialized goroutine per ClientRunner. No
-	// separate lock needed beyond the existing platformState.mu snapshot pattern.
+	// MUST be read and written only while holding c.platformState.mu —
+	// rebuildClientECMP is invoked from multiple goroutines (healthcheck
+	// onUp/onDown callbacks, gRPC AddPeer/RemovePeer handlers, the init path),
+	// so unsynchronised access is a data race.
 	ecmpRouteInstalled bool
 
 	// Injectable for testing. nil = use production implementations.
@@ -778,6 +778,7 @@ func ensureInterfaceAddress(interfaceName, address string) error {
 func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	c.platformState.mu.Lock()
 	linksSnapshot := append([]*transportLink(nil), c.platformState.links...)
+	ecmpInstalledSnapshot := c.platformState.ecmpRouteInstalled
 	c.platformState.mu.Unlock()
 
 	// Determine routing mode from ALL configured links (includes unhealthy).
@@ -897,7 +898,7 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	defaultCIDR := "0.0.0.0/0"
 
 	if len(healthyLinks) == 0 {
-		if !c.platformState.ecmpRouteInstalled {
+		if !ecmpInstalledSnapshot {
 			c.node.logger.Info().
 				Str("event", "ecmp_skip_remove_never_installed").
 				Str("dest", defaultCIDR).
@@ -913,6 +914,13 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 		if err := router.RemoveECMPRoute(defaultDest); err != nil {
 			return fmt.Errorf("remove default ECMP route: %w", err)
 		}
+		// Reset the installed flag under the lock — without this, a later
+		// zero-link rebuild can still delete a default route this process did
+		// not install (e.g. a RouterOS-injected default route that replaced
+		// ours after withdraw).
+		c.platformState.mu.Lock()
+		c.platformState.ecmpRouteInstalled = false
+		c.platformState.mu.Unlock()
 		return nil
 	}
 
@@ -921,7 +929,9 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 	if err := router.SetECMPRoute(defaultDest, nexthops); err != nil {
 		return fmt.Errorf("set default ECMP route: %w", err)
 	}
+	c.platformState.mu.Lock()
 	c.platformState.ecmpRouteInstalled = true
+	c.platformState.mu.Unlock()
 
 	// Overlay space is the sticky CIDR for legacy path when available.
 	stickyCIDR := defaultCIDR
