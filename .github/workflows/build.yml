@@ -144,11 +144,6 @@ jobs:
     # to PRs that touch generator-relevant code only.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # Experimental gate: CHR boots reliably locally but exhibits sshd-readiness
-    # race in GitHub Actions environment (TIMEOUT-AT-LOGIN despite SSH port open).
-    # Soft-failure until boot-detection logic stabilises. Real RouterOS coverage
-    # is provided by tests/simulation/mikrotik-chr-e2e.sh on operator hardware.
-    continue-on-error: true
     env:
       # v1.14.0 onboarding bundle targets RouterOS 7.21.x as the canonical
       # tier (mountlists=, remote-image=, /container/mounts list= syntax).

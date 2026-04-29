@@ -73,19 +73,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Wait for SSH to come up (CHR boots in ~30 s).
-echo "Waiting for CHR SSH..."
-for i in $(seq 1 60); do
+# Wait for SSH port to open (CHR boots in ~30 s).
+echo "Waiting for CHR SSH port..."
+for i in $(seq 1 120); do
     if nc -z 127.0.0.1 "$SSH_PORT" 2>/dev/null; then
         echo "SSH port open after ${i} attempts"
         break
     fi
-    if [ "$i" -eq 60 ]; then
-        echo "ERROR: CHR SSH did not come up within 60 seconds" >&2
+    if [ "$i" -eq 120 ]; then
+        echo "ERROR: CHR SSH port did not open within 120 seconds" >&2
         exit 1
     fi
     sleep 1
 done
+
+# Port-open != sshd-ready. RouterOS opens listener early but the auth
+# handler may not respond to password prompts until cloud-init finishes
+# seeding admin password state. Probe the SSH banner with a short-timeout
+# connection until we see "SSH-2.0" — that proves the daemon's protocol
+# layer is alive. Then wait an extra cushion for the password subsystem
+# to be ready (RouterOS first-boot has a measurable gap between banner
+# emission and accepting auth).
+echo "Waiting for SSH banner..."
+for i in $(seq 1 60); do
+    banner=$(timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/${SSH_PORT}; head -c 32 <&3" 2>/dev/null || true)
+    if echo "$banner" | grep -q "SSH-2.0"; then
+        echo "SSH banner received after ${i} attempts: ${banner}"
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "ERROR: SSH banner not received within 60 seconds" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
+# Cushion for RouterOS auth-subsystem readiness. Empirical: 7.21+ on
+# QEMU usermode networking needs ~20-30 s after banner before password
+# prompts complete reliably.
+echo "Waiting 30s for auth subsystem..."
+sleep 30
 
 # Drive RouterOS first-boot password-change interactively via expect.
 # This is the canonical fix for the limitation that sshpass only answers
@@ -100,7 +127,7 @@ echo "Establishing CHR admin password via expect..."
 EXPECT_LOG=$(mktemp)
 set +e
 expect <<EXPECT_EOF >"$EXPECT_LOG" 2>&1
-set timeout 30
+set timeout 90
 log_user 1
 # First, try the password we expect to set (idempotent re-run path).
 spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -133,7 +160,7 @@ if [ "$expect_rc" -eq 12 ]; then
     # password-change dialog.
     echo "First-boot CHR detected — performing password seeding..."
     expect <<EXPECT_EOF >>"$EXPECT_LOG" 2>&1
-set timeout 30
+set timeout 90
 log_user 1
 spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o PreferredAuthentications=password -o PubkeyAuthentication=no \
