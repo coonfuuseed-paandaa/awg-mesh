@@ -53,18 +53,28 @@ func BuildAllowedIPsForEndpoint(topo *Topology, masterOverlayIP, transportSubnet
 }
 
 // BuildMinimalAllowedIPsForEndpointPeer returns the minimal AllowedIPs for one
-// endpoint-side WG peer (a master): [transport_subnet, master_overlay_ip/32].
-// This is the correct set for the per-master-iface (Pattern X) model in v1.12.2.
+// endpoint-side WG peer (a master): [transport_subnet, master_overlay_ip/32]
+// plus the topology "clients" overlay range when topo carries one. This is the
+// correct set for the per-master-iface (Pattern X) model in v1.12.2.
 // Do NOT use BuildAllowedIPsForEndpoint for endpoint-side — that produces the full
 // overlapping list appropriate only for the master side (which uses one iface per peer).
 //
-// Order: transport subnet first, then overlay /32 — matches master-side
-// computeMasterPeerAllowedIPs convention.
+// Order: transport subnet first, then master overlay /32, then clients range —
+// matches master-side computeMasterPeerAllowedIPs convention.
+//
+// The clients range is appended whenever topology.overlay.ranges[*].name == "clients"
+// is present (case-insensitive). Without it, packets travelling endpoint→master→client
+// are dropped on the endpoint's WireGuard INBOUND filter (src=client_overlay not in
+// AllowedIPs) and the endpoint's reply path has no kernel route. Mirrors the existing
+// endpoints-range pattern fixed for cross-endpoint forwarding in v1.12.7 (issue #147).
+//
+// topo may be nil — in that case the clients range is omitted (callers using nil
+// topology must explicitly accept the trade-off; production callers always pass topo).
 //
 // IPv4 only — consistent with BuildAllowedIPsForEndpoint scope.
 //
 // Returns an error if masterOverlayIP or transportSubnet are empty or malformed.
-func BuildMinimalAllowedIPsForEndpointPeer(masterOverlayIP, transportSubnet string) ([]string, error) {
+func BuildMinimalAllowedIPsForEndpointPeer(topo *Topology, masterOverlayIP, transportSubnet string) ([]string, error) {
 	if masterOverlayIP == "" {
 		return nil, fmt.Errorf("master overlay IP is required")
 	}
@@ -82,7 +92,29 @@ func BuildMinimalAllowedIPsForEndpointPeer(masterOverlayIP, transportSubnet stri
 		return nil, fmt.Errorf("invalid transport subnet %q: %w", transportSubnet, err)
 	}
 
-	return []string{transportSubnet, masterOverlayIP + "/32"}, nil
+	out := []string{transportSubnet, masterOverlayIP + "/32"}
+
+	// Append the topology "clients" range so endpoint master-peer AllowedIPs
+	// permit client→endpoint INBOUND and endpoint→client OUTBOUND traffic.
+	// Identified by name (case-insensitive) consistent with the "endpoints"
+	// range lookup in BuildAllowedIPsForMasterPeer.
+	if topo != nil {
+		for _, r := range topo.Overlay.Ranges {
+			if !strings.EqualFold(strings.TrimSpace(r.Name), "clients") {
+				continue
+			}
+			cidr := strings.TrimSpace(r.CIDR)
+			if cidr == "" {
+				continue
+			}
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return nil, fmt.Errorf("invalid clients overlay range CIDR %q in range %q: %w", r.CIDR, r.Name, err)
+			}
+			out = append(out, cidr)
+		}
+	}
+
+	return out, nil
 }
 
 // BuildAllowedIPsForMasterPeer returns the AllowedIPs a master should install for

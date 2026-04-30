@@ -446,6 +446,21 @@ func newClientInitCommand() *cobra.Command {
 				return fmt.Errorf("write client pubkey file %q: %w", pubkeyPath, err)
 			}
 
+			// F-005 fix: serialize the entire allocate+RPC+save block across
+			// concurrent `mesh-ctl client init` invocations. Without this lock,
+			// two parallel processes both see an empty allocator state, hand out
+			// the SAME /30 transport subnet to different clients, and the
+			// last-writer-wins save loses one client's allocation. Lock scope
+			// covers loadOrCreateAllocator → alloc.Allocate × N → AddTunnel RPC →
+			// saveTransportState so allocations are atomically reserved on disk
+			// before the next process loads the file.
+			lockPath := filepath.Join(configDir, "transport-state.lock")
+			lockRelease, lockErr := acquireFileLockWithRetry(lockPath, 180*time.Second)
+			if lockErr != nil {
+				return fmt.Errorf("client %q: acquire admin transport-state lock: %w", name, lockErr)
+			}
+			defer lockRelease()
+
 			alloc, err := loadOrCreateAllocator(configDir, topo)
 			if err != nil {
 				return fmt.Errorf("load transport allocator: %w", err)
@@ -621,6 +636,15 @@ func newClientInitCommand() *cobra.Command {
 
 			fmt.Printf("Client %q initialized: %d/%d masters connected.\nPublic key: %s\n",
 				name, mastersConnected, len(client.Masters), hex.EncodeToString(resp.NodePublicKey))
+
+			// F-005 fix: partial-master-failure must surface as non-zero exit so
+			// orchestration scripts (dpext fixture, autopilot) detect the
+			// degraded onboarding instead of seeing exit 0 and proceeding into
+			// data-plane assertions that will fail downstream.
+			if mastersConnected < len(client.Masters) {
+				return fmt.Errorf("client %q: only %d/%d masters connected — partial init (re-run after fixing failed masters or run `mesh-ctl reconcile`)",
+					name, mastersConnected, len(client.Masters))
+			}
 			return nil
 		},
 	}

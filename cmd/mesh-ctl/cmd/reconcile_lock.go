@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -43,6 +44,62 @@ type reconcileLockRecord struct {
 	Hostname  string    `json:"hostname"`
 	StartedAt time.Time `json:"started_at"`
 	TTLNS     int64     `json:"ttl_ns"`
+}
+
+// acquireFileLockWithRetry tries to acquire the lock, polling until timeout.
+// Used by `mesh-ctl client init` (and other admin-side ops) when concurrent
+// invocations may legitimately serialise on shared admin state files
+// (e.g. transport.yml). Each attempt invokes acquireFileLock; live conflicts
+// trigger a 200ms backoff and retry until totalTimeout elapses.
+//
+// Returns the same (release, nil) shape as acquireFileLock on success, or a
+// terminal error on first non-conflict failure (corrupt file, cross-host
+// conflict, etc.) or when timeout is exhausted with the lock still held.
+func acquireFileLockWithRetry(path string, totalTimeout time.Duration) (release func(), err error) {
+	deadline := time.Now().Add(totalTimeout)
+	const pollInterval = 200 * time.Millisecond
+	for {
+		rel, lockErr := acquireFileLock(path)
+		if lockErr == nil {
+			return rel, nil
+		}
+		// Live-conflict messages contain "another reconcile is in progress".
+		// Anything else (corrupt, cross-host, dead PID race) is terminal.
+		if !isLiveConflictErr(lockErr) {
+			return nil, lockErr
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("file lock %q: timeout after %s waiting for concurrent process to release: %w", path, totalTimeout, lockErr)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// isLiveConflictErr reports whether err is a transient acquireFileLock failure
+// that callers should retry. Two classes are retry-able:
+//
+//  1. Live conflict — another process holds the lock on the same host
+//     ("another reconcile is in progress"). Caller should poll until the peer
+//     releases.
+//  2. Read race — tryCreate raced with another process's O_EXCL+write window
+//     and observed an empty / partially-written lock file
+//     ("parse lock JSON: unexpected end of JSON input"). Resolves on the next
+//     poll once the writer has finished.
+//
+// Anything else (cross-host conflict, dead-PID reclaim failure, missing
+// directory, etc.) is terminal and surfaced verbatim.
+func isLiveConflictErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "another reconcile is in progress") {
+		return true
+	}
+	if strings.Contains(msg, "parse lock JSON") {
+		return true
+	}
+	return false
 }
 
 // acquireFileLock tries to acquire an exclusive reconcile lock at path.

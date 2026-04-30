@@ -58,6 +58,17 @@ type MasterRunner struct {
 	startTime time.Time
 	forwarder PacketForwarder // nil if eBPF unavailable (graceful degradation)
 
+	// stateMu serializes saveTransportState calls so that concurrent
+	// AddTunnel / UpdateTunnelPeer invocations do not race the
+	// load+modify+atomic-rename sequence on transport.yml. Without this,
+	// two parallel AddTunnel calls (e.g. `mesh-ctl client init` for two
+	// clients in parallel) can ENOENT on os.Rename(.tmp -> .yml) because
+	// one goroutine deletes the temp file the other just wrote. Separate
+	// from m.mu (which guards the in-memory tunnels map) so saveTransportState
+	// does not block UpdateTunnelPeer's full-RPC critical section. local
+	// tracker issue: F-005 dpext gap-1 (concurrent saveTransportState race).
+	stateMu sync.Mutex
+
 	// applyPeerKeyUpdateFn is a test seam: when non-nil it replaces the
 	// platform-specific applyPeerKeyUpdate method. Tests inject a stub here to
 	// exercise the DifferentKey and ApplyFails paths without wgctrl.
@@ -528,6 +539,11 @@ func (m *MasterRunner) saveTransportState(tunnel *MasterTunnel) error {
 	if tunnel == nil {
 		return fmt.Errorf("master tunnel is required")
 	}
+
+	// Serialize the load+modify+atomic-rename sequence so concurrent
+	// AddTunnel/UpdateTunnelPeer do not race os.Rename on transport.yml.tmp.
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
 
 	state, err := loadNodeTransportState(m.node.config.ConfigDir)
 	if err != nil {

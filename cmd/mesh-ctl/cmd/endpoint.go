@@ -256,6 +256,24 @@ func newEndpointInitCommand() *cobra.Command {
 			}
 			var pendingAddPeers []addPeerWork
 
+			// F-005 fix: pre-compute the alphabetical list of masters bound to this
+			// endpoint. The endpoint creates per-master ifaces lazily via AddPeer
+			// in deterministic order, each on listen_port = config.ListenPort +
+			// count_of_existing_ifaces. So iface for master M listens on
+			// ep.ListenPort + portOffset(boundMasters, M.Name). The master's tunnel
+			// peer_endpoint MUST point at THAT port — using ep.PeerAddr() (topology
+			// default port only) sends every master's WireGuard handshakes to the
+			// FIRST iface (alphabetical[0]), which has a different keypair → drop.
+			// Latent because data-plane reachability tests only exercise paths via
+			// alphabetical-first master; F-005 fixture surfaces it via ECMP that
+			// hashes through master-02.
+			boundMasterNames := make([]string, 0, len(topo.Masters))
+			for _, m := range topo.Masters {
+				if containsName(m.Endpoints, ep.Name) {
+					boundMasterNames = append(boundMasterNames, m.Name)
+				}
+			}
+
 			// FR-2: adminstate.SetPubkey issues all master RPCs inside the callback.
 			// The pubkey file is written ONLY after every master acknowledges the new key.
 			// If any master fails, the callback returns an error and the file is untouched.
@@ -303,10 +321,20 @@ func newEndpointInitCommand() *cobra.Command {
 						fmt.Fprintf(os.Stderr, "warning: build master allowed_ips for endpoint %q / master %q: %v\n", ep.Name, master.Name, maipErr)
 						masterAllowedIPs = []string{allocation.Subnet.String(), ep.OverlayIP + "/32"}
 					}
+					// F-005 fix: per-master endpoint host. ep.PeerAddr() returns
+					// epHost:topology_listen_port — correct only for the alphabetical-
+					// first master. For every other master M, the endpoint's
+					// wg-{M.Name} iface listens on ep.ListenPort + portOffset(boundMasters, M.Name).
+					epHost := ep.PeerHost
+					if epHost == "" {
+						epHost = ep.Host
+					}
+					perMasterEndpointHost := fmt.Sprintf("%s:%d", epHost, ep.ListenPort+portOffset(boundMasterNames, master.Name))
+
 					masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
 					addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{
 						Name:                ep.Name,
-						EndpointHost:        ep.PeerAddr(),
+						EndpointHost:        perMasterEndpointHost,
 						OverlayIp:           ep.OverlayIP,
 						BalancerIp:          balancerIP,
 						PeerPublicKey:       resp.NodePublicKey,
@@ -334,7 +362,7 @@ func newEndpointInitCommand() *cobra.Command {
 					// no dedup risk with a single peer. AllowedIPs = [transport_subnet,
 					// master_overlay/32, other_endpoint_overlay/32 ...]. The /32 entries
 					// also install kernel routes on the endpoint side via ConfigureTransport.
-					allowedIPs, aipErr := topology.BuildMinimalAllowedIPsForEndpointPeer(master.OverlayIP, allocation.Subnet.String())
+					allowedIPs, aipErr := topology.BuildMinimalAllowedIPsForEndpointPeer(topo, master.OverlayIP, allocation.Subnet.String())
 					if aipErr != nil {
 						fmt.Fprintf(os.Stderr, "warning: build allowed_ips for master %q / endpoint %q: %v\n", master.Name, ep.Name, aipErr)
 						allowedIPs = []string{allocation.Subnet.String(), master.OverlayIP + "/32"}
