@@ -1,0 +1,5 @@
+# F-004 FR-2 baseline directory.
+# The first real operator run on warm Docker daemon (WSL2/Linux) writes
+# iperf3.json here. This .gitkeep ensures the directory exists in the
+# repo before that commit. Per spec C1 + ADR-005, baseline mutations
+# are operator-only via `bash modules/fr2-iperf3-baseline.sh --update-baseline`.

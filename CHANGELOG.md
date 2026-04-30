@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **F-004 extended data-plane test coverage** — new harness `tests/simulation/data-plane-extended.sh` orchestrates 6 FR modules under `tests/simulation/modules/` covering data-plane behaviour beyond the route-presence + base-reachability gates of `issue-92-rotation.sh`:
+  - **FR-1** flow-distribution (fr1-flow-distribution.sh) — 200 unique-5-tuple UDP flows, per-master tcpdump count, asserts [40%, 60%] balance per NFR-2.
+  - **FR-2** iperf3 multi-flow throughput baseline (fr2-iperf3-baseline.sh) — `iperf3 -P 8` aggregate Mbps vs committed `tests/simulation/baseline/iperf3.json`, ±20% tolerance, `--update-baseline` flag is the ONLY way to mutate baseline (no auto-update — spec C1).
+  - **FR-3** conntrack sticky-session preservation (fr3-conntrack-sticky.sh) — 50 TCP connections, `mesh-ctl reconcile` rebuild, asserts 100% existing flows preserve original nexthop master. SKIP cleanly if conntrack tool absent (NFR-5).
+  - **FR-4** failover timing (fr4-failover-timing.sh) — persistent ping endpoint→endpoint, `docker kill master-01` at T0, asserts NFR-1 (recovery ≤10s, lost ≤10+2 packets).
+  - **FR-5** asymmetric routing detection (fr5-asymmetric.sh) — ICMP echo, per-master tcpdump on forward + reverse paths, asserts forward_master == reverse_master.
+  - **FR-6** sticky session migration (fr6-sticky-migration.sh) — `docker pause master-01`, asserts new connections route to master-02 within 30s, existing flows drop per CR-002 contract, recovery on unpause.
+- Multi-step WSL2 / Docker-Desktop guard chain in orchestrator per spec clarification C2: `uname -s = Linux` + `uname -r grep microsoft` (informational) + `docker info ServerVersion not desktop` + cgroup v2 detection. Any failure → exit 0 + 3-field informative message (failed gate, observed value, suggested remediation).
+- Local helper `tools/github-panda/` (gitignored) — bash + PowerShell wrapper around `gh` / `git push` / `curl` with `coonfuuseed-paandaa` PAT inline. See AGENTS.md "LOCAL TOOLING" section for install procedure on new machines.
+
+### Known limitations (CR-003)
+- **FR-1 + FR-6 are fixture-N/A on the current `issue-92-rotation.sh`-derived 5-node topology** — both presume client-mode container as flow source / connection initiator. Per-flow ECMP and healthcheck-driven nexthop removal are client-mode features (`pkg/node/client_linux.go::EnableL4Hash`); endpoint→endpoint flows use static per-pair routing by design. FR-1 + FR-6 ship as future-regression guards; PASS-path requires fixture extension deferred to F-005 candidate spec.
+- **Release-gate inclusion of `data-plane-extended.sh` is DEFERRED** — AGENTS.md does NOT yet add the orchestrator to the release-gate list. T-010 (CR-003 conditional) wires release-gate step only after F-005 ships fixture client-mode addition AND FR-1 + FR-6 reach reachable PASS-path AND TD-INTEGRATION (FR-2 install race + FR-4 endpoint failover + FR-5/6 post-kill cascade) is resolved.
+
+### Internal
+- F-004 SpecKit artifacts under `.agent/specs/F-004-extended-data-plane-tests/` document spec / plan / architecture / tasks / 3 CRs (CR-001 initial scope shipped, CR-002 validation hardening closed, CR-003 fixture-prerequisite open).
+
 ## [1.14.1] — 2026-04-29 — release-quality patch
 
 Patch release clearing technical debt observed during v1.14.0 ship:

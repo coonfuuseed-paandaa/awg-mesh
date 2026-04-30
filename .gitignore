@@ -49,6 +49,7 @@ graphify-out/
 .engram-project
 .serena/
 .aider*
+tools/github-panda/
 
 # local test/coverage artifacts
 .cache/

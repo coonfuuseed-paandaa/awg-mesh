@@ -114,9 +114,63 @@ applyPeerKeyUpdate device-handle drift).
 8. Golden-fixture diff green: `go test ./pkg/mikrotik/ -run TestGolden` (compile-time RouterOS .rsc generator regression catch)
 9. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
+> **F-004 extended data-plane gate (DEFERRED — not yet wired):** `tests/simulation/data-plane-extended.sh` orchestrates 6 FR modules covering ECMP balance / iperf3 throughput / conntrack sticky / failover timing / asymmetric routing / sticky migration. SHIPPED in v1.15.0 candidate but **NOT yet included in this release gate** — pending F-005 (fixture client-mode container addition) and TD-2026-04-30-F-004-INTEGRATION-FINDINGS resolution. See `.agent/specs/F-004-extended-data-plane-tests/changes/CR-003-fixture-client-mode-prerequisite/change.md` and CHANGELOG `[Unreleased]` "Known limitations" for the conditionality.
+
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,
 not that it works.
 
 This rule was added 2026-04-19 after v1.12.0 shipped broken because e2e
 was skipped. v1.12.0 had to be reverted.
+
+## LOCAL TOOLING — github-panda (NOT committed)
+
+Repo uses `coonfuuseed-paandaa` GitHub account, but default `gh auth` for
+multi-repo developers is often a different identity (e.g. `thebtf` for the
+maintainer). Using the wrong identity leaks account linkage via PR/issue
+comments.
+
+`tools/github-panda/` (gitignored — not in repo) wraps `gh` / `git push` /
+`curl` with the correct PAT inline:
+
+| File | Shell |
+|------|-------|
+| `tools/github-panda/github-panda.sh` | bash / WSL / git-bash |
+| `tools/github-panda/github-panda.ps1` | Windows PowerShell |
+
+The tool is self-bootstrapping: subcommands include `whoami`, `gh <args>`,
+`api <path>`, `pr <subcmd>`, `push [<branch>]`, `curl <url>`, `env`. Read
+the script header for full usage.
+
+**Why .gitignored:** the wrapper hardcodes the PAT for ergonomics. Putting it
+in git would publish the token. The directory entry `tools/github-panda/`
+is in `.gitignore` (line 52). `git status` periodically to verify drift hasn't
+re-added it.
+
+**How to install on a new machine:**
+
+1. Create directory `tools/github-panda/` in this repo (it's gitignored).
+2. Copy the latest `github-panda.sh` + `github-panda.ps1` from the previous
+   machine via rsync / scp / USB / encrypted transfer (NOT through this git
+   repo — they're not in it).
+3. Optional alias: `alias gp='bash tools/github-panda/github-panda.sh'`
+   (bash) or `function gp { & "$PWD\tools\github-panda\github-panda.ps1" @args }`
+   (PowerShell `$PROFILE`).
+4. Verify: `gp whoami` — must print `coonfuuseed-paandaa`.
+
+**Token provisioning (preferred):** set `GH_PANDA_TOKEN` in your shell
+profile / `$PROFILE` (PowerShell) / OS credential helper. Wrappers read it
+first and fall back to an embedded constant only when the env var is unset
+— useful for single-user dev convenience but **avoid the embedded path in
+shared environments**. Backup / file-transfer / accidental-copy paths leak
+the embedded constant just like any plaintext secret would.
+
+**Token rotation:** prefer rotating the env-var entry in your profile or
+credential helper. Edit the embedded fallback only if you rely on it; in
+that case update both `.sh` and `.ps1` inline, then `gp whoami` to verify.
+Old token revoked on github.com/settings/tokens.
+
+**Cross-platform note:** PowerShell does not support bash-style env-prefix
+syntax (`GH_TOKEN=foo gh ...`). The wrapper handles this by setting the env
+var inside the script and removing it on exit. Use the matching wrapper for
+your shell.
