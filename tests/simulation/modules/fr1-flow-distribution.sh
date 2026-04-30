@@ -235,9 +235,10 @@ fr1::preflight_ecmp_routes() {
     if [[ -n "${SRC_CONTAINER}" ]]; then
         local count
         count=$(docker exec "${SRC_CONTAINER}" sh -c \
-            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop" 2>/dev/null \
-            || printf '0')
+            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop || true" \
+            2>/dev/null)
         count="$(printf '%s' "${count}" | tr -d '[:space:]')"
+        [[ -z "${count}" ]] && count=0
         if [[ "${count}" != "2" ]]; then
             printf '[FR-1] FAIL: client %s ECMP route degraded (nexthop_count=%s, expected=2).\n' \
                 "${SRC_CONTAINER}" "${count}" >&2
@@ -247,9 +248,10 @@ fr1::preflight_ecmp_routes() {
     if [[ -n "${SRC_CONTAINER_SECONDARY}" ]]; then
         local count2
         count2=$(docker exec "${SRC_CONTAINER_SECONDARY}" sh -c \
-            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop" 2>/dev/null \
-            || printf '0')
+            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop || true" \
+            2>/dev/null)
         count2="$(printf '%s' "${count2}" | tr -d '[:space:]')"
+        [[ -z "${count2}" ]] && count2=0
         if [[ "${count2}" != "2" ]]; then
             printf '[FR-1] FAIL: client %s ECMP route degraded (nexthop_count=%s, expected=2).\n' \
                 "${SRC_CONTAINER_SECONDARY}" "${count2}" >&2

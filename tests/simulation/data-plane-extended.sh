@@ -205,6 +205,15 @@ COMPOSE_FILE=""
 # ---------------------------------------------------------------------------
 dpext::cleanup() {
     local rc=$?
+    if [[ "${NO_CLEANUP:-0}" == "1" ]]; then
+        printf '\n[cleanup] NO_CLEANUP=1 — keeping containers + temp files for inspection.\n'
+        printf '          topology:    %s\n' "${TOPO_FILE}"
+        printf '          compose:     %s\n' "${COMPOSE_FILE}"
+        printf '          config-dir:  %s\n' "${CTL_CONFIG_DIR}"
+        printf '          tear down manually: docker compose -p %s -f %s down -v\n' \
+            "${COMPOSE_PROJECT}" "${COMPOSE_FILE}"
+        return "${rc}"
+    fi
     printf '\n[cleanup] Tearing down dpext containers and temp files...\n'
     if [[ -n "${COMPOSE_FILE}" && -f "${COMPOSE_FILE}" ]]; then
         docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" \
@@ -558,7 +567,12 @@ services:
 
   # F-005: client-mode containers for FR-1 cross-source ECMP and FR-6 sticky
   # migration. Both clients carry sysctls.fib_multipath_hash_policy=1 to
-  # exercise per-flow 5-tuple hashing on the host kernel (NFR-2).
+  # exercise per-flow 5-tuple hashing on the host kernel (NFR-2). Topology
+  # YAML is bind-mounted at /config/mesh-topology.yml + MESH_TOPOLOGY env set
+  # so client_linux.go::overlaySpaceCIDR() returns non-empty and ECMP installs
+  # the full overlay range (172.21.92.0/24) — not just balancer-IP/32. Without
+  # topology mount, c.node.topology is nil and rebuildClientECMP installs only
+  # the balancer route, which is race-prone with healthcheck cycles.
   ${CLIENT_01}:
     image: ${NODE_IMAGE}
     container_name: ${CTR_CLIENT_01}
@@ -569,6 +583,9 @@ services:
       net.ipv4.fib_multipath_hash_policy: 1
     environment:
       MESH_TOKEN_HASH: "${TOKEN_CLIENT_01_ESC}"
+      MESH_TOPOLOGY: /config/mesh-topology.yml
+    volumes:
+      - ${TOPO_FILE}:/config/mesh-topology.yml:ro
     networks:
       dpext:
         ipv4_address: ${CLIENT_01_BRIDGE}
@@ -594,6 +611,9 @@ services:
       net.ipv4.fib_multipath_hash_policy: 1
     environment:
       MESH_TOKEN_HASH: "${TOKEN_CLIENT_02_ESC}"
+      MESH_TOPOLOGY: /config/mesh-topology.yml
+    volumes:
+      - ${TOPO_FILE}:/config/mesh-topology.yml:ro
     networks:
       dpext:
         ipv4_address: ${CLIENT_02_BRIDGE}
@@ -825,22 +845,43 @@ topo::client_preflight() {
     )
     local fail=0
     local entry ctr name overlay dst nexthops
+    # F-005: ECMP route is installed by rebuildClientECMP() which only counts
+    # tunnels confirmed Healthy by the healthcheck cycle (interval=5s). First
+    # ECMP install fires immediately after `mesh-ctl client init` returns —
+    # before either tunnel has a healthy verdict — so we poll up to
+    # ECMP_SETTLE_TIMEOUT seconds for the route to converge to 2 nexthops.
+    local ECMP_SETTLE_TIMEOUT=30
+    local ECMP_POLL_INTERVAL=2
     for entry in "${clients[@]}"; do
         ctr="$(printf '%s' "${entry}" | cut -d: -f1)"
         name="$(printf '%s' "${entry}" | cut -d: -f2)"
         overlay="$(printf '%s' "${entry}" | cut -d: -f3)"
-        # ECMP nexthop count assertion — overlay range MUST have 2 nexthops.
-        nexthops=$(docker exec "${ctr}" sh -c \
-            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop" 2>/dev/null \
-            || printf '0')
-        nexthops="$(printf '%s' "${nexthops}" | tr -d '[:space:]')"
+        # Poll until route_count==2 OR timeout. grep -c always writes ONE integer line;
+        # pipefail-safe via `|| true` so we never get the dual-write '00' artefact.
+        local elapsed=0
+        nexthops=0
+        while (( elapsed < ECMP_SETTLE_TIMEOUT )); do
+            nexthops=$(docker exec "${ctr}" sh -c \
+                "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop || true" \
+                2>/dev/null)
+            nexthops="$(printf '%s' "${nexthops}" | tr -d '[:space:]')"
+            [[ -z "${nexthops}" ]] && nexthops=0
+            [[ "${nexthops}" == "2" ]] && break
+            sleep "${ECMP_POLL_INTERVAL}"
+            elapsed=$(( elapsed + ECMP_POLL_INTERVAL ))
+        done
         if [[ "${nexthops}" != "2" ]]; then
-            printf '[FAIL] failed_leg=%s ECMP route degraded\n' "${name}" >&2
+            printf '[FAIL] failed_leg=%s ECMP route degraded after %ss settle\n' \
+                "${name}" "${elapsed}" >&2
             printf '       observed=route_count=%s expected=2\n' "${nexthops}" >&2
-            printf '       remediation=verify mesh-ctl client init succeeded; check %s init log\n' "/tmp/dpext-${name}-init.log" >&2
+            printf '       remediation=verify mesh-ctl client init + healthcheck cycle; check %s init log\n' \
+                "/tmp/dpext-${name}-init.log" >&2
+            # Dump full route table for diagnostic.
+            docker exec "${ctr}" ip route 2>&1 | sed "s/^/  [route ${name}] /" >&2 || true
             fail=$(( fail + 1 ))
             continue
         fi
+        printf '[topo]   %s ECMP converged (2 nexthops, %ss settle)\n' "${name}" "${elapsed}"
         # Overlay reachability per endpoint.
         for dst in "${endpoint_overlays[@]}"; do
             # Best-effort warmup pass to absorb first-handshake drop.
