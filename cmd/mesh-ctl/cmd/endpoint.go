@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -329,7 +331,10 @@ func newEndpointInitCommand() *cobra.Command {
 					if epHost == "" {
 						epHost = ep.Host
 					}
-					perMasterEndpointHost := fmt.Sprintf("%s:%d", epHost, ep.ListenPort+portOffset(boundMasterNames, master.Name))
+					perMasterEndpointHost := net.JoinHostPort(
+						epHost,
+						strconv.Itoa(ep.ListenPort+portOffset(boundMasterNames, master.Name)),
+					)
 
 					masterCtx, masterCancel := context.WithTimeout(context.Background(), 30*time.Second)
 					addResp, addErr := masterClient.Agent().AddTunnel(masterCtx, &proto.AddTunnelRequest{

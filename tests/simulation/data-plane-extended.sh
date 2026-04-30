@@ -34,16 +34,16 @@
 #     etc. env vars set to dpext-prefixed names so its defaults
 #     (issue92rot-prefixed) get overridden.
 #
-# CR-003 expected-fail handling:
-#   * FR-1 (200/0 distribution) is fixture-N/A — endpoint→endpoint flows
-#     are pre-pinned per (src_ep,dst_ep) pair (no per-flow ECMP without
-#     a client-mode container). Module ships as future-regression guard.
-#   * FR-6 A1 is fixture-N/A — healthcheck-driven nexthop removal is
-#     a client-mode feature; A2+A3 remain valid PASS gates.
-#   * Orchestrator EXIT 0 if FR-1 + FR-6 are the ONLY failures (expected
-#     state); EXIT 1 on any FR-2/FR-3/FR-4/FR-5 failure (real regression);
-#     EXIT 3 if FR-1 OR FR-6 unexpectedly PASS (fixture upgraded — operator
-#     should reconcile spec).
+# F-005 exit semantics (supersedes CR-003 expected-fail handling):
+#   * Two `awg-mesh-node --mode client` containers (dpext-client-01,
+#     dpext-client-02) drive FR-1 + FR-6 from real client sources, closing
+#     the prior fixture-N/A gap. Both modules MUST reach reachable PASS;
+#     any FR FAIL = real regression.
+#   * EXPECTED_FAIL is left empty (no module is fixture-N/A) but kept as a
+#     forward-compat seam — future modules can opt into the bypass list
+#     without re-architecting the exit-code calculation.
+#   * Orchestrator EXIT 0 only when ALL six FR modules PASS;
+#     EXIT 1 on any module FAIL or fixture bootstrap failure.
 #
 # Runtime budget: ≤5 min on warm Docker daemon (NFR-4).
 #   * Topology bootstrap ~90s

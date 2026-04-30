@@ -199,8 +199,10 @@ func (m *VRFManager) UnslaveInterface(ifaceName string) error {
 
 // Teardown removes the anchor dummy interface and the VRF master device. Any
 // previously enslaved interfaces are automatically unenslaved by the kernel.
-// Errors from individual delete operations are logged as warnings but do not
-// abort the teardown sequence — the method always returns nil.
+// Errors from individual delete operations are silently ignored and do not
+// abort the teardown sequence — the method always returns nil. Callers that
+// need diagnostic visibility on teardown errors should wrap VRFManager and
+// observe via netlink themselves.
 func (m *VRFManager) Teardown() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

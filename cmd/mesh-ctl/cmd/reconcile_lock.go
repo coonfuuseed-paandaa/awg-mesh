@@ -96,7 +96,11 @@ func isLiveConflictErr(err error) bool {
 	if strings.Contains(msg, "another reconcile is in progress") {
 		return true
 	}
-	if strings.Contains(msg, "parse lock JSON") {
+	// Retry only transient partial-write races — empty-input / EOF parse failures
+	// indicate the writer is mid-write. Other JSON parse errors signal a corrupt
+	// lock file and must fail fast (operator intervention required).
+	if strings.Contains(msg, "parse lock JSON") &&
+		(strings.Contains(msg, "unexpected end of JSON input") || strings.Contains(msg, "EOF")) {
 		return true
 	}
 	return false

@@ -634,17 +634,19 @@ func newClientInitCommand() *cobra.Command {
 				return fmt.Errorf("save client init state: %w", err)
 			}
 
-			fmt.Printf("Client %q initialized: %d/%d masters connected.\nPublic key: %s\n",
-				name, mastersConnected, len(client.Masters), hex.EncodeToString(resp.NodePublicKey))
-
 			// F-005 fix: partial-master-failure must surface as non-zero exit so
 			// orchestration scripts (dpext fixture, autopilot) detect the
 			// degraded onboarding instead of seeing exit 0 and proceeding into
-			// data-plane assertions that will fail downstream.
+			// data-plane assertions that will fail downstream. Print partial vs
+			// full status separately so stdout matches the actual outcome.
 			if mastersConnected < len(client.Masters) {
+				fmt.Printf("Client %q partially initialized: %d/%d masters connected.\nPublic key: %s\n",
+					name, mastersConnected, len(client.Masters), hex.EncodeToString(resp.NodePublicKey))
 				return fmt.Errorf("client %q: only %d/%d masters connected — partial init (re-run after fixing failed masters or run `mesh-ctl reconcile`)",
 					name, mastersConnected, len(client.Masters))
 			}
+			fmt.Printf("Client %q initialized: %d/%d masters connected.\nPublic key: %s\n",
+				name, mastersConnected, len(client.Masters), hex.EncodeToString(resp.NodePublicKey))
 			return nil
 		},
 	}

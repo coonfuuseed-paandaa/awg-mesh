@@ -114,7 +114,16 @@ MASTER_02_CTR="${MASTER_02_CTR:-issue92rot-mst-ru-02}"
 SRC_CONTAINER="${SRC_CONTAINER:-}"
 SRC_CONTAINER_SECONDARY="${SRC_CONTAINER_SECONDARY:-}"
 SRC_ENDPOINT_CTR="${SRC_ENDPOINT_CTR:-issue92rot-node-asia-01}"
-# Resolve effective primary source: SRC_CONTAINER wins, else SRC_ENDPOINT_CTR (legacy).
+# Cross-source mode (SRC_CONTAINER_SECONDARY set) requires explicit primary
+# SRC_CONTAINER. Falling back to legacy SRC_ENDPOINT_CTR mixes endpoint+client
+# scenarios and produces misleading FR-1 verdicts (skips primary ECMP-route
+# validation). Fail fast.
+if [[ -n "${SRC_CONTAINER_SECONDARY}" && -z "${SRC_CONTAINER}" ]]; then
+    printf '[FR-1] FAIL: SRC_CONTAINER_SECONDARY requires SRC_CONTAINER (primary client).\n' >&2
+    printf '       observed=SRC_CONTAINER empty, SRC_CONTAINER_SECONDARY=%s\n' "${SRC_CONTAINER_SECONDARY}" >&2
+    exit 2
+fi
+# Resolve effective primary source: SRC_CONTAINER wins, else SRC_ENDPOINT_CTR (legacy single-source mode).
 if [[ -n "${SRC_CONTAINER}" ]]; then
     EFFECTIVE_SRC_CTR="${SRC_CONTAINER}"
 else
@@ -432,7 +441,8 @@ fr1::preflight_ping || exit 2
 if (( CROSS_SOURCE_MODE == 1 )); then
     if [[ -z "${SRC_INGRESS_IFACE_SECONDARY}" ]]; then
         printf '[FR-1] FAIL: SRC_CONTAINER_SECONDARY set but SRC_INGRESS_IFACE_SECONDARY missing.\n' >&2
-        printf '       Pass it from orchestrator (e.g. SRC_INGRESS_IFACE_SECONDARY=wg-${SRC_CONTAINER_SECONDARY##*-}).\n' >&2
+        printf '       Pass it from orchestrator (e.g. SRC_INGRESS_IFACE_SECONDARY=wg-%s).\n' \
+            "${SRC_CONTAINER_SECONDARY##*-}" >&2
         exit 2
     fi
     MASTER_01_PCAP_PRIMARY="/tmp/fr1-master-01-primary.pcap"
