@@ -81,7 +81,7 @@
 #   FR3_SELF_TEST                             "migrate-half" to test the test
 #
 # Exit:
-#   0  PASS or skip (non-Linux / conntrack absent / topology not running but skip OK)
+#   0  PASS or skip (non-Linux / conntrack absent)
 #   1  assertion failed (any flow migrated nexthop, or self-test caught regression)
 #   2  environment error (topology not running, tools install failed, no traffic)
 set -euo pipefail
@@ -182,14 +182,28 @@ cleanup() {
             >/dev/null 2>&1 || true
     done
     if [[ -n "${SRC_EP_CTR:-}" ]]; then
-        docker exec "${SRC_EP_CTR}" sh -c \
-            'pkill -f "socat.*fr3-conn" >/dev/null 2>&1' \
-            >/dev/null 2>&1 || true
+        # Connectors don't have predictable argv text — match against the
+        # actual socat argv (TCP4:<dst>:<port>) which IS in the process
+        # command line. The fr3-conn-${port} tag is in payload only and
+        # never reached pkill -f. Kill the parent echo-loop sleep too.
+        docker exec "${SRC_EP_CTR}" sh -c "
+            pkill -f 'socat .* TCP4:${DST_EP_OVERLAY}:${LISTENER_PORT}' >/dev/null 2>&1 || true
+            pkill -f 'while \\[ .* -lt 600 \\]' >/dev/null 2>&1 || true
+        " >/dev/null 2>&1 || true
     fi
     if [[ -n "${DST_EP_CTR:-}" ]]; then
-        docker exec "${DST_EP_CTR}" sh -c \
-            'pkill -f "socat.*fr3-listen" >/dev/null 2>&1' \
-            >/dev/null 2>&1 || true
+        # Listener writes its PID to /tmp/fr3-listen.pid at start — use it
+        # directly. pkill argv match by LISTEN-port also works (port IS in
+        # socat argv unlike the fr3-listen string which only appears in
+        # the log redirect target).
+        docker exec "${DST_EP_CTR}" sh -c "
+            if [ -f /tmp/fr3-listen.pid ]; then
+                kill \$(cat /tmp/fr3-listen.pid) 2>/dev/null || true
+                rm -f /tmp/fr3-listen.pid
+            fi
+            pkill -f 'socat TCP4-LISTEN:${LISTENER_PORT}' >/dev/null 2>&1 || true
+            rm -f /tmp/fr3-listen.log
+        " >/dev/null 2>&1 || true
     fi
     rm -f "${PORT_MAP_FILE}" 2>/dev/null || true
 }

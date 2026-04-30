@@ -715,7 +715,7 @@ dpext::run_module() {
     local script_path="${MODULES_DIR}/${script_name}"
 
     printf '\n==== %s: %s ====\n' "${fr_id}" "${description}"
-    if [[ ! -x "${script_path}" && ! -r "${script_path}" ]]; then
+    if [[ ! -f "${script_path}" || ! -r "${script_path}" ]]; then
         printf '[%s] ERROR: module script not found at %s\n' "${fr_id}" "${script_path}" >&2
         FR_VERDICT[${fr_id}]="ERROR"
         FR_EXIT[${fr_id}]=2

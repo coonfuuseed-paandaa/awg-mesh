@@ -412,7 +412,7 @@ fr6::assert_new_flows_migrated() {
 # ---------------------------------------------------------------------------
 fr6::observe_existing_flows() {
     local pkt_count="$1"
-    printf '  [A2] post-T0 packets on paused master with pre-pause src ports: %d\n' \
+    printf '  [A2] post-T0 pre-pause src ports observed on other-master: %d\n' \
         "${pkt_count}"
     if (( pkt_count <= EXISTING_FLOW_TOLERANCE )); then
         printf '[FR-6] OBSERVE (A2): %d packets ≤ ±%d tolerance — existing-flow drop per CR-002 contract.\n' \
