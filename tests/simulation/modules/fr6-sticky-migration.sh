@@ -135,7 +135,15 @@ done
 # ---------------------------------------------------------------------------
 MASTER_PAUSE_CTR="${MASTER_PAUSE_CTR:-issue92rot-mst-ru-01}"
 MASTER_OTHER_CTR="${MASTER_OTHER_CTR:-issue92rot-mst-ru-02}"
+# F-005 FR-4: SRC_CONTAINER overrides SRC_INITIATOR_CTR (legacy). Backward-compat
+# preserved — standalone runs against the issue-92 fixture continue to honour
+# SRC_INITIATOR_CTR per AC-3.1. SRC_CONTAINER_SECONDARY is unused by FR-6
+# (single-source connection migration test by design).
+SRC_CONTAINER="${SRC_CONTAINER:-}"
 SRC_INITIATOR_CTR="${SRC_INITIATOR_CTR:-issue92rot-ep-us-01}"
+if [[ -n "${SRC_CONTAINER}" ]]; then
+    SRC_INITIATOR_CTR="${SRC_CONTAINER}"
+fi
 SRC_INITIATOR_OVERLAY="${SRC_INITIATOR_OVERLAY:-172.21.92.34}"
 SRC_INITIATOR_NAME="${SRC_INITIATOR_NAME:-ep-us-01}"
 DST_TARGET_CTR="${DST_TARGET_CTR:-issue92rot-node-asia-02}"

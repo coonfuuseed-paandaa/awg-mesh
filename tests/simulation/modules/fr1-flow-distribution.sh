@@ -106,15 +106,31 @@ done
 # ---------------------------------------------------------------------------
 MASTER_01_CTR="${MASTER_01_CTR:-issue92rot-mst-ru-01}"
 MASTER_02_CTR="${MASTER_02_CTR:-issue92rot-mst-ru-02}"
+# F-005 FR-4: SRC_CONTAINER (primary) + optional SRC_CONTAINER_SECONDARY
+# (cross-source 50/50 split — US4 cross-source ECMP regression catch).
+# Backward-compat: legacy SRC_ENDPOINT_CTR is the fallback when SRC_CONTAINER
+# is unset. Standalone runs against the issue-92 fixture continue to honour
+# SRC_ENDPOINT_CTR per AC-3.1.
+SRC_CONTAINER="${SRC_CONTAINER:-}"
+SRC_CONTAINER_SECONDARY="${SRC_CONTAINER_SECONDARY:-}"
 SRC_ENDPOINT_CTR="${SRC_ENDPOINT_CTR:-issue92rot-node-asia-01}"
-# Master-side iface receiving traffic from SRC_ENDPOINT. Master mode names
-# its per-endpoint wg ifaces "wg-<endpoint-name>" (pkg/node/master.go); both
-# masters carry the same iface name for the same source endpoint, so we can
-# use one constant. tcpdump in this alpine build does NOT honour wildcard
-# patterns like "wg-+" (devolves to "no such device") — capture must target
-# a specific iface. Using the source endpoint's ingress iface counts the
-# packet exactly once on whichever master the source-endpoint kernel chose.
+# Resolve effective primary source: SRC_CONTAINER wins, else SRC_ENDPOINT_CTR (legacy).
+if [[ -n "${SRC_CONTAINER}" ]]; then
+    EFFECTIVE_SRC_CTR="${SRC_CONTAINER}"
+else
+    EFFECTIVE_SRC_CTR="${SRC_ENDPOINT_CTR}"
+fi
+# F-005 CHK020: reject SRC_CONTAINER == SRC_CONTAINER_SECONDARY typo (rc=2).
+if [[ -n "${SRC_CONTAINER_SECONDARY}" && "${SRC_CONTAINER_SECONDARY}" == "${EFFECTIVE_SRC_CTR}" ]]; then
+    printf '[FR-1] FAIL: SRC_CONTAINER and SRC_CONTAINER_SECONDARY must be distinct container names.\n' >&2
+    printf '       observed=both="%s"\n' "${EFFECTIVE_SRC_CTR}" >&2
+    exit 2
+fi
+# Master-side iface receiving traffic from the source. Master mode names its
+# per-source ifaces "wg-<source-name>"; both masters carry the same iface name.
+# When secondary source is set, its iface is named "wg-<secondary-name>".
 SRC_INGRESS_IFACE="${SRC_INGRESS_IFACE:-wg-node-asia-01}"
+SRC_INGRESS_IFACE_SECONDARY="${SRC_INGRESS_IFACE_SECONDARY:-}"
 DST_OVERLAY_IP="${DST_OVERLAY_IP:-172.21.92.36}"
 FLOW_COUNT="${FLOW_COUNT:-200}"
 UDP_DEST_PORT="${UDP_DEST_PORT:-9999}"
@@ -138,6 +154,8 @@ FLOW_DRAIN_S=5        # wait after flow generation for tcpdump buffers to flush
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC2329  # invoked via trap below
 cleanup() {
+    # Glob covers both legacy (fr1-master-01.pcap) and F-005 cross-source
+    # (fr1-master-01-primary.pcap / fr1-master-01-secondary.pcap) artifacts.
     for ctr in "${MASTER_01_CTR}" "${MASTER_02_CTR}"; do
         docker exec "${ctr}" sh -c \
             'pkill -f "tcpdump.*fr1-master" >/dev/null 2>&1; rm -f /tmp/fr1-master-*.pcap' \
@@ -183,18 +201,62 @@ fr1::ensure_binary() {
 }
 
 # Pre-warm the overlay path. Same handshake-warmup pattern as fr4 / R7.2.
+# Targets EFFECTIVE_SRC_CTR (resolved primary source).
 fr1::preflight_ping() {
-    docker exec "${SRC_ENDPOINT_CTR}" \
+    docker exec "${EFFECTIVE_SRC_CTR}" \
         ping -c 1 -W 5 "${DST_OVERLAY_IP}" >/dev/null 2>&1 || true
-    docker exec "${SRC_ENDPOINT_CTR}" \
+    docker exec "${EFFECTIVE_SRC_CTR}" \
         ping -c 1 -W 5 "${DST_OVERLAY_IP}" >/dev/null 2>&1 || true
-    if ! docker exec "${SRC_ENDPOINT_CTR}" \
+    if ! docker exec "${EFFECTIVE_SRC_CTR}" \
             ping -c 2 -W 2 "${DST_OVERLAY_IP}" >/dev/null 2>&1; then
         printf '[FR-1] FAIL: pre-flight ping %s -> %s failed.\n' \
-            "${SRC_ENDPOINT_CTR}" "${DST_OVERLAY_IP}" >&2
+            "${EFFECTIVE_SRC_CTR}" "${DST_OVERLAY_IP}" >&2
         printf '       Topology not data-plane-ready; nothing to measure.\n' >&2
-        return 1
+        return 2
     fi
+    if [[ -n "${SRC_CONTAINER_SECONDARY}" ]]; then
+        docker exec "${SRC_CONTAINER_SECONDARY}" \
+            ping -c 1 -W 5 "${DST_OVERLAY_IP}" >/dev/null 2>&1 || true
+        docker exec "${SRC_CONTAINER_SECONDARY}" \
+            ping -c 1 -W 5 "${DST_OVERLAY_IP}" >/dev/null 2>&1 || true
+        if ! docker exec "${SRC_CONTAINER_SECONDARY}" \
+                ping -c 2 -W 2 "${DST_OVERLAY_IP}" >/dev/null 2>&1; then
+            printf '[FR-1] FAIL: pre-flight ping %s -> %s failed (secondary).\n' \
+                "${SRC_CONTAINER_SECONDARY}" "${DST_OVERLAY_IP}" >&2
+            return 2
+        fi
+    fi
+}
+
+# F-005 CHK019: pre-flight ECMP-route assert. BOTH source containers MUST have
+# 2 nexthops in their overlay-range route entry. Single-source mode exits early
+# without checking secondary. Failure → rc=2 (env error) BEFORE flow generation.
+fr1::preflight_ecmp_routes() {
+    if [[ -n "${SRC_CONTAINER}" ]]; then
+        local count
+        count=$(docker exec "${SRC_CONTAINER}" sh -c \
+            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop" 2>/dev/null \
+            || printf '0')
+        count="$(printf '%s' "${count}" | tr -d '[:space:]')"
+        if [[ "${count}" != "2" ]]; then
+            printf '[FR-1] FAIL: client %s ECMP route degraded (nexthop_count=%s, expected=2).\n' \
+                "${SRC_CONTAINER}" "${count}" >&2
+            return 2
+        fi
+    fi
+    if [[ -n "${SRC_CONTAINER_SECONDARY}" ]]; then
+        local count2
+        count2=$(docker exec "${SRC_CONTAINER_SECONDARY}" sh -c \
+            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop" 2>/dev/null \
+            || printf '0')
+        count2="$(printf '%s' "${count2}" | tr -d '[:space:]')"
+        if [[ "${count2}" != "2" ]]; then
+            printf '[FR-1] FAIL: client %s ECMP route degraded (nexthop_count=%s, expected=2).\n' \
+                "${SRC_CONTAINER_SECONDARY}" "${count2}" >&2
+            return 2
+        fi
+    fi
+    return 0
 }
 
 # Start tcpdump in the background inside a master container, capturing only
@@ -224,8 +286,9 @@ fr1::start_tcpdump() {
 # hasn't released a recent ephemeral) are tolerated by the loop and reflected
 # in the captured packet count downstream.
 fr1::generate_flows() {
-    local count="$1"
-    local base="$2"
+    local source_ctr="$1"
+    local count="$2"
+    local base="$3"
     local script
     script=$(cat <<EOF
 i=0
@@ -238,7 +301,7 @@ while [ \$i -lt ${count} ]; do
 done
 EOF
 )
-    docker exec "${SRC_ENDPOINT_CTR}" sh -c "${script}"
+    docker exec "${source_ctr}" sh -c "${script}"
 }
 
 # Stop tcpdump cleanly so pcap is flushed before parsing.
@@ -320,9 +383,20 @@ fr1::assert_distribution() {
 # ---------------------------------------------------------------------------
 # Run.
 # ---------------------------------------------------------------------------
+CROSS_SOURCE_MODE=0
+if [[ -n "${SRC_CONTAINER_SECONDARY}" ]]; then
+    CROSS_SOURCE_MODE=1
+fi
+
 printf '[FR-1] ECMP flow distribution assertion\n'
-printf '       src=%s dst=%s flows=%d udp_port=%d\n' \
-    "${SRC_ENDPOINT_CTR}" "${DST_OVERLAY_IP}" "${FLOW_COUNT}" "${UDP_DEST_PORT}"
+if (( CROSS_SOURCE_MODE == 1 )); then
+    printf '       cross-source mode: %s + %s (US4 — 50/50 split, %d flows total)\n' \
+        "${EFFECTIVE_SRC_CTR}" "${SRC_CONTAINER_SECONDARY}" "${FLOW_COUNT}"
+else
+    printf '       single-source mode: %s (%d flows)\n' \
+        "${EFFECTIVE_SRC_CTR}" "${FLOW_COUNT}"
+fi
+printf '       dst=%s udp_port=%d\n' "${DST_OVERLAY_IP}" "${UDP_DEST_PORT}"
 printf '       masters: %s, %s\n' "${MASTER_01_CTR}" "${MASTER_02_CTR}"
 printf '       balance window: [%s, %s] per master (NFR-2)\n' \
     "${BALANCE_LOW}" "${BALANCE_HIGH}"
@@ -332,34 +406,118 @@ fi
 
 fr1::require_running "${MASTER_01_CTR}" || exit 2
 fr1::require_running "${MASTER_02_CTR}" || exit 2
-fr1::require_running "${SRC_ENDPOINT_CTR}" || exit 2
+fr1::require_running "${EFFECTIVE_SRC_CTR}" || exit 2
+if (( CROSS_SOURCE_MODE == 1 )); then
+    fr1::require_running "${SRC_CONTAINER_SECONDARY}" || exit 2
+fi
 
-# tcpdump on each master, socat on the source endpoint.
+# tcpdump on each master, socat on the source(s).
 fr1::ensure_binary "${MASTER_01_CTR}" tcpdump || exit 2
 fr1::ensure_binary "${MASTER_02_CTR}" tcpdump || exit 2
-fr1::ensure_binary "${SRC_ENDPOINT_CTR}" socat || exit 2
+fr1::ensure_binary "${EFFECTIVE_SRC_CTR}" socat || exit 2
+if (( CROSS_SOURCE_MODE == 1 )); then
+    fr1::ensure_binary "${SRC_CONTAINER_SECONDARY}" socat || exit 2
+fi
+
+# F-005 CHK019: ECMP route assert BEFORE flow generation (only when SRC_CONTAINER set).
+fr1::preflight_ecmp_routes || exit 2
 
 fr1::preflight_ping || exit 2
 
-# Start capture before generating flows.
-fr1::start_tcpdump "${MASTER_01_CTR}" "${MASTER_01_PCAP}"
-fr1::start_tcpdump "${MASTER_02_CTR}" "${MASTER_02_PCAP}"
-sleep "${TCPDUMP_STARTUP_S}"
+# F-005 cross-source mode: tcpdump captures on per-source ifaces. The master-side
+# iface for primary source is wg-<primary-source-name>; secondary is wg-<secondary>.
+# We capture on BOTH ifaces simultaneously on each master, then sum per-master.
+if (( CROSS_SOURCE_MODE == 1 )); then
+    if [[ -z "${SRC_INGRESS_IFACE_SECONDARY}" ]]; then
+        printf '[FR-1] FAIL: SRC_CONTAINER_SECONDARY set but SRC_INGRESS_IFACE_SECONDARY missing.\n' >&2
+        printf '       Pass it from orchestrator (e.g. SRC_INGRESS_IFACE_SECONDARY=wg-${SRC_CONTAINER_SECONDARY##*-}).\n' >&2
+        exit 2
+    fi
+    MASTER_01_PCAP_PRIMARY="/tmp/fr1-master-01-primary.pcap"
+    MASTER_01_PCAP_SECONDARY="/tmp/fr1-master-01-secondary.pcap"
+    MASTER_02_PCAP_PRIMARY="/tmp/fr1-master-02-primary.pcap"
+    MASTER_02_PCAP_SECONDARY="/tmp/fr1-master-02-secondary.pcap"
+    # Override the legacy SRC_INGRESS_IFACE used by start_tcpdump for primary.
+    SRC_INGRESS_IFACE_PRIMARY="${SRC_INGRESS_IFACE}"
 
-printf '  [info] generating %d UDP flows (src_port=%d..%d)...\n' \
-    "${FLOW_COUNT}" "${SRC_PORT_BASE}" "$(( SRC_PORT_BASE + FLOW_COUNT - 1 ))"
-fr1::generate_flows "${FLOW_COUNT}" "${SRC_PORT_BASE}"
+    # Local tcpdump starter parameterised by iface — reuses the existing
+    # filter (UDP + dst_overlay + dst_port).
+    fr1::_start_tcpdump_iface() {
+        local ctr="$1"
+        local iface="$2"
+        local pcap="$3"
+        docker exec "${ctr}" sh -c "rm -f ${pcap}" >/dev/null 2>&1 || true
+        docker exec "${ctr}" sh -c \
+            "nohup tcpdump -i '${iface}' -nn -U -p \
+                -w '${pcap}' \
+                'udp and dst host ${DST_OVERLAY_IP} and dst port ${UDP_DEST_PORT}' \
+                >/dev/null 2>&1 &" \
+            >/dev/null 2>&1
+    }
 
-# Drain: let in-flight packets settle into the pcap before we stop tcpdump.
-sleep "${FLOW_DRAIN_S}"
+    fr1::_start_tcpdump_iface "${MASTER_01_CTR}" "${SRC_INGRESS_IFACE_PRIMARY}" "${MASTER_01_PCAP_PRIMARY}"
+    fr1::_start_tcpdump_iface "${MASTER_01_CTR}" "${SRC_INGRESS_IFACE_SECONDARY}" "${MASTER_01_PCAP_SECONDARY}"
+    fr1::_start_tcpdump_iface "${MASTER_02_CTR}" "${SRC_INGRESS_IFACE_PRIMARY}" "${MASTER_02_PCAP_PRIMARY}"
+    fr1::_start_tcpdump_iface "${MASTER_02_CTR}" "${SRC_INGRESS_IFACE_SECONDARY}" "${MASTER_02_PCAP_SECONDARY}"
+    sleep "${TCPDUMP_STARTUP_S}"
 
-fr1::stop_tcpdump "${MASTER_01_CTR}"
-fr1::stop_tcpdump "${MASTER_02_CTR}"
+    HALF=$(( FLOW_COUNT / 2 ))
+    SECOND_BASE=$(( SRC_PORT_BASE + HALF ))
+    printf '  [info] generating %d UDP flows from primary %s (src_port=%d..%d)...\n' \
+        "${HALF}" "${EFFECTIVE_SRC_CTR}" "${SRC_PORT_BASE}" "$(( SRC_PORT_BASE + HALF - 1 ))"
+    fr1::generate_flows "${EFFECTIVE_SRC_CTR}" "${HALF}" "${SRC_PORT_BASE}"
+    printf '  [info] generating %d UDP flows from secondary %s (src_port=%d..%d)...\n' \
+        "${HALF}" "${SRC_CONTAINER_SECONDARY}" "${SECOND_BASE}" "$(( SECOND_BASE + HALF - 1 ))"
+    fr1::generate_flows "${SRC_CONTAINER_SECONDARY}" "${HALF}" "${SECOND_BASE}"
 
-M01_COUNT=$(fr1::count_packets "${MASTER_01_CTR}" "${MASTER_01_PCAP}") || exit 2
-M02_COUNT=$(fr1::count_packets "${MASTER_02_CTR}" "${MASTER_02_PCAP}") || exit 2
-if ! [[ "${M01_COUNT}" =~ ^[0-9]+$ ]]; then M01_COUNT=0; fi
-if ! [[ "${M02_COUNT}" =~ ^[0-9]+$ ]]; then M02_COUNT=0; fi
+    sleep "${FLOW_DRAIN_S}"
+
+    fr1::stop_tcpdump "${MASTER_01_CTR}"
+    fr1::stop_tcpdump "${MASTER_02_CTR}"
+
+    M01_PRIMARY=$(fr1::count_packets "${MASTER_01_CTR}" "${MASTER_01_PCAP_PRIMARY}")
+    M01_SECONDARY=$(fr1::count_packets "${MASTER_01_CTR}" "${MASTER_01_PCAP_SECONDARY}")
+    M02_PRIMARY=$(fr1::count_packets "${MASTER_02_CTR}" "${MASTER_02_PCAP_PRIMARY}")
+    M02_SECONDARY=$(fr1::count_packets "${MASTER_02_CTR}" "${MASTER_02_PCAP_SECONDARY}")
+    [[ "${M01_PRIMARY}" =~ ^[0-9]+$ ]] || M01_PRIMARY=0
+    [[ "${M01_SECONDARY}" =~ ^[0-9]+$ ]] || M01_SECONDARY=0
+    [[ "${M02_PRIMARY}" =~ ^[0-9]+$ ]] || M02_PRIMARY=0
+    [[ "${M02_SECONDARY}" =~ ^[0-9]+$ ]] || M02_SECONDARY=0
+
+    M01_COUNT=$(( M01_PRIMARY + M01_SECONDARY ))
+    M02_COUNT=$(( M02_PRIMARY + M02_SECONDARY ))
+
+    # Per-client distribution log per US4 AC-4.2 (auditable provenance).
+    printf '  [info] fr1.distribution.client.%s.master.01.count=%d\n' \
+        "${EFFECTIVE_SRC_CTR}" "${M01_PRIMARY}"
+    printf '  [info] fr1.distribution.client.%s.master.02.count=%d\n' \
+        "${EFFECTIVE_SRC_CTR}" "${M02_PRIMARY}"
+    printf '  [info] fr1.distribution.client.%s.master.01.count=%d\n' \
+        "${SRC_CONTAINER_SECONDARY}" "${M01_SECONDARY}"
+    printf '  [info] fr1.distribution.client.%s.master.02.count=%d\n' \
+        "${SRC_CONTAINER_SECONDARY}" "${M02_SECONDARY}"
+    printf '  [info] fr1.distribution.aggregate.master.01.count=%d\n' "${M01_COUNT}"
+    printf '  [info] fr1.distribution.aggregate.master.02.count=%d\n' "${M02_COUNT}"
+else
+    # Single-source legacy path.
+    fr1::start_tcpdump "${MASTER_01_CTR}" "${MASTER_01_PCAP}"
+    fr1::start_tcpdump "${MASTER_02_CTR}" "${MASTER_02_PCAP}"
+    sleep "${TCPDUMP_STARTUP_S}"
+
+    printf '  [info] generating %d UDP flows (src_port=%d..%d)...\n' \
+        "${FLOW_COUNT}" "${SRC_PORT_BASE}" "$(( SRC_PORT_BASE + FLOW_COUNT - 1 ))"
+    fr1::generate_flows "${EFFECTIVE_SRC_CTR}" "${FLOW_COUNT}" "${SRC_PORT_BASE}"
+
+    sleep "${FLOW_DRAIN_S}"
+
+    fr1::stop_tcpdump "${MASTER_01_CTR}"
+    fr1::stop_tcpdump "${MASTER_02_CTR}"
+
+    M01_COUNT=$(fr1::count_packets "${MASTER_01_CTR}" "${MASTER_01_PCAP}") || exit 2
+    M02_COUNT=$(fr1::count_packets "${MASTER_02_CTR}" "${MASTER_02_PCAP}") || exit 2
+    [[ "${M01_COUNT}" =~ ^[0-9]+$ ]] || M01_COUNT=0
+    [[ "${M02_COUNT}" =~ ^[0-9]+$ ]] || M02_COUNT=0
+fi
 
 # Self-test mode: force degenerate distribution by zeroing master-02 count.
 # Module then expects assertion to FAIL — that's the regression-catch we want.
