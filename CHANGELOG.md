@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **F-005 fixture client-mode containers** — extends F-004 dpext fixture with two `awg-mesh-node --mode client` containers (`dpext-client-01` overlay `172.21.92.130`, `dpext-client-02` overlay `172.21.92.131`). Closes FR-1 + FR-6 fixture-N/A gap from F-004 CR-003. Cross-source ECMP regression catch (US4) — 200 UDP flows split 50/50 across two clients; aggregate per master ∈ [40%, 60%] PASS gate. Adds `topo::init_clients` (parallel `mesh-ctl client init` with `timeout 30` per attempt + per-client log persistence to `/tmp/dpext-client-{01,02}-init.log` per NFR-7), `topo::client_preflight` (ECMP nexthop count + per-endpoint reachability), and `dpext::sigint` SIGINT trap (kills in-flight subshells, exits 130, preserves init logs per NFR-7). Network declared `internal: true` (no public-internet egress per NFR-6). Modules `fr1-flow-distribution.sh` accepts `SRC_CONTAINER` + `SRC_CONTAINER_SECONDARY` (cross-source 50/50 split with per-client + aggregate distribution log) + CHK019 ECMP route assert + CHK020 typo reject; `fr6-sticky-migration.sh` accepts `SRC_CONTAINER` override. Legacy `SRC_ENDPOINT_CTR` / `SRC_INITIATOR_CTR` paths preserved for issue-92 standalone runs (AC-3.1). Healthcheck interval pinned `5s` in topology (Q-2 — FR-6 A1 timing determinism).
 - **F-004 extended data-plane test coverage** — new harness `tests/simulation/data-plane-extended.sh` orchestrates 6 FR modules under `tests/simulation/modules/` covering data-plane behaviour beyond the route-presence + base-reachability gates of `issue-92-rotation.sh`:
   - **FR-1** flow-distribution (fr1-flow-distribution.sh) — 200 unique-5-tuple UDP flows, per-master tcpdump count, asserts [40%, 60%] balance per NFR-2.
   - **FR-2** iperf3 multi-flow throughput baseline (fr2-iperf3-baseline.sh) — `iperf3 -P 8` aggregate Mbps vs committed `tests/simulation/baseline/iperf3.json`, ±20% tolerance, `--update-baseline` flag is the ONLY way to mutate baseline (no auto-update — spec C1).
@@ -18,12 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-step WSL2 / Docker-Desktop guard chain in orchestrator per spec clarification C2: `uname -s = Linux` + `uname -r grep microsoft` (informational) + `docker info ServerVersion not desktop` + cgroup v2 detection. Any failure → exit 0 + 3-field informative message (failed gate, observed value, suggested remediation).
 - Local helper `tools/github-panda/` (gitignored) — bash + PowerShell wrapper around `gh` / `git push` / `curl` with `coonfuuseed-paandaa` PAT inline. See AGENTS.md "LOCAL TOOLING" section for install procedure on new machines.
 
-### Known limitations (CR-003)
-- **FR-1 + FR-6 are fixture-N/A on the current `issue-92-rotation.sh`-derived 5-node topology** — both presume client-mode container as flow source / connection initiator. Per-flow ECMP and healthcheck-driven nexthop removal are client-mode features (`pkg/node/client_linux.go::EnableL4Hash`); endpoint→endpoint flows use static per-pair routing by design. FR-1 + FR-6 ship as future-regression guards; PASS-path requires fixture extension deferred to F-005 candidate spec.
-- **Release-gate inclusion of `data-plane-extended.sh` is DEFERRED** — AGENTS.md does NOT yet add the orchestrator to the release-gate list. T-010 (CR-003 conditional) wires release-gate step only after F-005 ships fixture client-mode addition AND FR-1 + FR-6 reach reachable PASS-path AND TD-INTEGRATION (FR-2 install race + FR-4 endpoint failover + FR-5/6 post-kill cascade) is resolved.
+### Resolved
+- **CR-003 fixture-prerequisite** — closed by F-005. FR-1 + FR-6 PASS-path now reachable via 2-client dpext fixture. F-004 frontmatter flipped `status: Implemented`, `current_cr: null`, `open_crs: []`. CR-001 + CR-003 marked closed.
+
+### Known limitations
+- **Release-gate inclusion of `data-plane-extended.sh` STILL DEFERRED** — AGENTS.md release-gate addition bundled with TD-2026-04-30-F-004-INTEGRATION-FINDINGS resolution (FR-2 iperf3 install race + FR-4 endpoint failover N/A + FR-5/6 post-kill cascade). F-005 closes the fixture half of the conditionality; the orchestrator integration half is the second half.
 
 ### Internal
-- F-004 SpecKit artifacts under `.agent/specs/F-004-extended-data-plane-tests/` document spec / plan / architecture / tasks / 3 CRs (CR-001 initial scope shipped, CR-002 validation hardening closed, CR-003 fixture-prerequisite open).
+- F-004 SpecKit artifacts under `.agent/specs/F-004-extended-data-plane-tests/` document spec / plan / architecture / tasks / 3 CRs (CR-001 + CR-003 closed by F-005, CR-002 closed earlier; F-004 status: Implemented).
+- F-005 SpecKit artifacts under `.agent/specs/F-005-fixture-client-mode/` document spec / plan / architecture / tasks / clarification / completeness reports / CR-001-initial-scope.
 
 ## [1.14.1] — 2026-04-29 — release-quality patch
 
