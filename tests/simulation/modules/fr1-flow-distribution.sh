@@ -278,6 +278,18 @@ fr1::assert_distribution() {
         printf '       Either flow generation failed or tcpdump filter missed.\n' >&2
         return 1
     fi
+    # Minimum-sample-size guard. If captured fewer than 80% of attempted flows,
+    # the distribution percentage is not statistically meaningful — too easy
+    # to land in [40%, 60%] by accident on a tiny sample. NFR-2 was specced
+    # for N≥200 flows, not "any non-zero subset".
+    local min_sample
+    min_sample=$(( FLOW_COUNT * 4 / 5 ))
+    if (( total < min_sample )); then
+        printf '[FR-1] FAIL: captured only %d/%d flows; sample too small (need ≥%d).\n' \
+            "${total}" "${FLOW_COUNT}" "${min_sample}" >&2
+        printf '       Investigate flow-generation losses or tcpdump filter before treating as a balance verdict.\n' >&2
+        return 1
+    fi
     # Integer math via awk: produce floats with 4 decimals.
     local m01_pct m02_pct in_window
     m01_pct=$(awk -v a="${m01}" -v t="${total}" 'BEGIN { printf "%.4f", a / t }')

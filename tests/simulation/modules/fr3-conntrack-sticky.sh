@@ -460,6 +460,23 @@ fr3::assert_sticky() {
         return 1
     fi
 
+    # A pre-rebuild flow that disappears from BOTH post-state pcaps is a
+    # rebuild regression — sticky-session test must catch this, not just
+    # cross-master migrations.
+    local missing_post missing_post_count
+    missing_post=$(comm -23 \
+        <(printf '%s\n%s\n' "${pre_m01}" "${pre_m02}" | sort -u | grep -v '^$' || true) \
+        <(printf '%s\n%s\n' "${post_m01}" "${post_m02}" | sort -u | grep -v '^$' || true) || true)
+    missing_post_count=$(printf '%s' "${missing_post}" | grep -c . || true)
+    if (( missing_post_count > 0 )); then
+        printf '[FR-3] FAIL: %d/%d existing TCP flows disappeared from BOTH post-state pcaps.\n' \
+            "${missing_post_count}" "${pre_total}" >&2
+        printf '       Existing flows must remain observable on their original nexthop master across rebuild.\n' >&2
+        printf '       missing ports: %s\n' \
+            "$(printf '%s' "${missing_post}" | tr '\n' ',' | sed 's/,$//')" >&2
+        return 1
+    fi
+
     # A port that was on master-01 pre and is on master-02 post = migration.
     # Use comm -12 (intersection) to find ports that crossed sides.
     local migrated_to_m02 migrated_to_m01 migrated_count
@@ -533,14 +550,29 @@ fr3::require_running "${MASTER_02_CTR}" || exit 2
 fr3::require_running "${SRC_EP_CTR}" || exit 2
 fr3::require_running "${DST_EP_CTR}" || exit 2
 
-# NFR-5 SKIP gate: conntrack userspace tool on at least one master.
+# NFR-5 SKIP gate: conntrack userspace tool must be present on EVERY master.
+# Heterogeneous fixtures where one master ships conntrack and another doesn't
+# would otherwise hand back a false PASS — the missing-master tool gap silently
+# excludes its flows from observation. Probe both masters and SKIP if either
+# is missing the tool.
+fr3_skip_targets=""
 if ! fr3::conntrack_available "${MASTER_01_CTR}"; then
+    fr3_skip_targets="${MASTER_01_CTR}"
+fi
+if ! fr3::conntrack_available "${MASTER_02_CTR}"; then
+    if [[ -n "${fr3_skip_targets}" ]]; then
+        fr3_skip_targets="${fr3_skip_targets}, ${MASTER_02_CTR}"
+    else
+        fr3_skip_targets="${MASTER_02_CTR}"
+    fi
+fi
+if [[ -n "${fr3_skip_targets}" ]]; then
     printf '[FR-3] SKIP: conntrack userspace tool not present on %s (and not installable here).\n' \
-        "${MASTER_01_CTR}"
-    printf '       FR-3 requires environments where conntrack-tools is available; per\n'
+        "${fr3_skip_targets}"
+    printf '       FR-3 requires environments where conntrack-tools is available on every master; per\n'
     printf '       NFR-5 + spec Edge Cases this is a clean SKIP, not a FAIL. Install\n'
     printf '       conntrack-tools (apk add conntrack-tools / apt install conntrack)\n'
-    printf '       to enable L4 stateful tests.\n'
+    printf '       on the listed master(s) to enable L4 stateful tests.\n'
     exit 0
 fi
 

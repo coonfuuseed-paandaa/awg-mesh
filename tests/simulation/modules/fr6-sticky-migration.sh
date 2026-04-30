@@ -186,14 +186,29 @@ cleanup() {
             >/dev/null 2>&1 || true
     done
     if [[ -n "${SRC_INITIATOR_CTR:-}" ]]; then
-        docker exec "${SRC_INITIATOR_CTR}" sh -c \
-            'pkill -f "socat.*fr6-conn" >/dev/null 2>&1' \
-            >/dev/null 2>&1 || true
+        # Connectors don't have predictable argv text — match against the
+        # actual socat argv pattern (TCP4:<target>:<port>) which IS in the
+        # process command line, plus the echo-loop sleep parents that pipe
+        # into socat. The `fr6-conn-${port}` string is in payload only and
+        # never reached pkill -f.
+        docker exec "${SRC_INITIATOR_CTR}" sh -c "
+            pkill -f 'socat .* TCP4:${TARGET_OVERLAY}:${LISTEN_PORT}' >/dev/null 2>&1 || true
+            pkill -f 'while \\[ .* -lt 600 \\]' >/dev/null 2>&1 || true
+            rm -f /tmp/fr6-conn-*.log /tmp/fr6-conn-*.pid
+        " >/dev/null 2>&1 || true
     fi
     if [[ -n "${DST_TARGET_CTR:-}" ]]; then
-        docker exec "${DST_TARGET_CTR}" sh -c \
-            'pkill -f "socat.*fr6-listen" >/dev/null 2>&1' \
-            >/dev/null 2>&1 || true
+        # Listener writes its PID to /tmp/fr6-listen.pid at start — use it
+        # directly. pkill argv match also works here since LISTEN-port is in
+        # socat's argv unlike the fr6-listen string (log redirect only).
+        docker exec "${DST_TARGET_CTR}" sh -c "
+            if [ -f /tmp/fr6-listen.pid ]; then
+                kill \$(cat /tmp/fr6-listen.pid) 2>/dev/null || true
+                rm -f /tmp/fr6-listen.pid
+            fi
+            pkill -f 'socat TCP4-LISTEN:${LISTEN_PORT}' >/dev/null 2>&1 || true
+            rm -f /tmp/fr6-listen.log
+        " >/dev/null 2>&1 || true
     fi
     # CRITICAL: unpause if still paused. Re-entrancy depends on this — a
     # stale paused container blocks subsequent runs. Defensive state check
@@ -353,13 +368,14 @@ fr6::pcap_src_ports() {
 fr6::assert_new_flows_migrated() {
     local on_paused="$1"
     local on_other="$2"
+    local expected_count="$3"
 
     local paused_count other_count
     paused_count=$(printf '%s' "${on_paused}" | grep -c . || true)
     other_count=$(printf '%s' "${on_other}" | grep -c . || true)
 
-    printf '  [A1] post-pause NEW flows: paused-master=%d ports  other-master=%d ports\n' \
-        "${paused_count}" "${other_count}"
+    printf '  [A1] post-pause NEW flows: paused-master=%d ports  other-master=%d ports (expected on other: %d)\n' \
+        "${paused_count}" "${other_count}" "${expected_count}"
 
     if (( paused_count > 0 )); then
         printf '[FR-6] FAIL (A1): %d NEW connection(s) still reached paused master after %ds healthcheck window.\n' \
@@ -370,10 +386,16 @@ fr6::assert_new_flows_migrated() {
         return 1
     fi
 
-    if (( other_count == 0 )); then
-        printf '[FR-6] FAIL (A1): zero NEW connections observed on either master.\n' >&2
-        printf '       Listener/connector setup failed, or pcap filter missed range %d-%d.\n' \
-            "${POST_PORT_RANGE_START}" "${POST_PORT_RANGE_END}" >&2
+    if (( other_count < expected_count )); then
+        if (( other_count == 0 )); then
+            printf '[FR-6] FAIL (A1): zero NEW connections observed on either master.\n' >&2
+            printf '       Listener/connector setup failed, or pcap filter missed range %d-%d.\n' \
+                "${POST_PORT_RANGE_START}" "${POST_PORT_RANGE_END}" >&2
+        else
+            printf '[FR-6] FAIL (A1): only %d/%d NEW connections migrated to other-master after %ds.\n' \
+                "${other_count}" "${expected_count}" "${MIGRATION_TIMEOUT_S}" >&2
+            printf '       Partial healthcheck regression — some new flows did not migrate cleanly.\n' >&2
+        fi
         return 1
     fi
 
@@ -436,7 +458,8 @@ if [[ "${FR6_SELF_TEST}" == "no-migration" ]]; then
 
     if fr6::assert_new_flows_migrated \
             "${fr6_self_on_paused}" \
-            "${fr6_self_on_other}"; then
+            "${fr6_self_on_other}" \
+            "${POST_PAUSE_CONNECTIONS}"; then
         printf '[FR-6] SELF-TEST FAIL: A1 passed on synthetic regression input.\n' >&2
         printf '       The module fails to detect new-flow migration regressions.\n' >&2
         exit 1
@@ -559,7 +582,7 @@ PREEXIST_LEAK_COUNT=$(printf '%s' "${PREEXISTING_ON_OTHER}" | grep -c . || true)
 
 # --- Phase 5: A1 + A2 assertions ---
 A1_RESULT=0
-fr6::assert_new_flows_migrated "${NEW_ON_PAUSED}" "${NEW_ON_OTHER}" || A1_RESULT=1
+fr6::assert_new_flows_migrated "${NEW_ON_PAUSED}" "${NEW_ON_OTHER}" "${POST_PAUSE_CONNECTIONS}" || A1_RESULT=1
 
 # A2 advisory: count pre-pause ports that migrated to other master.
 # Per CR-002 contract this should be ≤ tolerance (drop expected).

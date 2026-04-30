@@ -783,8 +783,15 @@ for fr in "${FR_NAMES[@]}"; do
     elapsed="${FR_ELAPSED[${fr}]:-?}s"
     note=""
     if is_expected_fail "${fr}"; then
-        if [[ "${verdict}" == "FAIL" ]]; then
-            note="FAIL (fixture-N/A per CR-003 — expected)"
+        if [[ "${rc}" == "2" ]]; then
+            # rc=2 = environment / setup error in module — NOT the expected
+            # fixture-N/A assertion failure. Count as real regression so
+            # operators don't silently miss broken module runs (CR-003 only
+            # excuses assertion failures, not env errors).
+            note="ERROR — module env failure (rc=2; not expected fixture-N/A)"
+            REAL_REGRESSION_COUNT=$(( REAL_REGRESSION_COUNT + 1 ))
+        elif [[ "${verdict}" == "FAIL" ]]; then
+            note="FAIL (fixture-N/A per CR-003 — expected assertion)"
         elif [[ "${verdict}" == "PASS" ]]; then
             note="PASS UNEXPECTED — fixture upgraded? review CR-003"
             UNEXPECTED_PASS_COUNT=$(( UNEXPECTED_PASS_COUNT + 1 ))

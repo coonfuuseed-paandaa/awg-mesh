@@ -87,6 +87,7 @@ T0=""
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC2329  # invoked via trap below
 cleanup() {
+    local exit_rc=$?
     if [[ -n "${PING_PID}" ]]; then
         kill "${PING_PID}" 2>/dev/null || true
         wait "${PING_PID}" 2>/dev/null || true
@@ -100,7 +101,14 @@ cleanup() {
         # see a master that is at least past container init.
         sleep 5
     fi
-    rm -f "${PING_LOG}"
+    # Preserve the ping log on failure (operator inspects it for diagnosis)
+    # or when KEEP_ARTIFACTS=1 is set explicitly. Only remove on success.
+    if (( exit_rc != 0 )) || [[ -n "${KEEP_ARTIFACTS:-}" ]]; then
+        printf '[FR-4] cleanup: preserving ping log %s (exit_rc=%s, KEEP_ARTIFACTS=%s)\n' \
+            "${PING_LOG}" "${exit_rc}" "${KEEP_ARTIFACTS:-unset}"
+    else
+        rm -f "${PING_LOG}"
+    fi
 }
 trap cleanup EXIT
 
@@ -198,6 +206,31 @@ printf '       budget: recovery <= %ds, lost <= %d (= %d + %d tolerance)\n' \
 fr4::require_running "${MASTER_KILL_CTR}" || exit 2
 fr4::require_running "${PING_CLIENT_CTR}" || exit 2
 fr4::preflight_ping || exit 2
+
+# Validate that the kill target IS the master currently carrying the flow.
+# If the ping is already pinned to MASTER_OTHER, killing MASTER_KILL is a
+# no-op for this flow — module would falsely report recovery=0 / lost=0
+# without ever exercising failover. Per AGENTS.md per-master-iface pattern,
+# the kill target's iface on the source endpoint is `wg-<master-short-name>`.
+master_short="${MASTER_KILL_CTR#*-}"
+expected_iface="wg-${master_short}"
+active_iface=$(docker exec "${PING_CLIENT_CTR}" \
+    ip route get "${PING_TARGET_OVERLAY}" 2>/dev/null \
+    | awk '/dev/ { for (i=1; i<=NF; i++) if ($i == "dev") { print $(i+1); exit } }')
+if [[ -z "${active_iface}" ]]; then
+    printf '[FR-4] FAIL: could not determine active path iface from %s -> %s.\n' \
+        "${PING_CLIENT_CTR}" "${PING_TARGET_OVERLAY}" >&2
+    printf '       Topology may not be data-plane-ready; aborting before kill.\n' >&2
+    exit 2
+fi
+if [[ "${active_iface}" != "${expected_iface}" ]]; then
+    printf '[FR-4] FAIL: ping flow pinned to %s but kill target maps to %s.\n' \
+        "${active_iface}" "${expected_iface}" >&2
+    printf '       Killing %s would not exercise failover — set MASTER_KILL_CTR\n' "${MASTER_KILL_CTR}" >&2
+    printf '       to the master whose iface matches %s, or change PING_CLIENT_CTR.\n' "${active_iface}" >&2
+    exit 2
+fi
+printf '  [info] flow pinned to %s (matches kill target %s)\n' "${active_iface}" "${MASTER_KILL_CTR}"
 
 # Launch persistent ping with kernel timestamps. -O prints "no answer yet"
 # lines so the awk parser is unaffected (we filter on /icmp_seq=/).

@@ -158,8 +158,17 @@ re-added it.
    (PowerShell `$PROFILE`).
 4. Verify: `gp whoami` — must print `coonfuuseed-paandaa`.
 
-**Token rotation:** update both `.sh` and `.ps1` inline, then `gp whoami` to
-verify. Old token revoked on github.com/settings/tokens.
+**Token provisioning (preferred):** set `GH_PANDA_TOKEN` in your shell
+profile / `$PROFILE` (PowerShell) / OS credential helper. Wrappers read it
+first and fall back to an embedded constant only when the env var is unset
+— useful for single-user dev convenience but **avoid the embedded path in
+shared environments**. Backup / file-transfer / accidental-copy paths leak
+the embedded constant just like any plaintext secret would.
+
+**Token rotation:** prefer rotating the env-var entry in your profile or
+credential helper. Edit the embedded fallback only if you rely on it; in
+that case update both `.sh` and `.ps1` inline, then `gp whoami` to verify.
+Old token revoked on github.com/settings/tokens.
 
 **Cross-platform note:** PowerShell does not support bash-style env-prefix
 syntax (`GH_TOKEN=foo gh ...`). The wrapper handles this by setting the env
