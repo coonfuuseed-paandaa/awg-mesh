@@ -114,6 +114,8 @@ applyPeerKeyUpdate device-handle drift).
 8. Golden-fixture diff green: `go test ./pkg/mikrotik/ -run TestGolden` (compile-time RouterOS .rsc generator regression catch)
 9. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
+> **F-004 extended data-plane gate (DEFERRED — not yet wired):** `tests/simulation/data-plane-extended.sh` orchestrates 6 FR modules covering ECMP balance / iperf3 throughput / conntrack sticky / failover timing / asymmetric routing / sticky migration. SHIPPED in v1.15.0 candidate but **NOT yet included in this release gate** — pending F-005 (fixture client-mode container addition) and TD-2026-04-30-F-004-INTEGRATION-FINDINGS resolution. See `.agent/specs/F-004-extended-data-plane-tests/changes/CR-003-fixture-client-mode-prerequisite/change.md` and CHANGELOG `[Unreleased]` "Known limitations" for the conditionality.
+
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,
 not that it works.
