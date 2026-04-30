@@ -153,14 +153,20 @@ MASTER_RU_02="mst-ru-02"
 ENDPOINT_US_01="ep-us-01"
 ENDPOINT_ASIA_01="node-asia-01"
 ENDPOINT_ASIA_02="node-asia-02"
+# F-005: two client-mode containers for cross-source ECMP regression catch (US4).
+CLIENT_01="dpext-client-01"
+CLIENT_02="dpext-client-02"
 
 CTR_MASTER_RU_01="${COMPOSE_PROJECT}-${MASTER_RU_01}"
 CTR_MASTER_RU_02="${COMPOSE_PROJECT}-${MASTER_RU_02}"
 CTR_ENDPOINT_US_01="${COMPOSE_PROJECT}-${ENDPOINT_US_01}"
 CTR_ENDPOINT_ASIA_01="${COMPOSE_PROJECT}-${ENDPOINT_ASIA_01}"
 CTR_ENDPOINT_ASIA_02="${COMPOSE_PROJECT}-${ENDPOINT_ASIA_02}"
+CTR_CLIENT_01="${COMPOSE_PROJECT}-${CLIENT_01}"
+CTR_CLIENT_02="${COMPOSE_PROJECT}-${CLIENT_02}"
 
 GRPC_READY_TIMEOUT=60
+CLIENT_INIT_PER_ATTEMPT_TIMEOUT=30  # F-005 CHK017: per-attempt budget for mesh-ctl client init
 
 # Overlay plan — same as issue-92 (separate compose project namespaces docker
 # resources; overlay IPs are inside container netns and do not collide).
@@ -170,6 +176,10 @@ ENDPOINT_US_01_OVERLAY="172.21.92.34"
 ENDPOINT_ASIA_01_OVERLAY="172.21.92.35"
 ENDPOINT_ASIA_02_OVERLAY="172.21.92.36"
 ENDPOINTS_RANGE_CIDR="172.21.92.32/27"
+# F-005 ADR-002: clients overlay range — distinct from endpoints (172.21.92.32/27).
+CLIENT_01_OVERLAY="172.21.92.130"
+CLIENT_02_OVERLAY="172.21.92.131"
+CLIENTS_RANGE_CIDR="172.21.92.128/25"
 
 # Bridge subnet shifted to 192.168.93.0/24 (issue-92 uses .92.x) to avoid
 # Docker bridge conflict if both harnesses run on the same host concurrently.
@@ -178,6 +188,8 @@ MASTER_RU_02_BRIDGE="192.168.93.11"
 ENDPOINT_US_01_BRIDGE="192.168.93.20"
 ENDPOINT_ASIA_01_BRIDGE="192.168.93.21"
 ENDPOINT_ASIA_02_BRIDGE="192.168.93.22"
+CLIENT_01_BRIDGE="192.168.93.30"
+CLIENT_02_BRIDGE="192.168.93.31"
 
 NODE_IMAGE="${IMAGE:-awg-mesh-node:local}"
 
@@ -256,7 +268,7 @@ overlay:
       cidr: ${ENDPOINTS_RANGE_CIDR}
       balancer_ip: 172.21.92.33
     - name: clients
-      cidr: 172.21.92.128/25
+      cidr: ${CLIENTS_RANGE_CIDR}
 
 masters:
   - name: ${MASTER_RU_01}
@@ -303,6 +315,32 @@ endpoints:
     listen_port: 51820
     grpc_port: 59390
 
+# F-005: two client-mode containers — cross-source ECMP regression catch (US4).
+# healthcheck_interval pinned to 5s per Q-2 clarification (FR-6 A1 timing
+# determinism — production-default change MUST NOT silently break the assertion).
+clients:
+  - name: ${CLIENT_01}
+    type: linux
+    host: 127.0.0.1
+    peer_host: ${CLIENT_01_BRIDGE}
+    overlay_ip: ${CLIENT_01_OVERLAY}
+    grpc_port: 19090
+    healthcheck_interval: 5s
+    masters:
+      - ${MASTER_RU_01}
+      - ${MASTER_RU_02}
+
+  - name: ${CLIENT_02}
+    type: linux
+    host: 127.0.0.1
+    peer_host: ${CLIENT_02_BRIDGE}
+    overlay_ip: ${CLIENT_02_OVERLAY}
+    grpc_port: 19091
+    healthcheck_interval: 5s
+    masters:
+      - ${MASTER_RU_01}
+      - ${MASTER_RU_02}
+
 transport:
   pool: 10.93.0.0/16
   prefix_length: 30
@@ -335,12 +373,32 @@ topo::prepare_nodes() {
             return 3
         }
     done
+    # F-005: client prepare for both clients (parallel via background subshells).
+    local -a client_prepare_pids=()
+    for node in "${CLIENT_01}" "${CLIENT_02}"; do
+        ( ${MESHCTL_BIN} \
+            --topology "${TOPO_FILE}" \
+            --config-dir "${CTL_CONFIG_DIR}" \
+            client prepare "${node}" > /dev/null 2>&1 \
+            || { printf '[topo] ERROR: mesh-ctl client prepare %s failed\n' "${node}" >&2; exit 3; }
+        ) &
+        client_prepare_pids+=("$!")
+    done
+    local pid
+    for pid in "${client_prepare_pids[@]}"; do
+        if ! wait "${pid}"; then
+            printf '[topo] ERROR: client prepare subshell exited non-zero\n' >&2
+            return 3
+        fi
+    done
 
     TOKEN_MASTER_RU_01=$(cat "${CTL_CONFIG_DIR}/nodes/${MASTER_RU_01}/mesh.token")
     TOKEN_MASTER_RU_02=$(cat "${CTL_CONFIG_DIR}/nodes/${MASTER_RU_02}/mesh.token")
     TOKEN_ENDPOINT_US_01=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_US_01}/mesh.token")
     TOKEN_ENDPOINT_ASIA_01=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_ASIA_01}/mesh.token")
     TOKEN_ENDPOINT_ASIA_02=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_ASIA_02}/mesh.token")
+    TOKEN_CLIENT_01=$(cat "${CTL_CONFIG_DIR}/nodes/${CLIENT_01}/mesh.token")
+    TOKEN_CLIENT_02=$(cat "${CTL_CONFIG_DIR}/nodes/${CLIENT_02}/mesh.token")
 
     # Escape $ -> $$ so docker-compose does not expand bcrypt $2a$12$... refs.
     TOKEN_MASTER_RU_01_ESC="${TOKEN_MASTER_RU_01//\$/\$\$}"
@@ -348,6 +406,8 @@ topo::prepare_nodes() {
     TOKEN_ENDPOINT_US_01_ESC="${TOKEN_ENDPOINT_US_01//\$/\$\$}"
     TOKEN_ENDPOINT_ASIA_01_ESC="${TOKEN_ENDPOINT_ASIA_01//\$/\$\$}"
     TOKEN_ENDPOINT_ASIA_02_ESC="${TOKEN_ENDPOINT_ASIA_02//\$/\$\$}"
+    TOKEN_CLIENT_01_ESC="${TOKEN_CLIENT_01//\$/\$\$}"
+    TOKEN_CLIENT_02_ESC="${TOKEN_CLIENT_02//\$/\$\$}"
 }
 
 # ---------------------------------------------------------------------------
@@ -480,9 +540,65 @@ services:
           --overlay-ip ${ENDPOINT_ASIA_02_OVERLAY} \\
           --listen-port 51820
 
+  # F-005: client-mode containers for FR-1 cross-source ECMP and FR-6 sticky
+  # migration. Both clients carry sysctls.fib_multipath_hash_policy=1 to
+  # exercise per-flow 5-tuple hashing on the host kernel (NFR-2).
+  ${CLIENT_01}:
+    image: ${NODE_IMAGE}
+    container_name: ${CTR_CLIENT_01}
+    hostname: ${CLIENT_01}
+    restart: "no"
+    privileged: true
+    sysctls:
+      net.ipv4.fib_multipath_hash_policy: 1
+    environment:
+      MESH_TOKEN_HASH: "${TOKEN_CLIENT_01_ESC}"
+    networks:
+      dpext:
+        ipv4_address: ${CLIENT_01_BRIDGE}
+    ports:
+      - "19090:9090"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        [ -f /config/mesh.token ] || printf '%s' "\$\$MESH_TOKEN_HASH" > /config/mesh.token
+        exec /usr/local/bin/awg-mesh-node \\
+          --mode client \\
+          --name ${CLIENT_01} \\
+          --overlay-ip ${CLIENT_01_OVERLAY}
+
+  ${CLIENT_02}:
+    image: ${NODE_IMAGE}
+    container_name: ${CTR_CLIENT_02}
+    hostname: ${CLIENT_02}
+    restart: "no"
+    privileged: true
+    sysctls:
+      net.ipv4.fib_multipath_hash_policy: 1
+    environment:
+      MESH_TOKEN_HASH: "${TOKEN_CLIENT_02_ESC}"
+    networks:
+      dpext:
+        ipv4_address: ${CLIENT_02_BRIDGE}
+    ports:
+      - "19091:9090"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        [ -f /config/mesh.token ] || printf '%s' "\$\$MESH_TOKEN_HASH" > /config/mesh.token
+        exec /usr/local/bin/awg-mesh-node \\
+          --mode client \\
+          --name ${CLIENT_02} \\
+          --overlay-ip ${CLIENT_02_OVERLAY}
+
 networks:
   dpext:
     driver: bridge
+    # F-005 NFR-6: fixture network is internal — no public-internet egress.
+    # Image must be pre-pulled (preflight verifies awg-mesh-node:local exists).
+    internal: true
     ipam:
       config:
         - subnet: 192.168.93.0/24
@@ -527,6 +643,17 @@ topo::wait_grpc() {
             return 2
         fi
     done
+    # F-005: also wait for client containers' gRPC servers (mesh-ctl client init
+    # talks to them — they MUST be ready before init dispatch).
+    for m in "${CTR_CLIENT_01}" "${CTR_CLIENT_02}"; do
+        if topo::wait_for_log "${m}" "gRPC server listening" "${GRPC_READY_TIMEOUT}"; then
+            printf '[topo]   %s gRPC ready\n' "${m}"
+        else
+            printf '[topo] ERROR: %s did not become gRPC ready within %ss\n' "${m}" "${GRPC_READY_TIMEOUT}" >&2
+            docker logs "${m}" >&2 || true
+            return 2
+        fi
+    done
     sleep 3
 }
 
@@ -557,6 +684,60 @@ topo::init_nodes() {
     done
     sleep 2
 }
+
+# F-005 T003: parallel client init with per-attempt timeout (CHK017) and
+# per-client log redirect (NFR-7). Logs persist past orchestrator exit.
+# Cleanup trap MUST NOT delete /tmp/dpext-client-*-init.log.
+topo::init_clients() {
+    printf '[topo] Initialising clients (parallel, per-attempt timeout=%ss)...\n' \
+        "${CLIENT_INIT_PER_ATTEMPT_TIMEOUT}"
+    local -a client_init_pids=()
+    local n logfile
+    for n in "${CLIENT_01}" "${CLIENT_02}"; do
+        logfile="/tmp/dpext-${n}-init.log"
+        : > "${logfile}"  # truncate to fresh start (NFR-7: logs persist between runs but each run owns its own log content)
+        (
+            timeout "${CLIENT_INIT_PER_ATTEMPT_TIMEOUT}" \
+                ${MESHCTL_BIN} \
+                --topology "${TOPO_FILE}" \
+                --config-dir "${CTL_CONFIG_DIR}" \
+                client init "${n}" >"${logfile}" 2>&1
+        ) &
+        client_init_pids+=("$!:${n}:${logfile}")
+    done
+    local entry pid name lf
+    local fail=0
+    for entry in "${client_init_pids[@]}"; do
+        pid="${entry%%:*}"
+        name="$(printf '%s' "${entry}" | cut -d: -f2)"
+        lf="${entry##*:}"
+        if wait "${pid}"; then
+            printf '[topo]   %s init OK (log: %s)\n' "${name}" "${lf}"
+        else
+            printf '[topo] ERROR: client init %s failed; tail of %s:\n' "${name}" "${lf}" >&2
+            tail -n 30 "${lf}" >&2 || true
+            fail=$(( fail + 1 ))
+        fi
+    done
+    if (( fail > 0 )); then
+        return 2
+    fi
+    sleep 2
+}
+
+# F-005 CHK016: SIGINT trap — kill in-flight client init subshells, run
+# compose down via existing dpext::cleanup, exit 130 (standard SIGINT).
+# Init logs MUST survive (NFR-7).
+dpext::sigint() {
+    printf '\n[sigint] Operator interrupt received — killing client init subshells.\n' >&2
+    # Kill any running mesh-ctl client init or timeout wrappers.
+    pkill -P $$ -f 'mesh-ctl.*client init' >/dev/null 2>&1 || true
+    pkill -P $$ -f 'timeout.*mesh-ctl' >/dev/null 2>&1 || true
+    # Cleanup trap will run on EXIT and tear down compose. Init logs
+    # (/tmp/dpext-${CLIENT}-init.log) deliberately preserved per NFR-7.
+    exit 130
+}
+trap dpext::sigint INT
 
 # ---------------------------------------------------------------------------
 # topo::warmup_data_plane — issue-92 R10-pattern handshake refresh: best-effort
@@ -608,28 +789,84 @@ topo::warmup_data_plane() {
     printf '[topo] data-plane converged — all 6 endpoint pairs reachable.\n'
 }
 
+# F-005 T004: per-client overlay reachability + ECMP nexthop count check.
+# Asserts every client can ping every endpoint overlay AND each client's kernel
+# routing table for the overlay range shows TWO nexthops (one per master iface).
+# Failure → exit 2 with structured 3-field error.
+topo::client_preflight() {
+    printf '[topo] F-005 client pre-flight (overlay reachability + ECMP nexthop count)...\n'
+    local clients=(
+        "${CTR_CLIENT_01}:${CLIENT_01}:${CLIENT_01_OVERLAY}"
+        "${CTR_CLIENT_02}:${CLIENT_02}:${CLIENT_02_OVERLAY}"
+    )
+    local endpoint_overlays=(
+        "${ENDPOINT_US_01_OVERLAY}"
+        "${ENDPOINT_ASIA_01_OVERLAY}"
+        "${ENDPOINT_ASIA_02_OVERLAY}"
+    )
+    local fail=0
+    local entry ctr name overlay dst nexthops
+    for entry in "${clients[@]}"; do
+        ctr="$(printf '%s' "${entry}" | cut -d: -f1)"
+        name="$(printf '%s' "${entry}" | cut -d: -f2)"
+        overlay="$(printf '%s' "${entry}" | cut -d: -f3)"
+        # ECMP nexthop count assertion — overlay range MUST have 2 nexthops.
+        nexthops=$(docker exec "${ctr}" sh -c \
+            "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop" 2>/dev/null \
+            || printf '0')
+        nexthops="$(printf '%s' "${nexthops}" | tr -d '[:space:]')"
+        if [[ "${nexthops}" != "2" ]]; then
+            printf '[FAIL] failed_leg=%s ECMP route degraded\n' "${name}" >&2
+            printf '       observed=route_count=%s expected=2\n' "${nexthops}" >&2
+            printf '       remediation=verify mesh-ctl client init succeeded; check %s init log\n' "/tmp/dpext-${name}-init.log" >&2
+            fail=$(( fail + 1 ))
+            continue
+        fi
+        # Overlay reachability per endpoint.
+        for dst in "${endpoint_overlays[@]}"; do
+            # Best-effort warmup pass to absorb first-handshake drop.
+            docker exec "${ctr}" ping -c 1 -W 5 "${dst}" >/dev/null 2>&1 || true
+            if ! docker exec "${ctr}" ping -c 2 -W 2 "${dst}" >/dev/null 2>&1; then
+                printf '[FAIL] failed_leg=%s->%s\n' "${name}" "${dst}" >&2
+                printf '       observed=ping_loss_100pct\n' >&2
+                printf '       remediation=verify endpoint init + master tunnel registration\n' >&2
+                fail=$(( fail + 1 ))
+            fi
+        done
+    done
+    if (( fail > 0 )); then
+        printf '[topo] FATAL: F-005 client pre-flight failed (%s leg(s))\n' "${fail}" >&2
+        return 2
+    fi
+    printf '[topo] F-005 clients ready — both clients show 2 nexthops + overlay reachable.\n'
+}
+
 # ---------------------------------------------------------------------------
 # Bootstrap entry — run all topology phases.
 # ---------------------------------------------------------------------------
 printf '\n=== F-004 data-plane-extended.sh — orchestrator ===\n\n'
 T0=$(date +%s)
 
-printf '[bootstrap] Phase 1/5: generate topo+compose files\n'
+printf '[bootstrap] Phase 1/6: generate topo+compose files\n'
 topo::generate_files
 
-printf '[bootstrap] Phase 2/5: prepare nodes (auth tokens)\n'
+printf '[bootstrap] Phase 2/6: prepare nodes (auth tokens)\n'
 topo::prepare_nodes || { printf '[bootstrap] FATAL: prepare failed\n' >&2; exit 2; }
 
-printf '[bootstrap] Phase 3/5: generate compose, docker compose up\n'
+printf '[bootstrap] Phase 3/6: generate compose, docker compose up\n'
 topo::generate_compose
 topo::compose_up
 topo::wait_grpc || { printf '[bootstrap] FATAL: gRPC wait failed\n' >&2; exit 2; }
 
-printf '[bootstrap] Phase 4/5: init masters + endpoints\n'
+printf '[bootstrap] Phase 4/6: init masters + endpoints\n'
 topo::init_nodes || { printf '[bootstrap] FATAL: init failed\n' >&2; exit 2; }
 
-printf '[bootstrap] Phase 5/5: warm up data plane + reachability gate\n'
+printf '[bootstrap] Phase 5/6: init clients (parallel)\n'
+topo::init_clients || { printf '[bootstrap] FATAL: client init failed\n' >&2; exit 2; }
+
+printf '[bootstrap] Phase 6/6: warm up data plane + reachability gate (endpoints + clients)\n'
 topo::warmup_data_plane || { printf '[bootstrap] FATAL: data-plane warmup failed\n' >&2; exit 2; }
+topo::client_preflight || { printf '[bootstrap] FATAL: client pre-flight failed\n' >&2; exit 2; }
 
 T_BOOTSTRAP=$(( $(date +%s) - T0 ))
 printf '[bootstrap] DONE in %ss — topology ready.\n\n' "${T_BOOTSTRAP}"
@@ -648,12 +885,17 @@ export MESH_CTL_CONFIG_DIR="${CTL_CONFIG_DIR}"
 export MASTER_01_CTR="${CTR_MASTER_RU_01}"
 export MASTER_02_CTR="${CTR_MASTER_RU_02}"
 
-# FR-1 specific
+# FR-1 specific — F-005: drive flows from BOTH clients (cross-source ECMP — US4).
+# SRC_INGRESS_IFACE is the master-side iface receiving traffic FROM the client;
+# master mode names client ifaces "wg-<client-name>" — both masters carry the
+# same iface name for the same source client (per pkg/node/master.go).
 FR1_ENV=(
     "MASTER_01_CTR=${CTR_MASTER_RU_01}"
     "MASTER_02_CTR=${CTR_MASTER_RU_02}"
-    "SRC_ENDPOINT_CTR=${CTR_ENDPOINT_ASIA_01}"
-    "SRC_INGRESS_IFACE=wg-${ENDPOINT_ASIA_01}"
+    "SRC_CONTAINER=${CTR_CLIENT_01}"
+    "SRC_CONTAINER_SECONDARY=${CTR_CLIENT_02}"
+    "SRC_INGRESS_IFACE=wg-${CLIENT_01}"
+    "SRC_INGRESS_IFACE_SECONDARY=wg-${CLIENT_02}"
     "DST_OVERLAY_IP=${ENDPOINT_ASIA_02_OVERLAY}"
 )
 # FR-2 specific
@@ -689,13 +931,14 @@ FR5_ENV=(
     "DST_EP_OVERLAY=${ENDPOINT_ASIA_02_OVERLAY}"
     "DST_EP_NAME=${ENDPOINT_ASIA_02}"
 )
-# FR-6 specific
+# FR-6 specific — F-005: client_01 as connection initiator (single-source by design).
 FR6_ENV=(
     "MASTER_PAUSE_CTR=${CTR_MASTER_RU_01}"
     "MASTER_OTHER_CTR=${CTR_MASTER_RU_02}"
-    "SRC_INITIATOR_CTR=${CTR_ENDPOINT_US_01}"
-    "SRC_INITIATOR_OVERLAY=${ENDPOINT_US_01_OVERLAY}"
-    "SRC_INITIATOR_NAME=${ENDPOINT_US_01}"
+    "SRC_CONTAINER=${CTR_CLIENT_01}"
+    "SRC_INITIATOR_CTR=${CTR_CLIENT_01}"
+    "SRC_INITIATOR_OVERLAY=${CLIENT_01_OVERLAY}"
+    "SRC_INITIATOR_NAME=${CLIENT_01}"
     "DST_TARGET_CTR=${CTR_ENDPOINT_ASIA_02}"
     "TARGET_OVERLAY=${ENDPOINT_ASIA_02_OVERLAY}"
 )
@@ -753,7 +996,10 @@ dpext::run_module "FR-6" "fr6-sticky-migration.sh" "Sticky session migration on 
     "${FR6_ENV[@]}"
 
 # ---------------------------------------------------------------------------
-# Summary + exit code calculation per CR-003 expected-fail handling.
+# Summary + exit code calculation.
+# F-005: CR-003 fixture-N/A bypass REMOVED — clients now drive FR-1 + FR-6,
+# both must reach reachable PASS. Any FR FAIL = real regression. EXPECTED_FAIL
+# set retained empty for forward compatibility (future fixture-N/A cases).
 # ---------------------------------------------------------------------------
 T_TOTAL=$(( $(date +%s) - T0 ))
 printf '\n==== SUMMARY ====\n'
@@ -763,9 +1009,9 @@ printf '\n'
 printf '  %-6s  %-6s  %-7s  %s\n' "Module" "Verdict" "Elapsed" "Notes"
 printf '  ------  ------  -------  ------------------------------------------\n'
 
-# CR-003 expected-fail set: FR-1 + FR-6 are fixture-N/A on the issue-92-derived
-# topology (no client-mode container). PASS unexpected → flag for review.
-EXPECTED_FAIL=("FR-1" "FR-6")
+# F-005: empty EXPECTED_FAIL set — FR-1 + FR-6 PASS-path now reachable via
+# 2-client fixture extension. Any module FAIL is a real regression.
+EXPECTED_FAIL=()
 is_expected_fail() {
     local fr="$1"
     local x
@@ -813,25 +1059,25 @@ for fr in "${FR_NAMES[@]}"; do
 done
 
 printf '\n'
-printf '  Real regressions (FR-2/3/4/5 failed):  %s\n' "${REAL_REGRESSION_COUNT}"
-printf '  Unexpected passes (FR-1/6 PASSed):     %s\n' "${UNEXPECTED_PASS_COUNT}"
+printf '  Real regressions:        %s\n' "${REAL_REGRESSION_COUNT}"
+printf '  Unexpected passes:       %s (always 0 with empty EXPECTED_FAIL set per F-005)\n' "${UNEXPECTED_PASS_COUNT}"
 printf '\n'
 
-# Exit code semantics per task brief:
-#   0  = nothing failed OR only FR-1+FR-6 failed (expected fixture-N/A)
-#   1  = any of FR-2/FR-3/FR-4/FR-5 failed (real regression)
+# Exit code semantics (F-005 simplified — no fixture-N/A bypass):
+#   0  = all FR modules PASS
+#   1  = any FR module failed (real regression)
 #   2  = bootstrap or guard-chain environment failure (handled earlier with exit 2)
-#   3  = at least one of FR-1+FR-6 unexpectedly PASSed
+#   3  = unexpected-PASS path (unreachable with empty EXPECTED_FAIL — kept for forward compat)
 ORCHESTRATOR_EXIT=0
 if (( UNEXPECTED_PASS_COUNT > 0 )); then
     ORCHESTRATOR_EXIT=3
-    printf '[result] EXIT 3 — fixture-N/A FR-1/FR-6 unexpectedly PASSed (review CR-003).\n'
+    printf '[result] EXIT 3 — unexpected PASS on a documented expected-fail module (review).\n'
 elif (( REAL_REGRESSION_COUNT > 0 )); then
     ORCHESTRATOR_EXIT=1
-    printf '[result] EXIT 1 — real regression in FR-2/3/4/5.\n'
+    printf '[result] EXIT 1 — real regression in one or more FR modules.\n'
 else
     ORCHESTRATOR_EXIT=0
-    printf '[result] EXIT 0 — all PASS, or only FR-1+FR-6 failed (expected per CR-003).\n'
+    printf '[result] EXIT 0 — all FR modules PASS (F-005 cross-source ECMP active).\n'
 fi
 
 # NFR-4: warn (not fail) if total runtime exceeds 5 min.
