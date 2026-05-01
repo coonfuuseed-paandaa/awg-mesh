@@ -113,8 +113,8 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 	}
 
 	templateData := struct {
-		ContainerName string
-		TopologyName  string
+		ContainerName     string
+		TopologyName      string
 		BridgeCommands    []string
 		VethCommands      []string
 		NATCommands       []string
