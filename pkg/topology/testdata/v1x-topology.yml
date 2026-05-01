@@ -1,0 +1,52 @@
+# v1.x topology fixture — must trigger SCHEMA-V1-DEPRECATED.
+# Markers: masters:/endpoints:/clients: + transport: with pool/prefix_length.
+# Used by pkg/topology/migrate_test.go::TestDetectSchemaVersion_V1.
+
+defaults:
+  image:
+    node: awg-mesh-node:v1.16.0
+    client: awg-mesh-client:v1.16.0
+
+overlay:
+  space: 172.21.92.0/24
+  physical_mtu: 1500
+  awg_overhead: 80
+
+masters:
+  - name: master-01
+    host: master-01.example.com
+    overlay_ip: 172.21.92.2
+    listen_port: 51820
+    grpc_port: 9090
+    endpoints:
+      - endpoint-us-01
+
+endpoints:
+  - name: endpoint-us-01
+    host: endpoint-us-01.example.com
+    overlay_ip: 172.21.92.34
+    listen_port: 51820
+
+clients:
+  - name: home-01
+    type: linux
+    host: 192.168.1.10
+    overlay_ip: 172.21.92.130
+    masters:
+      - master-01
+
+capture:
+  domains_file: domains.txt
+  schedule: "24h"
+  retention_days: 30
+
+rotation:
+  defaults:
+    tier1_interval: 24h
+    tier2_interval: 168h
+    tier3_interval: 720h
+    preset: aggressive
+
+transport:
+  pool: 10.93.0.0/16
+  prefix_length: 30

@@ -1,0 +1,79 @@
+package topology
+
+import (
+	"errors"
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
+// DetectSchemaVersion inspects raw YAML bytes and reports the schema generation.
+//
+// Detection rules:
+//   - schema_version: 2 → SchemaV2
+//   - presence of `transport:` block OR `masters:` / `endpoints:` keys → SchemaV1 (v1.x)
+//   - empty input or unparseable YAML → 0 + error
+//
+// This is implemented (not stub) because it is needed by `mesh-ctl topology
+// validate` to route v1.x rejection vs v2.0 acceptance per F-009 FR-13.
+func DetectSchemaVersion(in []byte) (SchemaVersion, error) {
+	if len(in) == 0 {
+		return 0, errors.New("topology: empty input")
+	}
+	// Use a permissive map to detect markers without forcing the strict struct shape.
+	var raw map[string]any
+	if err := yaml.Unmarshal(in, &raw); err != nil {
+		return 0, fmt.Errorf("topology: parse YAML: %w", err)
+	}
+	if raw == nil {
+		return 0, errors.New("topology: empty document")
+	}
+	if v, ok := raw["schema_version"]; ok {
+		// Schema explicitly declared.
+		switch x := v.(type) {
+		case int:
+			if x == 2 {
+				return SchemaV2, nil
+			}
+			return 0, fmt.Errorf("topology: unsupported schema_version: %d", x)
+		case int64:
+			if x == 2 {
+				return SchemaV2, nil
+			}
+			return 0, fmt.Errorf("topology: unsupported schema_version: %d", x)
+		default:
+			return 0, fmt.Errorf("topology: schema_version must be integer, got %T", v)
+		}
+	}
+	// No schema_version declared — detect v1.x by structural markers.
+	if _, hasMasters := raw["masters"]; hasMasters {
+		return SchemaV1, nil
+	}
+	if _, hasEndpoints := raw["endpoints"]; hasEndpoints {
+		return SchemaV1, nil
+	}
+	if t, hasTransport := raw["transport"]; hasTransport {
+		// transport: block with pool/prefix_length is the v1.x marker.
+		if m, ok := t.(map[string]any); ok {
+			if _, hasPool := m["pool"]; hasPool {
+				return SchemaV1, nil
+			}
+			if _, hasPrefix := m["prefix_length"]; hasPrefix {
+				return SchemaV1, nil
+			}
+		}
+	}
+	// Has neither schema_version nor v1.x markers — likely partial / unrecognized.
+	return 0, errors.New("topology: cannot determine schema version (no schema_version key and no v1.x markers)")
+}
+
+// MigrateV1ToV2 converts a v1.x topology document to a v2.0 TopologyV2 struct.
+//
+// CR-001: stub — full implementation lands in CR-013 (migration tooling).
+// At v2.0-alpha.1 the function returns a structured error; operators stay on
+// v1.x until CR-013 ships. The skeleton here exists so `mesh-ctl topology
+// validate` can route v1.x input through DetectSchemaVersion + return
+// SCHEMA-V1-DEPRECATED with a forward pointer to migrate.
+func MigrateV1ToV2(_ []byte) (*TopologyV2, error) {
+	return nil, errors.New("topology: MigrateV1ToV2 not implemented in CR-001 — full impl in CR-013 (migration tooling)")
+}
