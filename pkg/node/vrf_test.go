@@ -227,6 +227,41 @@ func TestVRFManagerEnslaveRaceFree(t *testing.T) {
 	}
 }
 
+// TestVRFManagerSetupRaceFree drives N concurrent Setup() callers on the same
+// manager and asserts every call returns nil. Without the m.mu serialisation
+// applied in Setup(), the check-then-create paths around netlinkLinkAdd race
+// and one of the goroutines fails with EEXIST.
+func TestVRFManagerSetupRaceFree(t *testing.T) {
+	requireRoot(t)
+
+	vrfName := fmt.Sprintf("vrf_sr%d", os.Getpid()%9999)
+	mgr := NewVRFManager(vrfName, 10006, net.ParseIP("172.21.99.6"))
+	t.Cleanup(func() { cleanupVRF(t, mgr) })
+
+	const n = 10
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = mgr.Setup()
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d Setup() error: %v", i, err)
+		}
+	}
+
+	if !mgr.IsCreated() {
+		t.Fatalf("manager.IsCreated() = false after concurrent Setup")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Mock-mode tests — no privilege required, use test seams to inject errors.
 // ---------------------------------------------------------------------------

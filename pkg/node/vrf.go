@@ -78,8 +78,17 @@ func NewVRFManager(name string, table uint32, overlayIP net.IP) *VRFManager {
 // Setup creates the VRF master device (if absent) and the anchor dummy
 // interface, enslaves the anchor, assigns the overlay IP/32 to it, and brings
 // both interfaces up. The operation is idempotent: calling Setup on an already-
-// configured VRF returns nil without duplicating any kernel objects.
+// configured VRF returns nil without duplicating any kernel objects. The whole
+// flow is serialised under m.mu so concurrent callers cannot race on the
+// check-then-create paths around netlinkLinkAdd.
 func (m *VRFManager) Setup() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.created {
+		return nil
+	}
+
 	if err := IsVRFSupported(); err != nil {
 		return fmt.Errorf("vrf setup: %w", err)
 	}
@@ -95,12 +104,14 @@ func (m *VRFManager) Setup() error {
 			return fmt.Errorf("vrf setup: interface %q exists but is not a VRF with table %d", m.name, m.table)
 		}
 	} else {
-		// Create the VRF master device.
+		// Create the VRF master device. Tolerate EEXIST so a parallel actor
+		// (e.g. another goroutine, host operator) that won the race does not
+		// turn this branch into a hard failure.
 		newVRF := &netlink.Vrf{
 			LinkAttrs: netlink.LinkAttrs{Name: m.name},
 			Table:     m.table,
 		}
-		if addErr := netlinkLinkAdd(newVRF); addErr != nil {
+		if addErr := netlinkLinkAdd(newVRF); addErr != nil && !errors.Is(addErr, unix.EEXIST) {
 			return fmt.Errorf("vrf setup: create VRF %q table %d: %w", m.name, m.table, addErr)
 		}
 		vrfLink, err = netlinkLinkByName(m.name)
@@ -125,7 +136,7 @@ func (m *VRFManager) Setup() error {
 		newDummy := &netlink.Dummy{
 			LinkAttrs: netlink.LinkAttrs{Name: m.anchorName},
 		}
-		if addErr := netlinkLinkAdd(newDummy); addErr != nil {
+		if addErr := netlinkLinkAdd(newDummy); addErr != nil && !errors.Is(addErr, unix.EEXIST) {
 			return fmt.Errorf("vrf setup: create anchor dummy %q: %w", m.anchorName, addErr)
 		}
 		anchorLink, err = netlinkLinkByName(m.anchorName)
@@ -155,9 +166,7 @@ func (m *VRFManager) Setup() error {
 		return fmt.Errorf("vrf setup: bring up anchor %q: %w", m.anchorName, upErr)
 	}
 
-	m.mu.Lock()
 	m.created = true
-	m.mu.Unlock()
 	return nil
 }
 
