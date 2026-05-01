@@ -285,7 +285,7 @@ jobs:
       - name: Compute primary image tags
         id: meta-primary
         if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name == 'push'
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: |
             ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}
@@ -326,7 +326,7 @@ jobs:
       - name: Compute alias image tags (node only)
         id: meta-alias
         if: matrix.image == 'node' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name == 'push'
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: |
             ghcr.io/coonfuuseed-paandaa/awg-mesh
