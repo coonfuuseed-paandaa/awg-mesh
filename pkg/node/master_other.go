@@ -50,6 +50,9 @@ func (m *MasterRunner) setupExitMode() error              { return nil }
 func (m *MasterRunner) setupDSCPRouting() error           { return nil }
 func (m *MasterRunner) enableWGCrossTunnelForward() error { return nil }
 
+// setupMasterVRF is a no-op on non-Linux platforms.
+func (m *MasterRunner) setupMasterVRF() error { return nil }
+
 func (m *MasterRunner) rebuildECMP(balancerIP string) {}
 
 func (m *MasterRunner) removeOverlayRoute(overlayIP string) {}

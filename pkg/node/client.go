@@ -51,7 +51,17 @@ func (c *ClientRunner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure keypair: %w", err)
 	}
-	if c.node.config.OverlayIP != "" {
+
+	// FR-10.6: opt-in VRF overlay separation. Must run before interface creation
+	// so EnslaveInterface calls in AddPeer find an initialised VRFManager.
+	// Hard-fail when MESH_VRF=enabled and the kernel/module is unavailable (FR-10.2).
+	if err := c.setupClientVRF(); err != nil {
+		return fmt.Errorf("client VRF init: %w", err)
+	}
+
+	// FR-1.6: when VRF is active, the overlay IP is already assigned to the VRF
+	// anchor dummy by VRFManager.Setup() — skip the lo assignment.
+	if c.node.config.OverlayIP != "" && !c.isVRFActive() {
 		if err := AssignOverlayIP(c.node.config.OverlayIP); err != nil {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}

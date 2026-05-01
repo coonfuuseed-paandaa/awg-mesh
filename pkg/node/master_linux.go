@@ -5,6 +5,7 @@ package node
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,50 @@ import (
 
 type masterTunnelPlatformState struct {
 	iface *wg.Interface
+}
+
+// setupMasterVRF creates and activates VRF separation when MESH_VRF=enabled.
+// Mirrors setupClientVRF / setupEndpointVRF exactly. No-op when MESH_VRF is absent.
+func (m *MasterRunner) setupMasterVRF() error {
+	if os.Getenv("MESH_VRF") != "enabled" {
+		return nil
+	}
+
+	vrfName := "vrf_overlay"
+	vrfTable := uint32(100)
+	if m.node != nil && m.node.topology != nil {
+		if n := m.node.topology.Overlay.VRFName; n != "" {
+			vrfName = n
+		}
+		if t := m.node.topology.Overlay.VRFTable; t != 0 {
+			vrfTable = t
+		}
+	}
+
+	var overlayIP net.IP
+	if m.node != nil && m.node.config.OverlayIP != "" {
+		overlayIP = net.ParseIP(m.node.config.OverlayIP)
+	}
+
+	mgr := NewVRFManager(vrfName, vrfTable, overlayIP)
+	if err := mgr.Setup(); err != nil {
+		return fmt.Errorf("VRF setup (MESH_VRF=enabled): %w", err)
+	}
+	m.vrfManager = mgr
+
+	if m.node != nil && m.node.topology != nil {
+		if overlaySpace := m.node.topology.Overlay.Space; overlaySpace != "" {
+			if err := installVRFOverlayPolicyRule(overlaySpace, int(vrfTable)); err != nil {
+				return fmt.Errorf("install VRF policy rule for %s table %d: %w", overlaySpace, vrfTable, err)
+			}
+		}
+	}
+
+	m.node.logger.Info().
+		Str("vrf_name", vrfName).
+		Uint32("vrf_table", vrfTable).
+		Msg("VRF overlay separation active (master mode)")
+	return nil
 }
 
 func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost string) error {
@@ -96,6 +141,14 @@ func (m *MasterRunner) createTunnelInterface(tunnel *MasterTunnel, endpointHost 
 	if err := setInterfaceUp(tunnel.InterfaceName); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("bring up interface %q: %w", tunnel.InterfaceName, err)
+	}
+
+	// FR-3: enslave into VRF immediately after creation (race-free: under m.mu write lock via AddTunnel).
+	if m.vrfManager != nil {
+		if err := m.vrfManager.EnslaveInterface(tunnel.InterfaceName); err != nil {
+			_ = iface.Close()
+			return fmt.Errorf("enslave %q to VRF %q: %w", tunnel.InterfaceName, m.vrfManager.Name(), err)
+		}
 	}
 
 	if masterTransportIP != "" {

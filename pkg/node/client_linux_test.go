@@ -20,6 +20,8 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	"github.com/rs/zerolog"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 func TestAddPeerConcurrentSamePubkey(t *testing.T) {
@@ -158,6 +160,7 @@ func TestAddPeerNewLinkStartsUnhealthy(t *testing.T) {
 type mockRouter struct {
 	mu                     sync.Mutex
 	setECMPCalls           []mockRouteCall
+	setECMPInTableCalls    []mockRouteInTableCall
 	removeECMPCalls        []string
 	setECMPErrorsByDest    map[string]error
 	removeECMPErrorsByDest map[string]error
@@ -165,6 +168,12 @@ type mockRouter struct {
 
 type mockRouteCall struct {
 	dest     string
+	nexthops []routing.NextHop
+}
+
+type mockRouteInTableCall struct {
+	dest     string
+	table    int
 	nexthops []routing.NextHop
 }
 
@@ -190,6 +199,23 @@ func (m *mockRouter) SetECMPRoute(dest *net.IPNet, nexthops []routing.NextHop, _
 	return nil
 }
 
+func (m *mockRouter) SetECMPRouteInTable(dest *net.IPNet, nexthops []routing.NextHop, table int, _ ...net.IP) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setECMPErrorsByDest != nil {
+		if err, ok := m.setECMPErrorsByDest[dest.String()]; ok {
+			return err
+		}
+	}
+	nhCopy := append([]routing.NextHop(nil), nexthops...)
+	m.setECMPInTableCalls = append(m.setECMPInTableCalls, mockRouteInTableCall{
+		dest:     dest.String(),
+		table:    table,
+		nexthops: nhCopy,
+	})
+	return nil
+}
+
 func (m *mockRouter) RemoveECMPRoute(dest *net.IPNet) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -211,6 +237,23 @@ func (m *mockRouter) hasSetECMPFor(cidr string) bool {
 		}
 	}
 	return false
+}
+
+func (m *mockRouter) hasSetECMPInTableFor(cidr string, table int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.setECMPInTableCalls {
+		if c.dest == cidr && c.table == table {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mockRouter) setECMPInTableCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.setECMPInTableCalls)
 }
 
 func (m *mockRouter) hasRemoveECMPFor(cidr string) bool {
@@ -1360,5 +1403,160 @@ func TestClientRun_PartialMesh(t *testing.T) {
 
 	if nexthopCount != 1 {
 		t.Errorf("expected 1 nexthop (healthy link only), got %d", nexthopCount)
+	}
+}
+
+// =============================================================================
+// F-008 CR-002: VRF overlay separation tests (mock-mode, no privilege required)
+// =============================================================================
+
+// TestSetupClientVRF_DisabledByDefault verifies that when MESH_VRF is unset
+// (default), setupClientVRF is a no-op: vrfManager stays nil and isVRFActive
+// returns false (FR-10.6 fallback path preserved).
+func TestSetupClientVRF_DisabledByDefault(t *testing.T) {
+	// Not t.Parallel(): t.Setenv mutates process env.
+
+	t.Setenv("MESH_VRF", "")
+
+	runner := newTestRunner(newTestNode(nil), &mockRouter{}, &mockFirewall{}, &mockSysctl{})
+
+	if err := runner.setupClientVRF(); err != nil {
+		t.Fatalf("setupClientVRF() returned error when MESH_VRF unset: %v", err)
+	}
+	if runner.isVRFActive() {
+		t.Error("isVRFActive() = true with MESH_VRF unset — should be false")
+	}
+	if runner.platformState.vrfManager != nil {
+		t.Error("vrfManager != nil with MESH_VRF unset — should remain nil")
+	}
+}
+
+// TestSetupClientVRF_DisabledExplicit verifies MESH_VRF=disabled keeps vrfManager nil.
+func TestSetupClientVRF_DisabledExplicit(t *testing.T) {
+	// Not t.Parallel(): t.Setenv mutates process env.
+
+	t.Setenv("MESH_VRF", "disabled")
+
+	runner := newTestRunner(newTestNode(nil), &mockRouter{}, &mockFirewall{}, &mockSysctl{})
+
+	if err := runner.setupClientVRF(); err != nil {
+		t.Fatalf("setupClientVRF() returned error when MESH_VRF=disabled: %v", err)
+	}
+	if runner.isVRFActive() {
+		t.Error("isVRFActive() = true with MESH_VRF=disabled")
+	}
+}
+
+// TestSetupClientVRF_EnabledKernelUnsupported verifies that when MESH_VRF=enabled
+// and the kernel does not support VRF (mocked via netlinkLinkAdd returning
+// EOPNOTSUPP), setupClientVRF returns a non-nil error containing "kernel_too_old"
+// (FR-10.2 hard-fail).
+// Uses the withMockNetlink helper from vrf_test.go (same package).
+func TestSetupClientVRF_EnabledKernelUnsupported(t *testing.T) {
+	// Not t.Parallel(): mutates package-level netlinkLinkAdd test seam.
+
+	t.Setenv("MESH_VRF", "enabled")
+
+	withMockNetlink(t, func(_ netlink.Link) error {
+		return unix.EOPNOTSUPP
+	}, func() {
+		runner := newTestRunner(
+			&Node{config: NodeConfig{Name: "test-client", OverlayIP: "172.21.92.130"}, logger: zerolog.Nop()},
+			&mockRouter{}, &mockFirewall{}, &mockSysctl{},
+		)
+		err := runner.setupClientVRF()
+		if err == nil {
+			t.Fatal("setupClientVRF() returned nil, want error on EOPNOTSUPP")
+		}
+		if !strings.Contains(err.Error(), "kernel_too_old") {
+			t.Errorf("setupClientVRF() error = %q, want 'kernel_too_old'", err.Error())
+		}
+		if runner.isVRFActive() {
+			t.Error("isVRFActive() = true after VRF setup error — should be false")
+		}
+	})
+}
+
+// TestRebuildClientECMP_VRFUsesTable100 verifies that when vrfManager is set
+// (VRF active, table=100), rebuildClientECMP calls SetECMPRouteInTable with
+// table=100 instead of SetECMPRoute for both balancerIP/32 and overlay.space.
+func TestRebuildClientECMP_VRFUsesTable100(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "10.100.0.1"
+	overlaySpace := "172.21.92.0/24"
+
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{
+			Space:    overlaySpace,
+			VRFName:  "vrf_overlay",
+			VRFTable: 100,
+		},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	// Inject a live VRFManager (table=100) without calling Setup() — the field
+	// is read-only after init so injecting it directly is safe for this test.
+	runner.platformState.vrfManager = NewVRFManager("vrf_overlay", 100, net.ParseIP("172.21.92.130"))
+	runner.platformState.links = []*transportLink{
+		makeTestLink("10.93.0.2", balancerIP, true),
+		makeTestLink("10.93.0.6", balancerIP, true),
+	}
+
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("rebuildClientECMP: %v", err)
+	}
+
+	primaryCIDR := balancerIP + "/32"
+	if !router.hasSetECMPInTableFor(primaryCIDR, 100) {
+		t.Errorf("expected SetECMPRouteInTable(%s, table=100); inTableCalls=%+v", primaryCIDR, router.setECMPInTableCalls)
+	}
+	if !router.hasSetECMPInTableFor(overlaySpace, 100) {
+		t.Errorf("expected SetECMPRouteInTable(%s, table=100); inTableCalls=%+v", overlaySpace, router.setECMPInTableCalls)
+	}
+	// Must NOT use SetECMPRoute (main table) for either dest when VRF active.
+	if router.hasSetECMPFor(primaryCIDR) {
+		t.Errorf("SetECMPRoute (main table) called for %s when VRF active — should use InTable variant", primaryCIDR)
+	}
+	if router.hasSetECMPFor(overlaySpace) {
+		t.Errorf("SetECMPRoute (main table) called for %s when VRF active — should use InTable variant", overlaySpace)
+	}
+}
+
+// TestRebuildClientECMP_NoVRFUsesMainTable verifies that when vrfManager is nil
+// (VRF disabled / default), rebuildClientECMP calls SetECMPRoute (main table)
+// and never calls SetECMPRouteInTable.
+func TestRebuildClientECMP_NoVRFUsesMainTable(t *testing.T) {
+	t.Parallel()
+
+	balancerIP := "10.100.0.2"
+	overlaySpace := "172.21.92.0/24"
+
+	topo := &topology.Topology{
+		Overlay: topology.OverlayConfig{Space: overlaySpace},
+	}
+	router := &mockRouter{}
+	fw := &mockFirewall{}
+	sysctl := &mockSysctl{}
+
+	runner := newTestRunner(newTestNode(topo), router, fw, sysctl)
+	// vrfManager is nil by default — VRF not active.
+	runner.platformState.links = []*transportLink{
+		makeTestLink("10.93.0.2", balancerIP, true),
+	}
+
+	if err := runner.rebuildClientECMP("init"); err != nil {
+		t.Fatalf("rebuildClientECMP: %v", err)
+	}
+
+	primaryCIDR := balancerIP + "/32"
+	if !router.hasSetECMPFor(primaryCIDR) {
+		t.Errorf("expected SetECMPRoute(%s) on main table; calls=%+v", primaryCIDR, router.setECMPCalls)
+	}
+	if router.setECMPInTableCallCount() > 0 {
+		t.Errorf("SetECMPRouteInTable called when VRF disabled — unexpected: %+v", router.setECMPInTableCalls)
 	}
 }

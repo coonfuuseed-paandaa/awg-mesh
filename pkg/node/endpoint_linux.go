@@ -5,6 +5,7 @@ package node
 import (
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -206,8 +207,53 @@ func deriveTransportSubnet(ip string, prefixLen int) string {
 // Each interface is keyed by its master name (e.g., "master-a"), not the iface name
 // ("wg-master-a"). All map accesses MUST hold mu (RLock for reads, Lock for writes).
 type endpointPlatformState struct {
-	ifaces map[string]*wg.Interface // keyed by master name
-	mu     sync.RWMutex             // protects ifaces map
+	ifaces     map[string]*wg.Interface // keyed by master name
+	mu         sync.RWMutex             // protects ifaces map
+	vrfManager *VRFManager              // non-nil when MESH_VRF=enabled
+}
+
+// setupEndpointVRF creates and activates VRF separation when MESH_VRF=enabled.
+// Mirrors setupClientVRF from client_linux.go exactly. No-op when MESH_VRF is absent.
+func (e *EndpointRunner) setupEndpointVRF() error {
+	if os.Getenv("MESH_VRF") != "enabled" {
+		return nil
+	}
+
+	vrfName := "vrf_overlay"
+	vrfTable := uint32(100)
+	if e.node != nil && e.node.topology != nil {
+		if n := e.node.topology.Overlay.VRFName; n != "" {
+			vrfName = n
+		}
+		if t := e.node.topology.Overlay.VRFTable; t != 0 {
+			vrfTable = t
+		}
+	}
+
+	var overlayIP net.IP
+	if e.node != nil && e.node.config.OverlayIP != "" {
+		overlayIP = net.ParseIP(e.node.config.OverlayIP)
+	}
+
+	mgr := NewVRFManager(vrfName, vrfTable, overlayIP)
+	if err := mgr.Setup(); err != nil {
+		return fmt.Errorf("VRF setup (MESH_VRF=enabled): %w", err)
+	}
+	e.platformState.vrfManager = mgr
+
+	if e.node != nil && e.node.topology != nil {
+		if overlaySpace := e.node.topology.Overlay.Space; overlaySpace != "" {
+			if err := installVRFOverlayPolicyRule(overlaySpace, int(vrfTable)); err != nil {
+				return fmt.Errorf("install VRF policy rule for %s table %d: %w", overlaySpace, vrfTable, err)
+			}
+		}
+	}
+
+	e.node.logger.Info().
+		Str("vrf_name", vrfName).
+		Uint32("vrf_table", vrfTable).
+		Msg("VRF overlay separation active (endpoint mode)")
+	return nil
 }
 
 // setIface stores iface under masterName. Acquires write lock.
@@ -410,6 +456,14 @@ func (e *EndpointRunner) createMasterInterface(
 	if err := endpointSetIfaceUpFn(ifaceName); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("bring up interface %q: %w", ifaceName, err)
+	}
+
+	// FR-3: enslave into VRF immediately after creation (race-free: under caller's lock).
+	if mgr := e.platformState.vrfManager; mgr != nil {
+		if err := mgr.EnslaveInterface(ifaceName); err != nil {
+			_ = iface.Close()
+			return fmt.Errorf("enslave %q to VRF %q: %w", ifaceName, mgr.Name(), err)
+		}
 	}
 
 	if strings.TrimSpace(transportIP) != "" {
@@ -861,6 +915,14 @@ func (e *EndpointRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedI
 		if err := endpointSetIfaceUpFn(ifaceName); err != nil {
 			_ = newIface.Close()
 			return fmt.Errorf("bring up iface %q: %w", ifaceName, err)
+		}
+
+		// FR-3: enslave into VRF immediately after creation (lazy path).
+		if mgr := e.platformState.vrfManager; mgr != nil {
+			if err := mgr.EnslaveInterface(ifaceName); err != nil {
+				_ = newIface.Close()
+				return fmt.Errorf("enslave %q to VRF %q: %w", ifaceName, mgr.Name(), err)
+			}
 		}
 
 		e.setIface(masterName, newIface)

@@ -52,11 +52,12 @@ type PacketForwarder interface {
 
 // MasterRunner runs node logic for master mode.
 type MasterRunner struct {
-	node      *Node
-	tunnels   map[string]*MasterTunnel
-	mu        sync.RWMutex
-	startTime time.Time
-	forwarder PacketForwarder // nil if eBPF unavailable (graceful degradation)
+	node       *Node
+	tunnels    map[string]*MasterTunnel
+	mu         sync.RWMutex
+	startTime  time.Time
+	forwarder  PacketForwarder // nil if eBPF unavailable (graceful degradation)
+	vrfManager *VRFManager     // non-nil when MESH_VRF=enabled
 
 	// stateMu serializes saveTransportState calls so that concurrent
 	// AddTunnel / UpdateTunnelPeer invocations do not race the
@@ -102,6 +103,13 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("assign overlay IP: %w", err)
 		}
 	}
+
+	// FR-10.6: VRF overlay separation — opt-in via MESH_VRF=enabled.
+	// Must run before tunnel restore so WG ifaces are enslaved at creation.
+	if err := m.setupMasterVRF(); err != nil {
+		return fmt.Errorf("setup master VRF: %w", err)
+	}
+
 	// Self-heal: migrate legacy transport.yml entries that are missing AllowedIPs.
 	// Must run before startGRPCServer so the repaired state is visible to the
 	// tunnel-restore loop that follows immediately after.
@@ -188,6 +196,10 @@ func (m *MasterRunner) Run(ctx context.Context) error {
 	}
 	hcLogger := m.node.logger.With().Str("component", "healthcheck").Logger()
 	hc := NewHealthChecker(hcCfg, hcLogger, m.masterHandshakeChecker())
+	// FR-7: bind healthcheck probes to VRF when active so they egress the correct routing table.
+	if m.vrfManager != nil {
+		hc.BindToVRF(m.vrfManager.Name())
+	}
 
 	go hc.Run(ctx, m.healthTargets,
 		func(name string) {

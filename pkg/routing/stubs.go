@@ -25,6 +25,9 @@ func (r *NetlinkRouter) RouteDelete(_ *net.IPNet) error               { return e
 func (r *NetlinkRouter) SetECMPRoute(_ *net.IPNet, _ []NextHop, _ ...net.IP) error {
 	return errNotSupported
 }
+func (r *NetlinkRouter) SetECMPRouteInTable(_ *net.IPNet, _ []NextHop, _ int, _ ...net.IP) error {
+	return errNotSupported
+}
 func (r *NetlinkRouter) RemoveECMPRoute(_ *net.IPNet) error           { return errNotSupported }
 func (r *NetlinkRouter) ListRoutes() ([]RouteEntry, error)            { return nil, errNotSupported }
 func (r *NetlinkRouter) AddrAdd(_ string, _ *net.IPNet) error         { return errNotSupported }

@@ -4,9 +4,13 @@ package node
 
 import (
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/rs/zerolog"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // mockRouteReplaceLink captures calls to RouteReplaceLink for testing.
@@ -93,4 +97,63 @@ func TestBuildPeerAllowedIPs_InvalidTransport(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid transport CIDR, got nil")
 	}
+}
+
+// =============================================================================
+// F-008 CR-004: setupMasterVRF tests (mock-mode, no privilege required)
+// =============================================================================
+
+// TestSetupMasterVRF_Disabled verifies that when MESH_VRF is unset (default),
+// setupMasterVRF is a no-op: vrfManager stays nil (FR-10.6 fallback preserved).
+func TestSetupMasterVRF_Disabled(t *testing.T) {
+	// Not t.Parallel(): t.Setenv mutates process env.
+
+	t.Setenv("MESH_VRF", "")
+
+	m := &MasterRunner{
+		node: &Node{
+			config: NodeConfig{Name: "test-master", OverlayIP: "172.20.70.1"},
+			logger: zerolog.Nop(),
+		},
+		tunnels: make(map[string]*MasterTunnel),
+	}
+
+	if err := m.setupMasterVRF(); err != nil {
+		t.Fatalf("setupMasterVRF() returned error when MESH_VRF unset: %v", err)
+	}
+	if m.vrfManager != nil {
+		t.Error("vrfManager != nil with MESH_VRF unset — should remain nil")
+	}
+}
+
+// TestSetupMasterVRF_EnabledKernelUnsupported verifies that when MESH_VRF=enabled
+// and the kernel does not support VRF (mocked via netlinkLinkAdd returning EOPNOTSUPP),
+// setupMasterVRF returns a non-nil error containing "kernel_too_old" (FR-10.2 hard-fail).
+// Uses the withMockNetlink helper from vrf_test.go (same package).
+func TestSetupMasterVRF_EnabledKernelUnsupported(t *testing.T) {
+	// Not t.Parallel(): mutates package-level netlinkLinkAdd test seam.
+
+	t.Setenv("MESH_VRF", "enabled")
+
+	withMockNetlink(t, func(_ netlink.Link) error {
+		return unix.EOPNOTSUPP
+	}, func() {
+		m := &MasterRunner{
+			node: &Node{
+				config: NodeConfig{Name: "test-master", OverlayIP: "172.20.70.1"},
+				logger: zerolog.Nop(),
+			},
+			tunnels: make(map[string]*MasterTunnel),
+		}
+		err := m.setupMasterVRF()
+		if err == nil {
+			t.Fatal("setupMasterVRF() returned nil, want error on EOPNOTSUPP")
+		}
+		if !strings.Contains(err.Error(), "kernel_too_old") {
+			t.Errorf("setupMasterVRF() error = %q, want 'kernel_too_old'", err.Error())
+		}
+		if m.vrfManager != nil {
+			t.Error("vrfManager set after VRF setup error — should remain nil")
+		}
+	})
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	"github.com/rs/zerolog"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // ---------------------------------------------------------------------------
@@ -735,4 +737,61 @@ func TestMigrateLegacyWg0_HappyPath(t *testing.T) {
 	if err := migrateLegacyWg0(logger); err != nil {
 		t.Fatalf("migrateLegacyWg0 returned unexpected error: %v", err)
 	}
+}
+
+// =============================================================================
+// F-008 CR-003: setupEndpointVRF tests (mock-mode, no privilege required)
+// =============================================================================
+
+// TestSetupEndpointVRF_Disabled verifies that when MESH_VRF is unset (default),
+// setupEndpointVRF is a no-op: vrfManager stays nil (FR-10.6 fallback preserved).
+func TestSetupEndpointVRF_Disabled(t *testing.T) {
+	// Not t.Parallel(): t.Setenv mutates process env.
+
+	t.Setenv("MESH_VRF", "")
+
+	e := &EndpointRunner{
+		node: &Node{
+			config: NodeConfig{Name: "test-endpoint", OverlayIP: "172.20.70.35"},
+			logger: zerolog.Nop(),
+		},
+	}
+
+	if err := e.setupEndpointVRF(); err != nil {
+		t.Fatalf("setupEndpointVRF() returned error when MESH_VRF unset: %v", err)
+	}
+	if e.platformState.vrfManager != nil {
+		t.Error("vrfManager != nil with MESH_VRF unset — should remain nil")
+	}
+}
+
+// TestSetupEndpointVRF_EnabledKernelUnsupported verifies that when MESH_VRF=enabled
+// and the kernel does not support VRF (mocked via netlinkLinkAdd returning EOPNOTSUPP),
+// setupEndpointVRF returns a non-nil error containing "kernel_too_old" (FR-10.2 hard-fail).
+// Uses the withMockNetlink helper from vrf_test.go (same package).
+func TestSetupEndpointVRF_EnabledKernelUnsupported(t *testing.T) {
+	// Not t.Parallel(): mutates package-level netlinkLinkAdd test seam.
+
+	t.Setenv("MESH_VRF", "enabled")
+
+	withMockNetlink(t, func(_ netlink.Link) error {
+		return unix.EOPNOTSUPP
+	}, func() {
+		e := &EndpointRunner{
+			node: &Node{
+				config: NodeConfig{Name: "test-endpoint", OverlayIP: "172.20.70.35"},
+				logger: zerolog.Nop(),
+			},
+		}
+		err := e.setupEndpointVRF()
+		if err == nil {
+			t.Fatal("setupEndpointVRF() returned nil, want error on EOPNOTSUPP")
+		}
+		if !strings.Contains(err.Error(), "kernel_too_old") {
+			t.Errorf("setupEndpointVRF() error = %q, want 'kernel_too_old'", err.Error())
+		}
+		if e.platformState.vrfManager != nil {
+			t.Error("vrfManager set after VRF setup error — should remain nil")
+		}
+	})
 }

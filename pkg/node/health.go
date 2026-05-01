@@ -71,6 +71,13 @@ type HealthChecker struct {
 	startOnce sync.Once
 	closeOnce sync.Once
 	started   bool
+
+	// vrfName is the SO_BINDTODEVICE target for the ICMP socket. When non-empty,
+	// the socket is bound to the named VRF master device so probe replies for
+	// transport peer IPs (now in VRF table 100 per F-008) reach the kernel via
+	// the correct routing context. Empty means main netns (legacy F-006 SNAT
+	// fallback or pre-F-008 deployments). Set via BindToVRF before Start().
+	vrfName string
 }
 
 // NewHealthChecker creates a new HealthChecker with the given configuration.
@@ -89,6 +96,16 @@ func NewHealthChecker(cfg HealthConfig, logger zerolog.Logger, handshakeChecker 
 // Start opens the shared ICMP socket and launches the demux reader goroutine.
 // It is idempotent: a second call while already started returns nil immediately.
 // Start must be called before any PingICMP calls.
+// BindToVRF sets the VRF master device for the ICMP socket. Must be called
+// BEFORE Start(). Pass "" to disable VRF binding (default behaviour).
+//
+// When set, Start() opens the socket and applies SO_BINDTODEVICE=<vrfName>
+// so transport peer probes (10.93.0.x in VRF table 100) resolve correctly
+// per F-008 FR-7. No-op on non-Linux.
+func (h *HealthChecker) BindToVRF(vrfName string) {
+	h.vrfName = vrfName
+}
+
 func (h *HealthChecker) Start() error {
 	var openErr error
 	h.startOnce.Do(func() {
@@ -100,6 +117,25 @@ func (h *HealthChecker) Start() error {
 				Msg("failed to open shared ICMP socket")
 			openErr = fmt.Errorf("icmp listen: %w", err)
 			return
+		}
+		// F-008 FR-7: bind socket to VRF master device so probes for transport
+		// peer IPs (now in VRF table 100) resolve via the correct routing
+		// context. Skip silently when vrfName is empty (legacy / pre-F-008).
+		if h.vrfName != "" {
+			if bindErr := bindICMPSocketToVRF(conn, h.vrfName); bindErr != nil {
+				_ = conn.Close()
+				h.logger.Error().
+					Str("event", "icmp_socket_bind_vrf").
+					Str("vrf", h.vrfName).
+					Err(bindErr).
+					Msg("failed to bind ICMP socket to VRF")
+				openErr = fmt.Errorf("icmp bind to vrf %q: %w", h.vrfName, bindErr)
+				return
+			}
+			h.logger.Info().
+				Str("event", "icmp_socket_bind_vrf").
+				Str("vrf", h.vrfName).
+				Msg("ICMP socket bound to VRF master device")
 		}
 		h.socket = conn
 		h.started = true

@@ -72,3 +72,9 @@ func (c *ClientRunner) startDNSServer(_ context.Context) {}
 func (c *ClientRunner) SaveClientState() error { return nil }
 
 func (c *ClientRunner) setupClientFirewallRules() {}
+
+// setupClientVRF is a no-op on non-Linux platforms.
+func (c *ClientRunner) setupClientVRF() error { return nil }
+
+// isVRFActive always returns false on non-Linux platforms.
+func (c *ClientRunner) isVRFActive() bool { return false }

@@ -63,3 +63,6 @@ func (e *EndpointRunner) ConfigureTransport(pubkeyHex, localIP, peerIP string, a
 func (e *EndpointRunner) GetListenPort(_ string) (int, error) {
 	return 0, nil
 }
+
+// setupEndpointVRF is a no-op on non-Linux platforms.
+func (e *EndpointRunner) setupEndpointVRF() error { return nil }

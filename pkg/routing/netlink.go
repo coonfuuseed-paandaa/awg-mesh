@@ -147,6 +147,54 @@ func (r *NetlinkRouter) SetECMPRoute(dest *net.IPNet, nexthops []NextHop, src ..
 	return nil
 }
 
+// SetECMPRouteInTable installs a multipath ECMP route in the specified routing
+// table. Use table=0 or unix.RT_TABLE_MAIN (254) for the main table. Identical
+// to SetECMPRoute except the Route.Table field is set explicitly — required for
+// VRF table isolation (FR-4.3).
+func (r *NetlinkRouter) SetECMPRouteInTable(dest *net.IPNet, nexthops []NextHop, table int, src ...net.IP) error {
+	if len(nexthops) == 0 {
+		return fmt.Errorf("at least one nexthop required for ECMP route to %s", dest)
+	}
+
+	multipath := make([]*netlink.NexthopInfo, 0, len(nexthops))
+	for _, nh := range nexthops {
+		link, err := netlink.LinkByName(nh.Dev)
+		if err != nil {
+			return fmt.Errorf("nexthop dev %q: %w", nh.Dev, err)
+		}
+		gw := net.ParseIP(nh.Via)
+		if gw == nil {
+			return fmt.Errorf("nexthop via %q: invalid IP", nh.Via)
+		}
+		gw = gw.To4()
+		if gw == nil {
+			return fmt.Errorf("nexthop via %q: IPv6 not supported for IPv4 ECMP route", nh.Via)
+		}
+		weight := nh.Weight
+		if weight < 1 {
+			weight = 1
+		}
+		multipath = append(multipath, &netlink.NexthopInfo{
+			LinkIndex: link.Attrs().Index,
+			Hops:      weight - 1,
+			Gw:        gw,
+		})
+	}
+
+	route := &netlink.Route{
+		Dst:       dest,
+		MultiPath: multipath,
+		Table:     table,
+	}
+	if len(src) > 0 && src[0] != nil {
+		route.Src = src[0].To4()
+	}
+	if err := netlink.RouteReplace(route); err != nil {
+		return fmt.Errorf("ecmp route replace table %d %s (%d nexthops): %w", table, dest, len(nexthops), err)
+	}
+	return nil
+}
+
 // RemoveECMPRoute removes the route to dest.
 func (r *NetlinkRouter) RemoveECMPRoute(dest *net.IPNet) error {
 	return r.RouteDelete(dest)

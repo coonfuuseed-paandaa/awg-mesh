@@ -11,6 +11,7 @@ type Router interface {
 	RouteReplace(dest *net.IPNet, via net.IP, dev string) error
 	RouteDelete(dest *net.IPNet) error
 	SetECMPRoute(dest *net.IPNet, nexthops []NextHop, src ...net.IP) error
+	SetECMPRouteInTable(dest *net.IPNet, nexthops []NextHop, table int, src ...net.IP) error
 	RemoveECMPRoute(dest *net.IPNet) error
 	ListRoutes() ([]RouteEntry, error)
 

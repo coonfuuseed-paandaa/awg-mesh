@@ -59,6 +59,12 @@ func (e *EndpointRunner) Run(ctx context.Context) error {
 		}
 	}
 
+	// FR-10.6: VRF overlay separation — opt-in via MESH_VRF=enabled.
+	// Must run before createInterface so WG ifaces are enslaved at creation.
+	if err := e.setupEndpointVRF(); err != nil {
+		return fmt.Errorf("setup endpoint VRF: %w", err)
+	}
+
 	// Migration: if a legacy wg0 interface exists from a pre-v1.12.2 run, tear it
 	// down before creating per-master interfaces. Non-fatal: if migration fails the
 	// operator can restart; createInterface() will warn and attempt its own recovery.

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -124,6 +125,12 @@ type clientPlatformState struct {
 	// the AddPeer call has reached the per-peer-lock point, avoiding
 	// time.Sleep-based race assertions.
 	beforeExistingLinkLockFn func()
+
+	// vrfManager is non-nil when MESH_VRF=enabled and VRF setup succeeded.
+	// Set once during setupClientVRF (before any AddPeer call) and then read
+	// concurrently by AddPeer and rebuildClientECMP. The field itself is not
+	// mutated after init so no additional lock is needed for reads.
+	vrfManager *VRFManager
 }
 
 func initClientPlatformState() clientPlatformState {
@@ -133,6 +140,75 @@ func initClientPlatformState() clientPlatformState {
 		currentStickyCIDRs:     make(map[string]bool),
 		configurePeerOnIfaceFn: defaultConfigurePeerOnIfaceFn,
 	}
+}
+
+// setupClientVRF initialises the VRFManager when MESH_VRF=enabled (FR-10.6).
+// Must be called before any AddPeer invocation. When MESH_VRF is absent or
+// "disabled", the function is a no-op and returns nil.
+//
+// On success with MESH_VRF=enabled: c.platformState.vrfManager is set to a
+// live VRFManager and will be used by AddPeer + rebuildClientECMP.
+// On kernel/module failure with MESH_VRF=enabled: returns error — caller
+// MUST treat this as fatal (exit 1 per FR-10.2).
+func (c *ClientRunner) setupClientVRF() error {
+	if os.Getenv("MESH_VRF") != "enabled" {
+		return nil
+	}
+
+	vrfName := "vrf_overlay"
+	vrfTable := uint32(100)
+
+	if c.node != nil && c.node.topology != nil {
+		if n := c.node.topology.Overlay.VRFName; n != "" {
+			vrfName = n
+		}
+		if t := c.node.topology.Overlay.VRFTable; t != 0 {
+			vrfTable = t
+		}
+	}
+
+	var overlayIP net.IP
+	if c.node != nil && c.node.config.OverlayIP != "" {
+		overlayIP = net.ParseIP(c.node.config.OverlayIP)
+	}
+
+	mgr := NewVRFManager(vrfName, vrfTable, overlayIP)
+	if err := mgr.Setup(); err != nil {
+		return fmt.Errorf("VRF setup (MESH_VRF=enabled): %w", err)
+	}
+
+	c.platformState.vrfManager = mgr
+
+	// F-008 FR-4 + Variant D completion: install policy rule routing overlay
+	// destinations through the VRF table. Without this, apps in the main netns
+	// (not bound to VRF via SO_BINDTODEVICE) consult the main FIB which has no
+	// overlay route, and packets fall through to the default gateway. The rule
+	// `ip rule add to <overlay-space> lookup <vrf-table>` makes the overlay
+	// range VRF-aware for ALL contexts (main netns + VRF-bound). Idempotent —
+	// existing rule with same (dst, table) is reused.
+	if c.node != nil && c.node.topology != nil {
+		if overlaySpace := c.node.topology.Overlay.Space; overlaySpace != "" {
+			if err := installVRFOverlayPolicyRule(overlaySpace, int(vrfTable)); err != nil {
+				return fmt.Errorf("install VRF policy rule for %s table %d: %w", overlaySpace, vrfTable, err)
+			}
+			c.node.logger.Info().
+				Str("event", "vrf_policy_rule_installed").
+				Str("overlay_space", overlaySpace).
+				Uint32("vrf_table", vrfTable).
+				Msg("policy rule routes overlay traffic through VRF table")
+		}
+	}
+
+	c.node.logger.Info().
+		Str("vrf_name", vrfName).
+		Uint32("vrf_table", vrfTable).
+		Msg("VRF overlay separation active")
+	return nil
+}
+
+// isVRFActive reports whether VRF overlay separation is active.
+func (c *ClientRunner) isVRFActive() bool {
+	return c.platformState.vrfManager != nil
 }
 
 // clientIfaceName returns a deterministic WireGuard interface name for a peer.
@@ -325,6 +401,16 @@ func (c *ClientRunner) AddPeer(publicKey []byte, presharedKey []byte, allowedIPs
 	if err := setInterfaceUp(ifaceName); err != nil {
 		_ = iface.Close()
 		return fmt.Errorf("bring up interface %q: %w", ifaceName, err)
+	}
+
+	// Enslave to VRF before Configure so transport /30 connected routes land in
+	// the VRF table immediately upon peer config, never leaking into main table
+	// (FR-3.3, FR-3.4). vrfManager is set once at startup and read-only here.
+	if mgr := c.platformState.vrfManager; mgr != nil {
+		if err := mgr.EnslaveInterface(ifaceName); err != nil {
+			_ = iface.Close()
+			return fmt.Errorf("enslave %q to VRF %q: %w", ifaceName, mgr.Name(), err)
+		}
 	}
 
 	if err := c.configurePeerHook()(c, iface, publicKey, presharedKey, allowedIPs, endpointHost, persistentKeepalive); err != nil {
@@ -842,9 +928,22 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 
 		nexthops := buildNexthopsFromLinks(healthyLinks)
 
+		// When VRF is active, install all ECMP routes into the VRF routing table
+		// (default table 100) so overlay traffic stays isolated (FR-4.3).
+		vrfTable := 0
+		if mgr := c.platformState.vrfManager; mgr != nil {
+			vrfTable = int(mgr.Table())
+		}
+
 		if primaryDest != nil {
-			if err := router.SetECMPRoute(primaryDest, nexthops); err != nil {
-				return fmt.Errorf("set client ECMP route %s: %w", primaryCIDR, err)
+			if vrfTable != 0 {
+				if err := router.SetECMPRouteInTable(primaryDest, nexthops, vrfTable); err != nil {
+					return fmt.Errorf("set client ECMP route %s table %d: %w", primaryCIDR, vrfTable, err)
+				}
+			} else {
+				if err := router.SetECMPRoute(primaryDest, nexthops); err != nil {
+					return fmt.Errorf("set client ECMP route %s: %w", primaryCIDR, err)
+				}
 			}
 		}
 
@@ -860,8 +959,14 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 				if c.node != nil && c.node.config.OverlayIP != "" {
 					srcIP = net.ParseIP(c.node.config.OverlayIP)
 				}
-				if err := router.SetECMPRoute(overlayDest, nexthops, srcIP); err != nil {
-					return fmt.Errorf("set overlay space ECMP route %s via %d nexthops: %w", overlaySpace, len(nexthops), err)
+				if vrfTable != 0 {
+					if err := router.SetECMPRouteInTable(overlayDest, nexthops, vrfTable, srcIP); err != nil {
+						return fmt.Errorf("set overlay space ECMP route %s via %d nexthops table %d: %w", overlaySpace, len(nexthops), vrfTable, err)
+					}
+				} else {
+					if err := router.SetECMPRoute(overlayDest, nexthops, srcIP); err != nil {
+						return fmt.Errorf("set overlay space ECMP route %s via %d nexthops: %w", overlaySpace, len(nexthops), err)
+					}
 				}
 			}
 		} else {
@@ -926,17 +1031,48 @@ func (c *ClientRunner) rebuildClientECMP(reason string) error {
 
 	nexthops := buildNexthopsFromLinks(healthyLinks)
 
-	if err := router.SetECMPRoute(defaultDest, nexthops); err != nil {
-		return fmt.Errorf("set default ECMP route: %w", err)
+	// F-008 CR-002: When VRF is active, install all ECMP routes into the VRF
+	// routing table (default 100) so overlay traffic stays isolated (FR-4.3).
+	// Legacy path (no balancerIP) installs default route + overlay.space route.
+	vrfTable := 0
+	if mgr := c.platformState.vrfManager; mgr != nil {
+		vrfTable = int(mgr.Table())
+	}
+
+	if vrfTable != 0 {
+		if err := router.SetECMPRouteInTable(defaultDest, nexthops, vrfTable); err != nil {
+			return fmt.Errorf("set default ECMP route table %d: %w", vrfTable, err)
+		}
+	} else {
+		if err := router.SetECMPRoute(defaultDest, nexthops); err != nil {
+			return fmt.Errorf("set default ECMP route: %w", err)
+		}
 	}
 	c.platformState.mu.Lock()
 	c.platformState.ecmpRouteInstalled = true
 	c.platformState.mu.Unlock()
 
 	// Overlay space is the sticky CIDR for legacy path when available.
+	// Also install overlay-space ECMP route with overlayIP src so VRF picks
+	// the overlay IP for outbound packets (closes F-005 PARTIAL gap #2).
 	stickyCIDR := defaultCIDR
 	if overlaySpace := c.overlaySpaceCIDR(); overlaySpace != "" {
 		stickyCIDR = overlaySpace
+		if _, overlayDest, parseErr := net.ParseCIDR(overlaySpace); parseErr == nil && overlayDest != nil {
+			var srcIP net.IP
+			if c.node != nil && c.node.config.OverlayIP != "" {
+				srcIP = net.ParseIP(c.node.config.OverlayIP)
+			}
+			if vrfTable != 0 {
+				if err := router.SetECMPRouteInTable(overlayDest, nexthops, vrfTable, srcIP); err != nil {
+					return fmt.Errorf("set overlay space ECMP route %s table %d: %w", overlaySpace, vrfTable, err)
+				}
+			} else {
+				if err := router.SetECMPRoute(overlayDest, nexthops, srcIP); err != nil {
+					return fmt.Errorf("set overlay space ECMP route %s: %w", overlaySpace, err)
+				}
+			}
+		}
 	}
 	if err := c.applyStickyECMPDiff(stickyCIDR, reason); err != nil {
 		return err
@@ -1052,6 +1188,13 @@ func (c *ClientRunner) startHealthCheck(ctx context.Context) {
 	}
 	hcLogger := c.node.logger.With().Str("component", "healthcheck").Logger()
 	hc := NewHealthChecker(hcCfg, hcLogger, nil)
+
+	// F-008 FR-7: when VRF active, bind ICMP socket to the VRF master device
+	// so probes for transport peer IPs (10.93.0.x in VRF table 100) resolve
+	// via the correct routing context. Must be set before hc.Run → Start.
+	if mgr := c.platformState.vrfManager; mgr != nil {
+		hc.BindToVRF(mgr.Name())
+	}
 
 	go hc.Run(ctx, c.healthTargets,
 		func(name string) {

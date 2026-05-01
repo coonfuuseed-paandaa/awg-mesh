@@ -41,6 +41,12 @@ type OverlayConfig struct {
 	PhysicalMTU int          `yaml:"physical_mtu"`
 	AWGOverhead int          `yaml:"awg_overhead"`
 	Ranges      []NamedRange `yaml:"ranges"`
+	// VRFName is the Linux VRF master device name for overlay traffic isolation
+	// (FR-10.4). Defaults to "vrf_overlay" when empty.
+	VRFName string `yaml:"vrf_name,omitempty"`
+	// VRFTable is the kernel routing table number assigned to VRFName
+	// (FR-10.4). Defaults to 100 when zero.
+	VRFTable uint32 `yaml:"vrf_table,omitempty"`
 }
 
 // NamedRange describes a named address range in the overlay.

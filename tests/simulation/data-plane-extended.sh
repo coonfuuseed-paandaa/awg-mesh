@@ -70,6 +70,9 @@ for arg in "$@"; do
             sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
             exit 0
             ;;
+        CLIENT_VRF=*)
+            export CLIENT_VRF="${arg#CLIENT_VRF=}"
+            ;;
         *)
             printf 'Unknown argument: %s (try --help)\n' "${arg}" >&2
             exit 2
@@ -451,6 +454,7 @@ services:
     privileged: true
     environment:
       MESH_TOKEN_HASH: "${TOKEN_MASTER_RU_01_ESC}"
+      MESH_VRF: "${CLIENT_VRF:-disabled}"
     networks:
       dpext:
         ipv4_address: ${MASTER_RU_01_BRIDGE}
@@ -476,6 +480,7 @@ services:
     privileged: true
     environment:
       MESH_TOKEN_HASH: "${TOKEN_MASTER_RU_02_ESC}"
+      MESH_VRF: "${CLIENT_VRF:-disabled}"
     networks:
       dpext:
         ipv4_address: ${MASTER_RU_02_BRIDGE}
@@ -501,6 +506,7 @@ services:
     privileged: true
     environment:
       MESH_TOKEN_HASH: "${TOKEN_ENDPOINT_US_01_ESC}"
+      MESH_VRF: "${CLIENT_VRF:-disabled}"
     networks:
       dpext:
         ipv4_address: ${ENDPOINT_US_01_BRIDGE}
@@ -525,6 +531,7 @@ services:
     privileged: true
     environment:
       MESH_TOKEN_HASH: "${TOKEN_ENDPOINT_ASIA_01_ESC}"
+      MESH_VRF: "${CLIENT_VRF:-disabled}"
     networks:
       dpext:
         ipv4_address: ${ENDPOINT_ASIA_01_BRIDGE}
@@ -549,6 +556,7 @@ services:
     privileged: true
     environment:
       MESH_TOKEN_HASH: "${TOKEN_ENDPOINT_ASIA_02_ESC}"
+      MESH_VRF: "${CLIENT_VRF:-disabled}"
     networks:
       dpext:
         ipv4_address: ${ENDPOINT_ASIA_02_BRIDGE}
@@ -584,6 +592,7 @@ services:
     environment:
       MESH_TOKEN_HASH: "${TOKEN_CLIENT_01_ESC}"
       MESH_TOPOLOGY: /config/mesh-topology.yml
+      MESH_VRF: "${CLIENT_VRF:-disabled}"
     volumes:
       - ${TOPO_FILE}:/config/mesh-topology.yml:ro
     networks:
@@ -612,6 +621,7 @@ services:
     environment:
       MESH_TOKEN_HASH: "${TOKEN_CLIENT_02_ESC}"
       MESH_TOPOLOGY: /config/mesh-topology.yml
+      MESH_VRF: "${CLIENT_VRF:-disabled}"
     volumes:
       - ${TOPO_FILE}:/config/mesh-topology.yml:ro
     networks:
@@ -858,11 +868,17 @@ topo::client_preflight() {
         overlay="$(printf '%s' "${entry}" | cut -d: -f3)"
         # Poll until route_count==2 OR timeout. grep -c always writes ONE integer line;
         # pipefail-safe via `|| true` so we never get the dual-write '00' artefact.
+        # F-008 CR-002: when CLIENT_VRF=enabled, ECMP route lives in VRF table 100
+        # (vrf_overlay) instead of main; query both and prefer whichever has the route.
         local elapsed=0
         nexthops=0
+        local route_target="ip route show 172.21.92.0/24"
+        if [[ "${CLIENT_VRF:-disabled}" == "enabled" ]]; then
+            route_target="ip route show table 100 172.21.92.0/24"
+        fi
         while (( elapsed < ECMP_SETTLE_TIMEOUT )); do
             nexthops=$(docker exec "${ctr}" sh -c \
-                "ip route show 172.21.92.0/24 2>/dev/null | grep -c nexthop || true" \
+                "${route_target} 2>/dev/null | grep -c nexthop || true" \
                 2>/dev/null)
             nexthops="$(printf '%s' "${nexthops}" | tr -d '[:space:]')"
             [[ -z "${nexthops}" ]] && nexthops=0
@@ -876,8 +892,12 @@ topo::client_preflight() {
             printf '       observed=route_count=%s expected=2\n' "${nexthops}" >&2
             printf '       remediation=verify mesh-ctl client init + healthcheck cycle; check %s init log\n' \
                 "/tmp/dpext-${name}-init.log" >&2
-            # Dump full route table for diagnostic.
-            docker exec "${ctr}" ip route 2>&1 | sed "s/^/  [route ${name}] /" >&2 || true
+            # Dump full route table for diagnostic — both main and table 100.
+            docker exec "${ctr}" ip route 2>&1 | sed "s/^/  [route ${name} main] /" >&2 || true
+            if [[ "${CLIENT_VRF:-disabled}" == "enabled" ]]; then
+                docker exec "${ctr}" ip route show table 100 2>&1 | sed "s/^/  [route ${name} t100] /" >&2 || true
+                docker exec "${ctr}" ip vrf show 2>&1 | sed "s/^/  [vrf ${name}] /" >&2 || true
+            fi
             fail=$(( fail + 1 ))
             continue
         fi
