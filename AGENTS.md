@@ -106,22 +106,21 @@ applyPeerKeyUpdate device-handle drift).
 **Process for every release:**
 1. `go test -race -count=1 ./...` — all packages green (race detector mandatory; v1.14.0 tag-build caught a real overlayRouterFn race that re-runs masked)
 2. `docker build -t awg-mesh-node:local -f deploy/Dockerfile.node .`
-3. `bash tests/simulation/issue-92-rotation.sh` — MUST exit 0 with all R1-R12 PASS (includes R3a-R3g, R9 persistence gate, R10 route-get src assertions and endpoint↔endpoint ping matrix, R11 master AllowedIPs endpoints-range gate, R11b no-topology master persists /27, R12 master FORWARD ACCEPT gate)
-4. `bash tests/simulation/mikrotik-chr-e2e.sh CHR=7.16.2` — MUST PASS 10/10 on real RouterOS CHR (operator-side QEMU/KVM coverage; replaces chr-lint CI gate which is impossible without nested-virt runner)
-5. G3 unit tests green: `go test -run 'TestReadEndpointPublicKeyFormats|TestReadAdminPubkeyRawFormats' ./...`
-6. G7 unit tests green: `go test -run 'TestPortOffset|TestComputePeerEndpoint' ./...`
-7. G14 wire gate green: `go test -run 'TestAddTunnelRequest_AllowedIpsWireRoundtrip' ./proto/...`
-8. Golden-fixture diff green: `go test ./pkg/mikrotik/ -run TestGolden` (compile-time RouterOS .rsc generator regression catch)
-9. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
+3. **F-009 CR-001 foundation smoke:** `bash tests/simulation/F-009-CR-001-foundation-smoke.sh` — MUST exit 0 with all 12 checks (R1..R12) PASS. Replaces v1.x `issue-92-rotation.sh` which was removed in F-009 CR-001 along with the v1.x role daemons. The CR-001 smoke covers build/vet/gofmt/test green, binary smoke for every `--mode`, schema validation v1.x reject + v2.0 accept, role composability, and critical-suite runner.
+4. **(blocked until CR-002+)** Production-grade v2.0 e2e — replaces v1.x `issue-92-rotation.sh`. Lands in CR-011 (critical-suite v2) once daemon implementations exist (CR-002 control plane → CR-007 balancer). Until then, CR-001 smoke is the only mandatory simulation.
+5. **(blocked until CR-014)** `bash tests/simulation/mikrotik-chr-e2e.sh CHR=7.16.2` — REWRITTEN in CR-014 against vanilla-WG client↔master listener (constraint 13). Original v1.x version preserved in `.agent/historical/` for reference.
+6. G3 / G7 / G14 / Golden-fixture unit gates — STATUS: legacy v1.x targets removed alongside their parent code in CR-001. CR-011 critical-suite v2 introduces new unit-level gates aligned with v2.0 architecture.
+7. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
-> **F-004 extended data-plane gate (DEFERRED — not yet wired):** `tests/simulation/data-plane-extended.sh` orchestrates 6 FR modules covering ECMP balance / iperf3 throughput / conntrack sticky / failover timing / asymmetric routing / sticky migration. SHIPPED in v1.15.0 candidate but **NOT yet included in this release gate** — pending F-005 (fixture client-mode container addition) and TD-2026-04-30-F-004-INTEGRATION-FINDINGS resolution. See `.agent/specs/F-004-extended-data-plane-tests/changes/CR-003-fixture-client-mode-prerequisite/change.md` and CHANGELOG `[Unreleased]` "Known limitations" for the conditionality.
+> **CR-001 release gate scope:** F-009 CR-001 is foundation only — no daemon, no networking. The release gate for CR-001 is the foundation smoke (item 3 above). Subsequent CRs progressively re-introduce e2e gates: CR-002 brings control-plane gRPC tests, CR-003 brings clientd integration tests, CR-004+ bring data-plane tests, CR-011 ties everything into a v2.0 critical-suite that fully replaces v1.x `issue-92-rotation.sh`.
 
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,
 not that it works.
 
 This rule was added 2026-04-19 after v1.12.0 shipped broken because e2e
-was skipped. v1.12.0 had to be reverted.
+was skipped. v1.12.0 had to be reverted. F-009 CR-001 (2026-05-01)
+restructured the simulation pipeline — see CR-001 smoke above.
 
 ## LOCAL TOOLING — github-panda (NOT committed)
 

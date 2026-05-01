@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
-# tests/critical/composable-roles.sh — F-009 critical-suite test stub.
-# Implementation lands in CR-001 per F-009 plan.md.
+# tests/critical/composable-roles.sh — F-009 CR-001 deliverable test.
+#
+# Verifies the v2.0 role taxonomy validator: composable roles
+# ([master, balancer, egress, ingress]) are accepted; the client
+# exclusivity rule ([client, master]) is rejected.
+#
+# Implementation: pkg/role/role_test.go covers all 17 cases. This wrapper
+# invokes the unit tests so the critical-suite runner reports a real PASS.
+
 set -euo pipefail
-echo 'SKIP — composable-roles.sh implementation lands in CR-001'
-exit 0
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+if ! command -v go >/dev/null 2>&1; then
+    echo "SKIP — go toolchain not available; run inside Docker"
+    exit 0
+fi
+
+go test -count=1 -short ./pkg/role/... >/dev/null
+echo "PASS — pkg/role composability validator (17 cases) green"
