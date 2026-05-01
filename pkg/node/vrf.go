@@ -93,20 +93,23 @@ func (m *VRFManager) Setup() error {
 		return fmt.Errorf("vrf setup: %w", err)
 	}
 
+	if m.overlayIP == nil {
+		return fmt.Errorf("vrf setup: overlayIP is nil")
+	}
+
 	// Locate or create the VRF master device.
-	var vrfLink netlink.Link
+	//
+	// Single path: try LinkByName first; on miss, attempt LinkAdd (tolerating
+	// EEXIST in case a parallel actor won the race), then re-fetch. After the
+	// fetch — whether it came from a pre-existing reuse or our own create —
+	// validate the type+table and bring it up. This covers two coderabbit
+	// findings on round 2:
+	//   - Reused VRFs were never brought up (only the create branch called
+	//     LinkSetUp). Now LinkSetUp runs on both paths.
+	//   - After tolerating EEXIST, the re-fetched object was assumed to be the
+	//     correct type without re-validation. Now type+table are revalidated.
 	existing, err := netlinkLinkByName(m.name)
-	if err == nil {
-		// Interface exists — reuse if it is the right type and table.
-		if vrf, ok := existing.(*netlink.Vrf); ok && vrf.Table == m.table {
-			vrfLink = existing
-		} else {
-			return fmt.Errorf("vrf setup: interface %q exists but is not a VRF with table %d", m.name, m.table)
-		}
-	} else {
-		// Create the VRF master device. Tolerate EEXIST so a parallel actor
-		// (e.g. another goroutine, host operator) that won the race does not
-		// turn this branch into a hard failure.
+	if err != nil {
 		newVRF := &netlink.Vrf{
 			LinkAttrs: netlink.LinkAttrs{Name: m.name},
 			Table:     m.table,
@@ -114,36 +117,38 @@ func (m *VRFManager) Setup() error {
 		if addErr := netlinkLinkAdd(newVRF); addErr != nil && !errors.Is(addErr, unix.EEXIST) {
 			return fmt.Errorf("vrf setup: create VRF %q table %d: %w", m.name, m.table, addErr)
 		}
-		vrfLink, err = netlinkLinkByName(m.name)
+		existing, err = netlinkLinkByName(m.name)
 		if err != nil {
 			return fmt.Errorf("vrf setup: get VRF %q after create: %w", m.name, err)
 		}
-		if upErr := netlinkLinkSetUp(vrfLink); upErr != nil {
-			return fmt.Errorf("vrf setup: bring up VRF %q: %w", m.name, upErr)
-		}
+	}
+	vrf, ok := existing.(*netlink.Vrf)
+	if !ok || vrf.Table != m.table {
+		return fmt.Errorf("vrf setup: interface %q exists but is not a VRF with table %d", m.name, m.table)
+	}
+	vrfLink := existing
+	if upErr := netlinkLinkSetUp(vrfLink); upErr != nil {
+		return fmt.Errorf("vrf setup: bring up VRF %q: %w", m.name, upErr)
 	}
 
-	// Locate or create the anchor dummy interface.
-	var anchorLink netlink.Link
+	// Locate or create the anchor dummy interface using the same pattern.
 	existingAnchor, anchorErr := netlinkLinkByName(m.anchorName)
-	if anchorErr == nil {
-		if _, ok := existingAnchor.(*netlink.Dummy); ok {
-			anchorLink = existingAnchor
-		} else {
-			return fmt.Errorf("vrf setup: anchor interface %q exists but is not a dummy", m.anchorName)
-		}
-	} else {
+	if anchorErr != nil {
 		newDummy := &netlink.Dummy{
 			LinkAttrs: netlink.LinkAttrs{Name: m.anchorName},
 		}
 		if addErr := netlinkLinkAdd(newDummy); addErr != nil && !errors.Is(addErr, unix.EEXIST) {
 			return fmt.Errorf("vrf setup: create anchor dummy %q: %w", m.anchorName, addErr)
 		}
-		anchorLink, err = netlinkLinkByName(m.anchorName)
-		if err != nil {
-			return fmt.Errorf("vrf setup: get anchor %q after create: %w", m.anchorName, err)
+		existingAnchor, anchorErr = netlinkLinkByName(m.anchorName)
+		if anchorErr != nil {
+			return fmt.Errorf("vrf setup: get anchor %q after create: %w", m.anchorName, anchorErr)
 		}
 	}
+	if _, ok := existingAnchor.(*netlink.Dummy); !ok {
+		return fmt.Errorf("vrf setup: anchor interface %q exists but is not a dummy", m.anchorName)
+	}
+	anchorLink := existingAnchor
 
 	// Enslave anchor to VRF.
 	if masterErr := netlinkLinkSetMaster(anchorLink, vrfLink); masterErr != nil {
