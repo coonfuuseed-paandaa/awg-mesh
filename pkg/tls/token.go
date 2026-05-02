@@ -22,7 +22,7 @@ const (
 
 // v2 token format constants — argon2id-based, all-ASCII-safe charset.
 const (
-	tokenFormatPrefix = "mesh1."
+	tokenFormatPrefix        = "mesh1."
 	argon2idAlgo      uint8  = 0x01
 	tokenFormatV1     uint8  = 0x01
 	argon2MemKB       uint16 = 4096

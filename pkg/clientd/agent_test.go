@@ -1,0 +1,517 @@
+package clientd
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+func TestStateUpdateImmutableAndConfiguratorPayloadsDiffer(t *testing.T) {
+	base := State{Peers: []PeerEntry{{PeerName: "master-a", AllowedIPs: []string{"10.0.0.1/32"}}}, PeerListVersion: 1}
+	updated, changed := base.WithPeerList(&pb.PeerListUpdate{Version: 2, Peers: []*pb.PeerEntry{{PeerName: "master-b", AllowedIps: []string{"10.0.0.2/32"}}}})
+	if !changed {
+		t.Fatalf("expected newer peer-list to change state")
+	}
+	updated.Peers[0].AllowedIPs[0] = "10.9.9.9/32"
+	if base.Peers[0].AllowedIPs[0] != "10.0.0.1/32" {
+		t.Fatalf("base state was mutated: %#v", base.Peers[0])
+	}
+
+	configurator := &recordingConfigurator{}
+	first := State{Peers: []PeerEntry{{PeerName: "master-a", AllowedIPs: []string{"10.0.0.1/32"}}}, PeerListVersion: 1}
+	second := State{Peers: []PeerEntry{{PeerName: "master-b", AllowedIPs: []string{"10.0.0.2/32"}}}, PeerListVersion: 2}
+	if err := configurator.Apply(context.Background(), first); err != nil {
+		t.Fatalf("apply first: %v", err)
+	}
+	if err := configurator.Apply(context.Background(), second); err != nil {
+		t.Fatalf("apply second: %v", err)
+	}
+	calls := configurator.callsSnapshot()
+	if len(calls) != 2 || reflect.DeepEqual(calls[0], calls[1]) {
+		t.Fatalf("expected different configurator payloads, got %#v", calls)
+	}
+}
+
+func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
+	const streamTestTimeout = 10 * time.Second
+
+	server := &streamingTestServer{
+		registered: make(chan *pb.RegisterNodeRequest, 1),
+		peerUpdates: []*pb.PeerListUpdate{
+			{SubjectNode: "client-a", Version: 1, Peers: []*pb.PeerEntry{{PeerName: "master-a", AllowedIps: []string{"10.0.0.1/32"}}}},
+			{SubjectNode: "client-a", Version: 1, Peers: []*pb.PeerEntry{{PeerName: "stale", AllowedIps: []string{"10.0.0.9/32"}}}},
+			{SubjectNode: "client-a", Version: 2, Peers: []*pb.PeerEntry{{PeerName: "master-b", AllowedIps: []string{"10.0.0.2/32"}}}},
+		},
+		ownershipUpdates: []*pb.OwnershipUpdate{
+			{Version: 3, FullSnapshot: true, Entries: []*pb.OwnershipEntry{{OverlayIp: "10.0.0.2", OwningMaster: "master-b", Reason: "scheduled"}}},
+			{Version: 3, FullSnapshot: false, Entries: []*pb.OwnershipEntry{{OverlayIp: "10.0.0.3", OwningMaster: "stale"}}},
+		},
+	}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	configurator := &recordingConfigurator{notify: make(chan State, 8)}
+	cachePath := t.TempDir() + "/clientd-state.json"
+	agent, err := NewAgent(Config{
+		NodeName:      "client-a",
+		Roles:         []role.Role{role.RoleClient},
+		OverlayIP:     "10.10.0.10",
+		Region:        "eu-test",
+		NodeCertPEM:   []byte("cert-bytes"),
+		Version:       "test-version",
+		InterfaceName: "awg-test0",
+		Protocol:      wg.ProtocolAmneziaWG,
+		StatePath:     cachePath,
+	}, pb.NewControlPlaneClient(conn), configurator)
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(ctx) }()
+	defer cancel()
+
+	select {
+	case got := <-server.registered:
+		if got.NodeName != "client-a" || got.OverlayIp != "10.10.0.10" || got.Region != "eu-test" || got.NodeVersion != "test-version" {
+			t.Fatalf("unexpected registration: %#v", got)
+		}
+		if !reflect.DeepEqual(got.Roles, []string{"client"}) {
+			t.Fatalf("unexpected roles: %#v", got.Roles)
+		}
+		if string(got.NodeCertPem) != "cert-bytes" {
+			t.Fatalf("unexpected cert bytes: %q", string(got.NodeCertPem))
+		}
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for registration")
+	}
+
+	var sawPeerV2, sawOwnershipV3 bool
+	for i := 0; i < 4 && (!sawPeerV2 || !sawOwnershipV3); i++ {
+		select {
+		case state := <-configurator.notify:
+			if state.PeerListVersion == 2 && len(state.Peers) == 1 && state.Peers[0].PeerName == "master-b" {
+				sawPeerV2 = true
+			}
+			if state.OwnershipVersion == 3 && len(state.Ownership) == 1 && state.Ownership[0].OwningMaster == "master-b" {
+				sawOwnershipV3 = true
+			}
+		case <-time.After(streamTestTimeout):
+			t.Fatalf("timed out waiting for configurator calls")
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("agent returned error: %v", err)
+	}
+	calls := configurator.callsSnapshot()
+	for _, call := range calls {
+		if len(call.Peers) == 1 && call.Peers[0].PeerName == "stale" {
+			t.Fatalf("stale peer-list version was applied: %#v", calls)
+		}
+	}
+}
+
+func TestStateCacheMissingLoadWriteOverwriteAndInvalidJSON(t *testing.T) {
+	path := t.TempDir() + "/state/cache.json"
+	cache := NewStateCache(path)
+	missing, err := cache.Load()
+	if err != nil {
+		t.Fatalf("load missing: %v", err)
+	}
+	if !missing.IsZero() {
+		t.Fatalf("missing cache should load empty state: %#v", missing)
+	}
+	first := State{PeerListVersion: 1, Peers: []PeerEntry{{PeerName: "master-a"}}}
+	second := State{PeerListVersion: 2, Peers: []PeerEntry{{PeerName: "master-b"}}}
+	if err := cache.Save(first); err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Dir(path))
+		if err != nil {
+			t.Fatalf("stat state dir: %v", err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("state dir is group/other accessible: mode=%#o", info.Mode().Perm())
+		}
+	}
+	loadedFirst, err := cache.Load()
+	if err != nil {
+		t.Fatalf("load first: %v", err)
+	}
+	if loadedFirst.Peers[0].PeerName != "master-a" {
+		t.Fatalf("unexpected first load: %#v", loadedFirst)
+	}
+	if err := cache.Save(second); err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	loadedSecond, err := cache.Load()
+	if err != nil {
+		t.Fatalf("load second: %v", err)
+	}
+	if loadedSecond.Peers[0].PeerName != "master-b" || reflect.DeepEqual(loadedFirst, loadedSecond) {
+		t.Fatalf("overwrite did not change state: first=%#v second=%#v", loadedFirst, loadedSecond)
+	}
+	if err := os.WriteFile(path, []byte("{not-json"), 0o644); err != nil {
+		t.Fatalf("write invalid json: %v", err)
+	}
+	_, err = cache.Load()
+	if err == nil {
+		t.Fatalf("expected invalid JSON error")
+	}
+}
+
+func TestBuildPeerConfigsValidationAndStrippedSeed(t *testing.T) {
+	_, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: []PeerEntry{{PeerName: "endpoint-a", PeerRole: role.RoleEgress}}})
+	if !errors.Is(err, ErrNonMasterPeerRejected) {
+		t.Fatalf("expected non-master rejection, got %v", err)
+	}
+	_, err = PeerEntryToWGConfig(PeerEntry{PeerName: "master-a", AllowedIPs: []string{"10.0.0.1/32"}})
+	if !errors.Is(err, ErrPeerPublicKeyRequired) {
+		t.Fatalf("expected stripped peer-list public-key error, got %v", err)
+	}
+	key := bytesOf(0x42)
+	configs, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: key, AllowedIPs: []string{"10.0.0.1/32"}, PersistentKeepaliveSecs: 25, Protocol: wg.ProtocolAmneziaWG}}})
+	if err != nil {
+		t.Fatalf("valid master peer rejected: %v", err)
+	}
+	if len(configs) != 1 || len(configs[0].AllowedIPs) != 1 || configs[0].PersistentKeepaliveInterval == nil {
+		t.Fatalf("unexpected peer config: %#v", configs)
+	}
+}
+
+func TestTransportConfiguratorReplacesCompleteDesiredPeers(t *testing.T) {
+	desiredKeyBytes := bytesOf(0x42)
+	staleKeyBytes := bytesOf(0x24)
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	configurator := TransportConfigurator{Transport: transport}
+
+	state := State{Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: desiredKeyBytes, AllowedIPs: []string{"10.0.0.1/32"}}}}
+	if err := configurator.Apply(context.Background(), state); err != nil {
+		t.Fatalf("apply complete peers: %v", err)
+	}
+
+	configs := transport.configsSnapshot()
+	if len(configs) != 1 {
+		t.Fatalf("expected one Configure call, got %d", len(configs))
+	}
+	if !configs[0].ReplacePeers {
+		t.Fatalf("expected ReplacePeers=true: %#v", configs[0])
+	}
+	if len(configs[0].Peers) != 1 {
+		t.Fatalf("expected exactly desired peer, got %#v", configs[0].Peers)
+	}
+	desiredKey, err := wg.NewKey(desiredKeyBytes)
+	if err != nil {
+		t.Fatalf("desired key: %v", err)
+	}
+	staleKey, err := wg.NewKey(staleKeyBytes)
+	if err != nil {
+		t.Fatalf("stale key: %v", err)
+	}
+	if configs[0].Peers[0].PublicKey != desiredKey {
+		t.Fatalf("unexpected desired peer key: %#v", configs[0].Peers[0].PublicKey)
+	}
+	if configs[0].Peers[0].PublicKey == staleKey {
+		t.Fatalf("stale peer was included in desired config")
+	}
+	if got := transport.addPeerCount(); got != 0 {
+		t.Fatalf("expected no AddPeer calls, got %d", got)
+	}
+}
+
+func TestTransportConfiguratorSkipsStrippedSnapshot(t *testing.T) {
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	configurator := TransportConfigurator{Transport: transport}
+
+	state := State{Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, AllowedIPs: []string{"10.0.0.1/32"}}}}
+	if err := configurator.Apply(context.Background(), state); err != nil {
+		t.Fatalf("stripped snapshot should not fail: %v", err)
+	}
+	if got := len(transport.configsSnapshot()); got != 0 {
+		t.Fatalf("expected no Configure calls, got %d", got)
+	}
+	if got := transport.addPeerCount(); got != 0 {
+		t.Fatalf("expected no AddPeer calls, got %d", got)
+	}
+}
+
+func TestAgentRunStrippedPeerUpdateDoesNotExit(t *testing.T) {
+	const streamTestTimeout = 10 * time.Second
+
+	server := &streamingTestServer{
+		registered: make(chan *pb.RegisterNodeRequest, 1),
+		peerUpdates: []*pb.PeerListUpdate{
+			{SubjectNode: "client-a", Version: 1, Peers: []*pb.PeerEntry{{PeerName: "master-a", AllowedIps: []string{"10.0.0.1/32"}}}},
+		},
+	}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	agent, err := NewAgent(Config{
+		NodeName:      "client-a",
+		Roles:         []role.Role{role.RoleClient},
+		OverlayIP:     "10.10.0.10",
+		Region:        "eu-test",
+		NodeCertPEM:   []byte("cert-bytes"),
+		Version:       "test-version",
+		InterfaceName: "awg-test0",
+		Protocol:      wg.ProtocolAmneziaWG,
+		StatePath:     t.TempDir() + "/clientd-state.json",
+	}, pb.NewControlPlaneClient(conn), TransportConfigurator{Transport: transport})
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(ctx) }()
+	defer cancel()
+
+	select {
+	case <-server.registered:
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for registration")
+	}
+
+	select {
+	case err := <-done:
+		t.Fatalf("agent exited before cancel: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if got := len(transport.configsSnapshot()); got != 0 {
+		t.Fatalf("expected no Configure calls for stripped snapshot, got %d", got)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("agent returned error after cancel: %v", err)
+		}
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for agent shutdown")
+	}
+}
+
+func TestAgentRunReturnsErrorWhenPeerStreamEndsBeforeCancel(t *testing.T) {
+	const streamTestTimeout = 10 * time.Second
+
+	server := &streamingTestServer{
+		registered:            make(chan *pb.RegisterNodeRequest, 1),
+		closePeerAfterUpdates: true,
+	}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	agent, err := NewAgent(Config{
+		NodeName:      "client-a",
+		Roles:         []role.Role{role.RoleClient},
+		OverlayIP:     "10.10.0.10",
+		Region:        "eu-test",
+		NodeCertPEM:   []byte("cert-bytes"),
+		Version:       "test-version",
+		InterfaceName: "awg-test0",
+		Protocol:      wg.ProtocolAmneziaWG,
+		StatePath:     t.TempDir() + "/clientd-state.json",
+	}, pb.NewControlPlaneClient(conn), &recordingConfigurator{})
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+
+	ctx := t.Context()
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(ctx) }()
+
+	select {
+	case <-server.registered:
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for registration")
+	}
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("expected unexpected EOF error")
+		}
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("expected EOF-wrapped error, got %v", err)
+		}
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for stream EOF")
+	}
+}
+
+type fakeTransport struct {
+	mu       sync.Mutex
+	protocol wg.Protocol
+	name     string
+	configs  []wg.Config
+	addPeers []wg.PeerConfig
+}
+
+func (t *fakeTransport) Protocol() wg.Protocol { return t.protocol }
+
+func (t *fakeTransport) Name() string { return t.name }
+
+func (t *fakeTransport) Configure(cfg wg.Config) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.configs = append(t.configs, cfg)
+	return nil
+}
+
+func (t *fakeTransport) AddPeer(peer wg.PeerConfig) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.addPeers = append(t.addPeers, peer)
+	return nil
+}
+
+func (t *fakeTransport) RemovePeer(wg.Key) error { return nil }
+
+func (t *fakeTransport) Stats() (*wg.Device, error) { return &wg.Device{Name: t.name}, nil }
+
+func (t *fakeTransport) Close() error { return nil }
+
+func (t *fakeTransport) configsSnapshot() []wg.Config {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]wg.Config, len(t.configs))
+	copy(out, t.configs)
+	return out
+}
+
+func (t *fakeTransport) addPeerCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.addPeers)
+}
+
+type recordingConfigurator struct {
+	mu     sync.Mutex
+	calls  []State
+	notify chan State
+}
+
+func (c *recordingConfigurator) Apply(_ context.Context, state State) error {
+	state = state.Clone()
+	c.mu.Lock()
+	c.calls = append(c.calls, state)
+	c.mu.Unlock()
+	if c.notify != nil {
+		select {
+		case c.notify <- state:
+		default:
+		}
+	}
+	return nil
+}
+
+func (c *recordingConfigurator) callsSnapshot() []State {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]State, len(c.calls))
+	for i, call := range c.calls {
+		out[i] = call.Clone()
+	}
+	return out
+}
+
+type streamingTestServer struct {
+	pb.UnimplementedControlPlaneServer
+	registered                 chan *pb.RegisterNodeRequest
+	peerUpdates                []*pb.PeerListUpdate
+	ownershipUpdates           []*pb.OwnershipUpdate
+	closePeerAfterUpdates      bool
+	closeOwnershipAfterUpdates bool
+}
+
+func (s *streamingTestServer) RegisterNode(_ context.Context, req *pb.RegisterNodeRequest) (*pb.RegisterNodeResponse, error) {
+	s.registered <- req
+	return &pb.RegisterNodeResponse{Accepted: true}, nil
+}
+
+func (s *streamingTestServer) StreamPeerList(_ *pb.StreamPeerListRequest, stream grpc.ServerStreamingServer[pb.PeerListUpdate]) error {
+	for _, update := range s.peerUpdates {
+		if err := stream.Send(update); err != nil {
+			return err
+		}
+	}
+	if s.closePeerAfterUpdates {
+		return nil
+	}
+	<-stream.Context().Done()
+	return nil
+}
+
+func (s *streamingTestServer) StreamOwnership(_ *pb.StreamOwnershipRequest, stream grpc.ServerStreamingServer[pb.OwnershipUpdate]) error {
+	for _, update := range s.ownershipUpdates {
+		if err := stream.Send(update); err != nil {
+			return err
+		}
+	}
+	if s.closeOwnershipAfterUpdates {
+		return nil
+	}
+	<-stream.Context().Done()
+	return nil
+}
+
+func startTestControlPlane(t *testing.T, server pb.ControlPlaneServer) (string, func()) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	pb.RegisterControlPlaneServer(grpcServer, server)
+	go func() { _ = grpcServer.Serve(lis) }()
+	return lis.Addr().String(), func() {
+		grpcServer.Stop()
+		_ = lis.Close()
+	}
+}
+
+func bytesOf(v byte) []byte {
+	out := make([]byte, 32)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}

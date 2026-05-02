@@ -23,10 +23,10 @@ type ContainerConfig struct {
 	Name      string
 	Image     string
 	Interface string
-	RootDir   string            // e.g. /docker/awg-mesh-client-home
-	MountName string            // e.g. AWG_MESH_HOME_CONFIG
-	MountSrc  string            // e.g. /docker/etc/awg-mesh-client-home-config
-	DNS       []string          // e.g. ["1.1.1.1", "8.8.8.8"]
+	RootDir   string   // e.g. /docker/awg-mesh-client-home
+	MountName string   // e.g. AWG_MESH_HOME_CONFIG
+	MountSrc  string   // e.g. /docker/etc/awg-mesh-client-home-config
+	DNS       []string // e.g. ["1.1.1.1", "8.8.8.8"]
 	EnvVars   map[string]string
 }
 

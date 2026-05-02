@@ -1,218 +1,55 @@
 package cmd
 
 import (
-	"crypto"
-	"crypto/x509"
-	"embed"
-	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"text/template"
-
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/transport"
-	"github.com/rs/zerolog"
 )
 
-//go:embed templates/*.tmpl
-var templateFS embed.FS
-
-func loadTemplate(name string) (string, error) {
-	content, err := templateFS.ReadFile("templates/" + name)
-	if err != nil {
-		return "", fmt.Errorf("read template %q: %w", name, err)
-	}
-
-	return string(content), nil
-}
-
-func ensureCA(configDir string) (*x509.Certificate, crypto.PrivateKey, error) {
-	caCert, caKey, err := pkgtls.LoadCA(configDir)
-	if err == nil {
-		return caCert, caKey, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, err
-	}
-
-	fmt.Fprintf(os.Stderr, "First run: creating mesh CA in %s\n", configDir)
-
-	caCert, caKey, err = pkgtls.GenerateCA("awg-mesh-ca")
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate CA: %w", err)
-	}
-
-	if err := pkgtls.SaveCA(configDir, caCert, caKey); err != nil {
-		return nil, nil, fmt.Errorf("save CA: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "CA created: %s/ca.crt, %s/ca.key\n", configDir, configDir)
-	return caCert, caKey, nil
-}
-
+// saveToken writes the bearer token under nodeDir.
 func saveToken(nodeDir, token string) error {
-	if err := os.MkdirAll(nodeDir, 0700); err != nil {
+	if err := os.MkdirAll(nodeDir, 0o700); err != nil {
 		return fmt.Errorf("create node dir: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(nodeDir, "token"), []byte(token), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(nodeDir, "token"), []byte(token), 0o600); err != nil {
 		return fmt.Errorf("write token file: %w", err)
 	}
 	return nil
 }
 
-func loadToken(nodeDir string) (string, error) {
-	rawToken, err := os.ReadFile(filepath.Join(nodeDir, "token"))
+// loadToken reads the bearer token from a node directory.
+func loadToken(nd string) (string, error) {
+	rawToken, err := os.ReadFile(filepath.Join(nd, "token"))
 	if err != nil {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
 	return strings.TrimSpace(string(rawToken)), nil
 }
 
-func loadOrCreateAllocator(configDir string, topo *topology.Topology) (*transport.Allocator, error) {
-	cleanConfigDir := strings.TrimSpace(configDir)
-	if cleanConfigDir == "" {
-		return nil, fmt.Errorf("config directory is required")
-	}
-	if topo == nil {
-		return nil, fmt.Errorf("topology is required")
-	}
-
-	parsedPrefix, err := netip.ParsePrefix(strings.TrimSpace(topo.Transport.Pool))
-	if err != nil {
-		return nil, fmt.Errorf("parse transport pool %q: %w", topo.Transport.Pool, err)
-	}
-	if topo.Transport.PrefixLength <= 0 {
-		return nil, fmt.Errorf("transport prefix length must be greater than zero")
-	}
-
-	alloc := transport.NewAllocator(parsedPrefix, topo.Transport.PrefixLength)
-	statePath := filepath.Join(cleanConfigDir, "transport.yml")
-	if err := alloc.LoadState(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-
-	return alloc, nil
-}
-
-func saveTransportState(alloc *transport.Allocator, configDir string) error {
-	cleanConfigDir := strings.TrimSpace(configDir)
-	if cleanConfigDir == "" {
-		return fmt.Errorf("config directory is required")
-	}
-	if alloc == nil {
-		return fmt.Errorf("allocator is required")
-	}
-
-	return alloc.SaveState(filepath.Join(cleanConfigDir, "transport.yml"))
-}
-
-func containsName(list []string, needle string) bool {
-	for _, value := range list {
-		if value == needle {
-			return true
-		}
-	}
-	return false
-}
-
-func renderDockerCompose(tmplContent string, data any, outputPath string) error {
-	tmpl, err := template.New("compose").Parse(tmplContent)
-	if err != nil {
-		return fmt.Errorf("parse compose template: %w", err)
-	}
-
-	var output strings.Builder
-	if err := tmpl.Execute(&output, data); err != nil {
-		return fmt.Errorf("render compose template: %w", err)
-	}
-
-	if err := os.WriteFile(outputPath, []byte(output.String()), 0600); err != nil {
-		return fmt.Errorf("write compose file: %w", err)
-	}
-	return nil
-}
-
+// nodeDir returns the per-node config subdirectory under configDir.
+// Layout: <configDir>/nodes/<name>/ contains node.crt, node.key, token,
+// transport.yml (until v2.0 control plane replaces transport.yml).
 func nodeDir(configDir, name string) string {
 	return filepath.Join(configDir, "nodes", name)
 }
 
-// printNextSteps writes a precise, actionable deploy sequence to stdout/stderr.
-// The compose file already carries MESH_TOKEN_HASH, so the operator never has
-// to ship the token file by hand — the binary bootstraps it on first boot.
-//
-// When showToken is false (default), the token value is NOT printed; instead a
-// reference to the on-disk token path is shown on stderr. When showToken is
-// true, the raw token value is printed to stdout and a WARN log line is emitted
-// so an audit trail exists (NFR-4.3).
-//
-// useTraefik selects the state directory to match the generated compose: the
-// default (host-network) templates bind /var/lib/awg-mesh/<name>, the Traefik
-// variants bind /srv/awg-mesh/<name>. Getting this wrong leaves the operator
-// with an empty mount and a confused node, so it's routed through explicitly.
-func printNextSteps(role, name, token, tokenPath, outputPath string, useTraefik, showToken bool) {
-	stateDir := "/var/lib/awg-mesh/" + name
-	if useTraefik {
-		stateDir = "/srv/awg-mesh/" + name
-	}
-
-	if showToken {
-		_, _ = fmt.Fprintln(os.Stdout, token) // OK: gated behind --show-token flag
-		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
-		logger.Warn().
-			Str("event", "show_token_flag").
-			Str("command", role+" prepare").
-			Msg("token emitted to stdout; prefer 'cat <token-path>' for scripted retrieval")
-	}
-
-	tokenLine := fmt.Sprintf("Token saved to %s. Run 'cat %s' to retrieve.", tokenPath, tokenPath)
-
-	fmt.Fprintf(os.Stderr, `%s %q prepared.
-
-%s
-
-Docker Compose written to: %s
-
-Next steps on the target host:
-  1. scp %s <target-host>:/etc/docker/compose/%s-docker-compose.yml   # or wherever you keep compose files
-  2. ssh <target-host> 'docker compose -f /etc/docker/compose/%s-docker-compose.yml up -d'
-     (Docker creates %s automatically when the parent path exists.)
-
-Then, back on this workstation:
-  3. mesh-ctl %s init %s
-
-Notes:
-  - The compose file embeds the bcrypt token hash as MESH_TOKEN_HASH. The
-    node bootstraps /config/mesh.token from that env var on first boot and
-    ignores it afterwards. The hash remains visible via 'docker inspect' —
-    treat the compose file itself as a secret and keep it off public hosts.
-  - %s is the host-side bind-mount that becomes /config inside the
-    container. All node state (keys, transport allocations, client-state)
-    lives there.
-`,
-		titleCase(role), name,
-		tokenLine,
-		outputPath,
-		outputPath, name,
-		name,
-		stateDir,
-		role, name,
-		stateDir,
-	)
-}
-
-// titleCase upper-cases the first rune of s. Replaces the deprecated strings.Title
-// for our narrow use-case (single-word ASCII role names: master/endpoint/client).
-func titleCase(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}
-
+// caPath returns the path to the mesh CA certificate.
 func caPath(configDir string) string {
 	return filepath.Join(configDir, "ca.crt")
 }
+
+// containsName reports whether needle appears in list. Used by mesh-ctl
+// subcommands that filter nodes by --node flag against topology lists.
+func containsName(list []string, needle string) bool {
+	return slices.Contains(list, needle)
+}
+
+// F-009 CR-001: removed v1.x onboarding helpers:
+//   - loadTemplate / renderDockerCompose / printNextSteps + embedded
+//     templates/*.tmpl — v1.x master/endpoint/client docker-compose generators.
+//     CR-010 mesh-ctl redesign reintroduces topology→compose generation
+//     under role-agnostic v2.0 schema.
+//   - loadOrCreateAllocator / saveTransportState — transport /30 pool
+//     allocator. v2.0 has no transport layer; eliminated entirely.

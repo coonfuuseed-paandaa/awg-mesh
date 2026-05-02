@@ -340,7 +340,6 @@ func TestParseDeviceErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -388,7 +387,6 @@ func TestReadErrno(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -424,17 +422,19 @@ func TestUAPIClientOptions(t *testing.T) {
 	}
 }
 
-func TestConfigureDeviceAndDeviceRequireName(t *testing.T) {
+func TestConfigureDeviceAndDeviceRequireValidName(t *testing.T) {
 	t.Parallel()
 
 	client := NewUAPIClient()
-	if err := client.ConfigureDevice("", Config{}); err == nil || !strings.Contains(err.Error(), "device name is required") {
-		t.Fatalf("expected ConfigureDevice name validation error, got %v", err)
-	}
+	for _, name := range []string{"", "wg/name", `wg\\name`, "wg..name", "0123456789abcdef"} {
+		if err := client.ConfigureDevice(name, Config{}); err == nil {
+			t.Fatalf("expected ConfigureDevice name validation error for %q", name)
+		}
 
-	_, err := client.Device("")
-	if err == nil || !strings.Contains(err.Error(), "device name is required") {
-		t.Fatalf("expected Device name validation error, got %v", err)
+		_, err := client.Device(name)
+		if err == nil {
+			t.Fatalf("expected Device name validation error for %q", name)
+		}
 	}
 }
 

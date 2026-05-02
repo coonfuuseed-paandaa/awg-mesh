@@ -1,0 +1,254 @@
+syntax = "proto3";
+
+package awgmesh.control_plane.v1;
+
+option go_package = "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane";
+
+// F-009 control plane gRPC service.
+//
+// Mesh-internal nodes (master, egress, ingress, balancer) and clients connect
+// to a long-running mesh-ctl daemon implementing this service. The daemon
+// holds the authoritative state of the mesh:
+//   - identity registry (which nodes exist + their certs + roles)
+//   - ownership ledger (which master owns which overlay /32)
+//   - rotation orchestration (mesh-wide AWG param swap)
+//   - NAT-traversal signal exchange
+//   - service registry distribution to ingress nodes
+//   - audit log query
+//
+// Streaming RPCs push updates as they happen — clientd does not poll. mTLS +
+// node certificates authenticate every call (FR-16 cert lifecycle).
+service ControlPlane {
+  // Node lifecycle.
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);
+
+  // Streaming peer-list distribution. Client sends one StreamPeerListRequest
+  // and the server pushes PeerListUpdate messages as the mesh evolves.
+  rpc StreamPeerList(StreamPeerListRequest) returns (stream PeerListUpdate);
+
+  // Streaming ownership-ledger distribution. Drives clientd AllowedIPs
+  // partitions per FR-5 HA-2.
+  rpc StreamOwnership(StreamOwnershipRequest) returns (stream OwnershipUpdate);
+
+  // Mesh-wide rotation orchestration (FR-8). Client streams ack messages
+  // back so the control plane can roll back on partial-apply.
+  rpc RotateAWGParamsMeshWide(stream RotateRequest) returns (stream RotateResponse);
+
+  // NAT-traversal signal exchange. Bidirectional stream — both ends relay
+  // ICE candidates through the control plane (analogue of Tailscale DERP).
+  rpc SignalExchange(stream SignalRequest) returns (stream SignalResponse);
+
+  // Streaming service registry — ingress nodes receive hostname-to-target
+  // bindings.
+  rpc StreamServiceRegistry(StreamServiceRegistryRequest) returns (stream ServiceRegistryUpdate);
+
+  // Audit log query (FR-20). Operator-facing.
+  rpc QueryAudit(QueryAuditRequest) returns (stream AuditEntry);
+
+  // Decommissioning (FR-15). Operator initiates, control plane orchestrates
+  // ownership reassignment + peer removal.
+  rpc DecommissionNode(DecommissionRequest) returns (DecommissionResponse);
+
+  // Cert distribution (FR-16). New cert pushed when 7-day overlap window opens.
+  rpc StreamCertUpdate(StreamCertRequest) returns (stream CertUpdate);
+}
+
+// ---------------------------------------------------------------------------
+// Node lifecycle
+// ---------------------------------------------------------------------------
+
+message RegisterNodeRequest {
+  string node_name = 1;
+  repeated string roles = 2;     // [master], [client], [master, balancer, egress, ingress], etc.
+  bytes node_cert_pem = 3;       // mTLS identity (operator-provisioned at deploy time).
+  string node_version = 4;
+  string overlay_ip = 5;         // assigned overlay /32.
+  string region = 6;
+}
+
+message RegisterNodeResponse {
+  bool accepted = 1;
+  string reject_reason = 2;      // populated when accepted=false (e.g. role conflict, IP collision).
+  int64 registered_at_unix = 3;
+}
+
+message HeartbeatRequest {
+  string node_name = 1;
+  int64 sent_at_unix = 2;
+  map<string, string> health = 3; // role-specific health indicators
+}
+
+message HeartbeatResponse {
+  int64 server_at_unix = 1;
+  bool stale = 2;                // true when control plane wants the node to re-register
+}
+
+// ---------------------------------------------------------------------------
+// Peer-list distribution
+// ---------------------------------------------------------------------------
+
+message StreamPeerListRequest {
+  string node_name = 1;
+}
+
+message PeerListUpdate {
+  string subject_node = 1;
+  repeated PeerEntry peers = 2;
+  int64 version = 3;
+}
+
+message PeerEntry {
+  string peer_name = 1;
+  string peer_overlay_ip = 2;
+  bytes peer_pubkey = 3;
+  string peer_endpoint_host = 4;     // for vanilla-WG client→master edge: master public IP+port
+  repeated string allowed_ips = 5;   // partition for HA-2
+  int32 persistent_keepalive_secs = 6;
+  string protocol = 7;               // "vanilla-wg" or "amneziawg"
+}
+
+// ---------------------------------------------------------------------------
+// Ownership ledger
+// ---------------------------------------------------------------------------
+
+message StreamOwnershipRequest {
+  string subscriber_node = 1;
+}
+
+message OwnershipUpdate {
+  repeated OwnershipEntry entries = 1;
+  int64 version = 2;
+  bool full_snapshot = 3;            // true on first message after subscribe
+}
+
+message OwnershipEntry {
+  string overlay_ip = 1;
+  string owning_master = 2;
+  int64 last_reassigned_at_unix = 3;
+  string reason = 4;                  // "scheduled" | "failover" | "operator-pinned"
+}
+
+// ---------------------------------------------------------------------------
+// Rotation
+// ---------------------------------------------------------------------------
+
+message RotateRequest {
+  string tier = 1;                    // "tier1" | "tier2" | "tier3"
+  AWGParamsV2 new_params = 2;
+  int64 apply_at_unix_micros = 3;
+  string rotation_id = 4;
+}
+
+message RotateResponse {
+  string node_name = 1;
+  string rotation_id = 2;
+  bool ack = 3;
+  string error = 4;                   // populated on rollback
+}
+
+message AWGParamsV2 {
+  int32 jc = 1;
+  int32 jmin = 2;
+  int32 jmax = 3;
+  int32 s1 = 4;
+  int32 s2 = 5;
+  uint32 h1 = 6;
+  uint32 h2 = 7;
+  uint32 h3 = 8;
+  uint32 h4 = 9;
+  bytes i1 = 10;
+  bytes i2 = 11;
+  bytes i3 = 12;
+  bytes i4 = 13;
+  bytes i5 = 14;
+}
+
+// ---------------------------------------------------------------------------
+// NAT signal
+// ---------------------------------------------------------------------------
+
+message SignalRequest {
+  string from_node = 1;
+  string to_node = 2;
+  bytes ice_candidate = 3;            // opaque ICE candidate blob
+}
+
+message SignalResponse {
+  string from_node = 1;
+  string to_node = 2;
+  bytes ice_candidate = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Service registry
+// ---------------------------------------------------------------------------
+
+message StreamServiceRegistryRequest {
+  string ingress_node = 1;
+}
+
+message ServiceRegistryUpdate {
+  repeated ServiceEntry services = 1;
+  int64 version = 2;
+}
+
+message ServiceEntry {
+  string hostname = 1;
+  string target_overlay_ip = 2;
+  int32 target_port = 3;
+  string protocol = 4;                // "tcp" | "udp"
+  string mode = 5;                    // "sni_passthrough" | "tls_terminate" | "tcp_forward" | "udp_forward"
+  string tenant = 6;
+  bool http3 = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+message QueryAuditRequest {
+  int64 since_unix = 1;
+  int64 until_unix = 2;
+  string event_type_filter = 3;
+  string node_filter = 4;
+  int32 limit = 5;
+}
+
+message AuditEntry {
+  int64 ts_unix = 1;
+  string event_type = 2;
+  string node_name = 3;
+  string detail = 4;
+  string actor = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Decommissioning
+// ---------------------------------------------------------------------------
+
+message DecommissionRequest {
+  string node_name = 1;
+  int32 drain_seconds = 2;            // gRPC drain window before peer removal
+}
+
+message DecommissionResponse {
+  bool success = 1;
+  int32 reassigned_overlay_count = 2;
+  string error = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Certificate lifecycle
+// ---------------------------------------------------------------------------
+
+message StreamCertRequest {
+  string node_name = 1;
+}
+
+message CertUpdate {
+  bytes cert_pem = 1;
+  bytes key_pem = 2;
+  int64 valid_from_unix = 3;
+  int64 valid_until_unix = 4;
+}

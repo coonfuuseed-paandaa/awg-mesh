@@ -25,14 +25,13 @@ type Defaults struct {
 
 // Topology is the full mesh topology configuration.
 type Topology struct {
-	Defaults  Defaults        `yaml:"defaults,omitempty"`
-	Overlay   OverlayConfig   `yaml:"overlay"`
-	Masters   []MasterNode    `yaml:"masters"`
-	Endpoints []EndpointNode  `yaml:"endpoints"`
-	Clients   []ClientNode    `yaml:"clients"`
-	Capture   CaptureConfig   `yaml:"capture"`
-	Rotation  RotationConfig  `yaml:"rotation"`
-	Transport TransportConfig `yaml:"transport"`
+	Defaults  Defaults       `yaml:"defaults,omitempty"`
+	Overlay   OverlayConfig  `yaml:"overlay"`
+	Masters   []MasterNode   `yaml:"masters"`
+	Endpoints []EndpointNode `yaml:"endpoints"`
+	Clients   []ClientNode   `yaml:"clients"`
+	Capture   CaptureConfig  `yaml:"capture"`
+	Rotation  RotationConfig `yaml:"rotation"`
 }
 
 // OverlayConfig contains overlay network settings.
@@ -200,12 +199,6 @@ type RotationDefaults struct {
 	Tier2Interval string `yaml:"tier2_interval"`
 	Tier3Interval string `yaml:"tier3_interval"`
 	Preset        string `yaml:"preset"`
-}
-
-// TransportConfig contains transport subnet allocation settings.
-type TransportConfig struct {
-	Pool         string `yaml:"pool"`
-	PrefixLength int    `yaml:"prefix_length"`
 }
 
 // LoadTopology loads topology from YAML file.

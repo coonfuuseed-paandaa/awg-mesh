@@ -1,0 +1,372 @@
+package control_plane
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+	"time"
+
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// Server implements pb.ControlPlaneServer. Wire it into a grpc.Server
+// via pb.RegisterControlPlaneServer.
+//
+// CR-002 implements the minimum-viable subset:
+//
+//	RegisterNode, Heartbeat, StreamPeerList, StreamOwnership, DecommissionNode
+//
+// Streaming RPCs that depend on yet-unwritten subsystems return Unimplemented:
+//
+//	RotateAWGParamsMeshWide  → CR-008 mesh-wide rotation orchestrator
+//	SignalExchange           → CR-007 NAT signal relay
+//	StreamServiceRegistry    → CR-006 ingress mode (ServiceRegistry)
+//	StreamCertUpdate         → CR-016 cert lifecycle
+//	QueryAudit               → CR-020 audit query (in-memory log already populated here)
+type Server struct {
+	pb.UnimplementedControlPlaneServer
+	registry       *Registry
+	ledger         *Ledger
+	audit          *AuditLog
+	peerListBcast  *PeerListBroadcaster
+	ownershipBcast *OwnershipBroadcaster
+}
+
+// NewServer wires the provided dependencies into a Server. The ledger
+// listener is set so every Reassign / Remove fans out via the broadcasters.
+func NewServer(registry *Registry, ledger *Ledger, audit *AuditLog) *Server {
+	s := &Server{
+		registry:       registry,
+		ledger:         ledger,
+		audit:          audit,
+		peerListBcast:  NewPeerListBroadcaster(),
+		ownershipBcast: NewOwnershipBroadcaster(),
+	}
+	ledger.SetListener(ledgerListenerFn(func(snap []OwnershipEntry, version int64) {
+		s.ownershipBcast.Broadcast(OwnershipUpdateMsg{Entries: snap, Version: version})
+		s.peerListBcast.Broadcast(PeerListUpdateMsg{Snapshot: snap, Version: version})
+	}))
+	return s
+}
+
+// RegisterNode handles initial registration. The node cert MUST be present
+// (operators provision it during onboarding). Returns Accepted=false with a
+// reject_reason on validation failure.
+func (s *Server) RegisterNode(ctx context.Context, req *pb.RegisterNodeRequest) (*pb.RegisterNodeResponse, error) {
+	if req.GetNodeName() == "" {
+		return &pb.RegisterNodeResponse{Accepted: false, RejectReason: "node_name required"}, nil
+	}
+	roles := make([]role.Role, 0, len(req.GetRoles()))
+	for _, r := range req.GetRoles() {
+		roles = append(roles, role.Role(r))
+	}
+	node := RegisteredNode{
+		Name:        req.GetNodeName(),
+		Roles:       roles,
+		OverlayIP:   req.GetOverlayIp(),
+		Region:      req.GetRegion(),
+		NodeCertPEM: req.GetNodeCertPem(),
+		NodeVersion: req.GetNodeVersion(),
+	}
+	if err := s.registry.Register(node); err != nil {
+		s.audit.Append(AuditEvent{
+			EventType: "register-rejected",
+			NodeName:  req.GetNodeName(),
+			Detail:    err.Error(),
+		})
+		return &pb.RegisterNodeResponse{Accepted: false, RejectReason: err.Error()}, nil
+	}
+	if slices.Contains(roles, role.RoleMaster) {
+		if _, err := s.ledger.Reassign(req.GetOverlayIp(), req.GetNodeName(), "register"); err != nil {
+			s.audit.Append(AuditEvent{
+				EventType: "register-rejected",
+				NodeName:  req.GetNodeName(),
+				Detail:    err.Error(),
+			})
+			if removeErr := s.registry.Remove(req.GetNodeName()); removeErr != nil {
+				s.audit.Append(AuditEvent{
+					EventType: "register-rollback-failed",
+					NodeName:  req.GetNodeName(),
+					Detail:    removeErr.Error(),
+				})
+			}
+			return &pb.RegisterNodeResponse{Accepted: false, RejectReason: err.Error()}, nil
+		}
+	}
+	saved, _ := s.registry.Lookup(req.GetNodeName())
+	s.audit.Append(AuditEvent{
+		EventType: "register",
+		NodeName:  req.GetNodeName(),
+		Detail:    fmt.Sprintf("roles=%v overlay=%s region=%s", req.GetRoles(), req.GetOverlayIp(), req.GetRegion()),
+	})
+	return &pb.RegisterNodeResponse{
+		Accepted:         true,
+		RegisteredAtUnix: saved.RegisteredAt.Unix(),
+	}, nil
+}
+
+// Heartbeat is a bidirectional stream. The node sends a HeartbeatRequest at
+// configured cadence; the server responds with the current server time and a
+// stale flag (set when the registry believes the node should re-register).
+func (s *Server) Heartbeat(stream pb.ControlPlane_HeartbeatServer) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(stream.Context().Err(), context.Canceled) || errors.Is(stream.Context().Err(), context.DeadlineExceeded) {
+				return nil
+			}
+			return err
+		}
+		if err := s.registry.Heartbeat(req.GetNodeName(), req.GetHealth()); err != nil {
+			return status.Errorf(codes.NotFound, "node %q not registered", req.GetNodeName())
+		}
+		s.audit.Append(AuditEvent{
+			EventType: "heartbeat",
+			NodeName:  req.GetNodeName(),
+		})
+		resp := &pb.HeartbeatResponse{
+			ServerAtUnix: time.Now().UTC().Unix(),
+			Stale:        false,
+		}
+		if err := stream.Send(resp); err != nil {
+			return err
+		}
+	}
+}
+
+// StreamPeerList: server-streaming. The first message is a full snapshot; we
+// then push deltas as the ledger mutates.
+func (s *Server) StreamPeerList(req *pb.StreamPeerListRequest, stream pb.ControlPlane_StreamPeerListServer) error {
+	subject := req.GetNodeName()
+	if subject == "" {
+		return status.Error(codes.InvalidArgument, "node_name required")
+	}
+	// Initial snapshot.
+	snapshot, version := s.ledger.Snapshot()
+	if err := stream.Send(s.buildPeerListUpdate(subject, snapshot, version)); err != nil {
+		return err
+	}
+	// Subscribe for deltas.
+	ch, cancel := s.peerListBcast.Subscribe(subject)
+	defer cancel()
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case msg, ok := <-ch:
+			if !ok {
+				return status.Error(codes.Aborted, "peer-list subscription dropped (slow consumer)")
+			}
+			if err := stream.Send(s.buildPeerListUpdate(subject, msg.Snapshot, msg.Version)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// StreamOwnership: server-streaming. First message is a full snapshot with
+// FullSnapshot=true; subsequent updates carry deltas.
+func (s *Server) StreamOwnership(req *pb.StreamOwnershipRequest, stream pb.ControlPlane_StreamOwnershipServer) error {
+	snapshot, version := s.ledger.Snapshot()
+	first := &pb.OwnershipUpdate{
+		Entries:      ownershipToProto(snapshot),
+		Version:      version,
+		FullSnapshot: true,
+	}
+	if err := stream.Send(first); err != nil {
+		return err
+	}
+	ch, cancel := s.ownershipBcast.Subscribe()
+	defer cancel()
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case msg, ok := <-ch:
+			if !ok {
+				return status.Error(codes.Aborted, "ownership subscription dropped (slow consumer)")
+			}
+			update := &pb.OwnershipUpdate{
+				Entries:      ownershipToProto(msg.Entries),
+				Version:      msg.Version,
+				FullSnapshot: msg.FullSnapshot,
+			}
+			if err := stream.Send(update); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// DecommissionNode: drains all overlay /32s owned by the node, removes it from
+// the registry, and emits an audit entry. Successor master is selected by
+// region affinity (FR-15).
+func (s *Server) DecommissionNode(ctx context.Context, req *pb.DecommissionRequest) (*pb.DecommissionResponse, error) {
+	name := req.GetNodeName()
+	if name == "" {
+		return &pb.DecommissionResponse{Success: false, Error: "node_name required"}, nil
+	}
+	target, ok := s.registry.Lookup(name)
+	if !ok {
+		return &pb.DecommissionResponse{Success: false, Error: "node not in registry"}, nil
+	}
+
+	var chooser func(overlayIP string) string
+	if len(s.ledger.OwnedBy(name)) > 0 {
+		candidates := s.registry.MastersInRegion(target.Region)
+		candidates = filterOut(candidates, name)
+		if len(candidates) == 0 {
+			// Region empty — fall back to any master mesh-wide.
+			candidates = filterOut(s.registry.MastersInRegion(""), name)
+		}
+		if len(candidates) == 0 {
+			return &pb.DecommissionResponse{Success: false, Error: "no surviving master available for reassignment"}, nil
+		}
+		chooser = roundRobinChooser(candidates)
+	}
+
+	count, err := s.ledger.Drain(name, "decommission", chooser)
+	if err != nil {
+		s.audit.Append(AuditEvent{
+			EventType: "decommission-failed",
+			NodeName:  name,
+			Detail:    err.Error(),
+		})
+		return &pb.DecommissionResponse{Success: false, Error: err.Error(), ReassignedOverlayCount: int32(count)}, nil
+	}
+	if err := s.registry.Remove(name); err != nil {
+		// Ledger is drained but registry remove failed — still report partial success.
+		s.audit.Append(AuditEvent{
+			EventType: "decommission-partial",
+			NodeName:  name,
+			Detail:    fmt.Sprintf("drained=%d registry_remove=%v", count, err),
+		})
+		return &pb.DecommissionResponse{Success: false, Error: err.Error(), ReassignedOverlayCount: int32(count)}, nil
+	}
+	s.audit.Append(AuditEvent{
+		EventType: "decommission",
+		NodeName:  name,
+		Detail:    fmt.Sprintf("reassigned=%d", count),
+	})
+	return &pb.DecommissionResponse{Success: true, ReassignedOverlayCount: int32(count)}, nil
+}
+
+// QueryAudit: server-streaming the matching events.
+func (s *Server) QueryAudit(req *pb.QueryAuditRequest, stream pb.ControlPlane_QueryAuditServer) error {
+	since := unixOrZero(req.GetSinceUnix())
+	until := unixOrZero(req.GetUntilUnix())
+	limit := int(req.GetLimit())
+	events := s.audit.Query(since, until, req.GetEventTypeFilter(), req.GetNodeFilter(), limit)
+	for _, e := range events {
+		out := &pb.AuditEntry{
+			TsUnix:    e.Timestamp.Unix(),
+			EventType: e.EventType,
+			NodeName:  e.NodeName,
+			Detail:    e.Detail,
+			Actor:     e.Actor,
+		}
+		if err := stream.Send(out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- Stubs for streams handled by later CRs. ---
+
+func (s *Server) RotateAWGParamsMeshWide(stream pb.ControlPlane_RotateAWGParamsMeshWideServer) error {
+	return status.Error(codes.Unimplemented, "rotation orchestration lands in CR-008")
+}
+
+func (s *Server) SignalExchange(stream pb.ControlPlane_SignalExchangeServer) error {
+	return status.Error(codes.Unimplemented, "NAT signal relay lands in CR-007")
+}
+
+func (s *Server) StreamServiceRegistry(req *pb.StreamServiceRegistryRequest, stream pb.ControlPlane_StreamServiceRegistryServer) error {
+	return status.Error(codes.Unimplemented, "service registry lands in CR-006")
+}
+
+func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPlane_StreamCertUpdateServer) error {
+	return status.Error(codes.Unimplemented, "cert lifecycle lands in CR-016")
+}
+
+// --- Helpers -----------------------------------------------------------------
+
+func (s *Server) buildPeerListUpdate(subject string, snapshot []OwnershipEntry, version int64) *pb.PeerListUpdate {
+	// CR-002 emits a stripped peer list — only overlay/owner pairs that the
+	// subject node SHOULD peer with. Full peer-entry shape (pubkey, endpoint,
+	// allowed_ips partition, protocol) lands in CR-003 (clientd) once the
+	// registry exposes pubkey state. For now we publish the ownership view as
+	// the peer-list seed; clientd derives configuration from its own ledger
+	// stream.
+	peers := make([]*pb.PeerEntry, 0, len(snapshot))
+	for _, e := range snapshot {
+		peers = append(peers, &pb.PeerEntry{
+			PeerName:      e.OwningMaster,
+			PeerOverlayIp: e.OverlayIp(),
+			AllowedIps:    []string{e.OverlayIp() + "/32"},
+		})
+	}
+	return &pb.PeerListUpdate{
+		SubjectNode: subject,
+		Peers:       peers,
+		Version:     version,
+	}
+}
+
+// OverlayIp is a small helper so we don't have to fmt-import in the server file.
+func (e OwnershipEntry) OverlayIp() string { return e.OverlayIP }
+
+func ownershipToProto(in []OwnershipEntry) []*pb.OwnershipEntry {
+	out := make([]*pb.OwnershipEntry, 0, len(in))
+	for _, e := range in {
+		out = append(out, &pb.OwnershipEntry{
+			OverlayIp:            e.OverlayIP,
+			OwningMaster:         e.OwningMaster,
+			LastReassignedAtUnix: e.LastReassignedAt.Unix(),
+			Reason:               e.Reason,
+		})
+	}
+	return out
+}
+
+func filterOut(in []string, exclude string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s != exclude {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func roundRobinChooser(masters []string) func(string) string {
+	i := 0
+	return func(string) string {
+		if len(masters) == 0 {
+			return ""
+		}
+		m := masters[i%len(masters)]
+		i++
+		return m
+	}
+}
+
+func unixOrZero(t int64) time.Time {
+	if t == 0 {
+		return time.Time{}
+	}
+	return time.Unix(t, 0).UTC()
+}
+
+// ledgerListenerFn lets us pass closure-style listeners to Ledger.SetListener.
+type ledgerListenerFn func([]OwnershipEntry, int64)
+
+func (f ledgerListenerFn) OnLedgerMutation(snap []OwnershipEntry, version int64) {
+	f(snap, version)
+}

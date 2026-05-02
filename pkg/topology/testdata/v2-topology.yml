@@ -1,0 +1,69 @@
+# v2.0 topology fixture — must validate cleanly via ValidateV2.
+# Used by pkg/topology/topology_v2_test.go::TestValidateV2_V2Fixture.
+
+schema_version: 2
+
+mesh:
+  name: example-mesh
+  overlay_supernet: 172.21.92.0/24
+  tenants: [tenant-a]
+
+nodes:
+  - name: control-plane-01
+    roles: [master, balancer]
+    overlay_ip: 172.21.92.1
+    bridge_ip: 192.168.93.1
+    region: ru
+  - name: master-01
+    roles: [master, balancer, egress]
+    overlay_ip: 172.21.92.2
+    bridge_ip: 192.168.93.10
+    public_ip: 203.0.113.10
+    region: ru
+    internet_iface: eth0
+  - name: egress-us-01
+    roles: [egress]
+    overlay_ip: 172.21.92.34
+    bridge_ip: 192.168.93.20
+    region: us
+    internet_iface: eth0
+  - name: ingress-de-01
+    roles: [ingress]
+    overlay_ip: 172.21.92.20
+    bridge_ip: 192.168.93.30
+    public_ip: 203.0.113.30
+    region: de
+  - name: home-server-01
+    roles: [client]
+    overlay_ip: 172.21.92.130
+    region: home
+    preferred_master: master-01
+
+services:
+  - name: jellyfin
+    owner_node: home-server-01
+    protocol: tcp
+    local_port: 8096
+    tenant: tenant-a
+    ingress:
+      - hostname: media.example.com
+        mode: sni_passthrough
+        ingress_node: ingress-de-01
+
+rotation:
+  tier1_interval: 24h
+  tier2_interval: 168h
+  tier3_interval: 720h
+  preset: aggressive
+  adaptive: true
+
+capture:
+  domains_file: domains.txt
+  schedule: "0 3 * * *"
+  retention_days: 30
+
+observability:
+  audit_retention_days: 90
+  cert_rotation_days: 90
+  prometheus_listen: ":9091"
+  log_level: info

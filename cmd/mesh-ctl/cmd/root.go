@@ -40,9 +40,10 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.PersistentFlags().StringVar(&configDir, "config-dir", defaultConfigDir(), "mesh-ctl config directory")
 
 	rootCmd.AddCommand(newVersionCommand(version))
-	rootCmd.AddCommand(newEndpointCommand())
-	rootCmd.AddCommand(newMasterCommand())
-	rootCmd.AddCommand(newClientCommand())
+	// F-009 CR-001: v1.x role-subcommands (master/endpoint/client) removed.
+	// Replacement role-agnostic commands (`node prepare`, `node deploy`,
+	// `node init`, `node remove`) land in CR-010 mesh-ctl redesign.
+	// Reconcile subcommand removed alongside legacy role flow.
 	rootCmd.AddCommand(newStatusCommand())
 	rootCmd.AddCommand(newTokenCommand())
 	rootCmd.AddCommand(newCaptureCommand())
@@ -52,11 +53,8 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(newRoutingCommand())
 	rootCmd.AddCommand(newBootstrapCommand())
 	rootCmd.AddCommand(newInspectCommand())
-	rootCmd.AddCommand(newReconcileCommand())
-
-	upgradeCmd := newUpgradeCommand()
-	upgradeCmd.AddCommand(newUpgradeComposeCommand())
-	rootCmd.AddCommand(upgradeCmd)
+	// F-009 CR-001: legacy `upgrade` + `upgrade compose` subcommands removed.
+	// Replaced by FR-19 in-place upgrade flow in CR-010 mesh-ctl redesign.
 
 	return rootCmd
 }

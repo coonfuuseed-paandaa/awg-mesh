@@ -41,8 +41,8 @@ func NewUAPIClient(opts ...UAPIOption) *UAPIClient {
 
 // ConfigureDevice applies cfg to a device via UAPI set.
 func (c *UAPIClient) ConfigureDevice(name string, cfg Config) error {
-	if strings.TrimSpace(name) == "" {
-		return errors.New("device name is required")
+	if err := ValidateInterfaceName(name); err != nil {
+		return err
 	}
 
 	conn, err := net.Dial("unix", filepath.Join(c.socketDir, name+".sock"))
@@ -70,8 +70,8 @@ func (c *UAPIClient) ConfigureDevice(name string, cfg Config) error {
 
 // Device retrieves device state using UAPI get.
 func (c *UAPIClient) Device(name string) (*Device, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, errors.New("device name is required")
+	if err := ValidateInterfaceName(name); err != nil {
+		return nil, err
 	}
 
 	conn, err := net.Dial("unix", filepath.Join(c.socketDir, name+".sock"))
@@ -244,8 +244,8 @@ func parseDevice(r io.Reader) (*Device, error) {
 			continue
 		}
 
-		if strings.HasPrefix(line, "errno=") {
-			errno, err := strconv.Atoi(strings.TrimPrefix(line, "errno="))
+		if errnoText, ok := strings.CutPrefix(line, "errno="); ok {
+			errno, err := strconv.Atoi(errnoText)
 			if err != nil {
 				return nil, fmt.Errorf("invalid errno value %q: %w", line, err)
 			}
@@ -419,11 +419,12 @@ func readErrno(r io.Reader) error {
 		if line == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, "errno=") {
+		errnoText, ok := strings.CutPrefix(line, "errno=")
+		if !ok {
 			continue
 		}
 
-		errno, err := strconv.Atoi(strings.TrimPrefix(line, "errno="))
+		errno, err := strconv.Atoi(errnoText)
 		if err != nil {
 			return fmt.Errorf("invalid errno value %q: %w", line, err)
 		}

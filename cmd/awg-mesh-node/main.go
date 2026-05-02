@@ -1,321 +1,190 @@
+// awg-mesh-node v2.0 — role-aware entrypoint.
+//
+// CR-001/CR-002 (F-009 foundation): skeleton entrypoint with control-plane
+// daemon wired. Other modes still print a placeholder line and exit 0:
+//
+//	control-plane → CR-002 (mesh-ctl daemon, ledger, peer-list distribution) — IMPLEMENTED
+//	master        → CR-004 (vanilla-WG + AmneziaWG dual listener)
+//	clientd       → CR-003 (self-config agent on every non-Mikrotik node)
+//	egress        → CR-005 (MASQUERADE on internet-bound iface)
+//	ingress       → CR-006 (SNI passthrough + TLS terminate + ACME + HTTP/3 + UDP)
+//	balancer      → CR-007 (policy engine: dumb / labeled / smart-future)
 package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
-	"os/signal"
-	"path/filepath"
 	"runtime/debug"
-	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/logging"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	"github.com/rs/zerolog"
-	"gopkg.in/natefinch/lumberjack.v2"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 )
 
-const (
-	modeMaster   = "master"
-	modeEndpoint = "endpoint"
-	modeClient   = "client"
-)
-
-const metricsShutdownTimeout = 5 * time.Second
-
-type nodeOptions struct {
-	mode        string
-	name        string
-	overlayIP   string
-	listenPort  int
-	configDir   string
-	topology    string
-	logLevel    string
-	metricsAddr string
+// supportedModes is the set of valid --mode values + the implementing CR.
+// Daemon logic for each mode lands in the listed CR.
+var supportedModes = map[string]string{
+	"control-plane": "CR-002",
+	"master":        "CR-004",
+	"endpoint":      "CR-005",
+	"client":        "CR-003",
+	"clientd":       "CR-003",
+	"egress":        "CR-005",
+	"ingress":       "CR-006",
+	"balancer":      "CR-007",
 }
 
-// newClientLogRotator returns a lumberjack rotating file writer for client-mode
-// log output. The log file is placed in configDir so it co-locates with other
-// persistent node state (keys, token). Parameters:
-//   - MaxSize 10 MB — keeps logs well within the ~64 MB RouterOS storage budget
-//   - MaxBackups 3 — three generations of rotated files before oldest is removed
-//   - MaxAge 0 — no age-based deletion; size is the only eviction trigger
-//   - LocalTime true — timestamps in log file names use the host clock timezone
-//   - Compress false — uncompressed for immediate human-readable access
-func newClientLogRotator(configDir string) *lumberjack.Logger {
-	return &lumberjack.Logger{
-		Filename:   filepath.Join(configDir, "awg-mesh-client.log"),
-		MaxSize:    10,
-		MaxBackups: 3,
-		MaxAge:     0,
-		LocalTime:  true,
-		Compress:   false,
+// versionFromBuild is injected at build time via:
+//
+//	go build -ldflags "-X main.versionFromBuild=<ref>"
+var versionFromBuild = ""
+
+// versionString returns "<Version> (<commit>)" when build info is available,
+// or just <Version> otherwise. Matches the v1.x pattern in cmd/mesh-ctl.
+func versionString() string {
+	if versionFromBuild != "" {
+		return versionFromBuild
+	}
+	v := awgmesh.Version
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 8 {
+				return fmt.Sprintf("%s (%s)", v, s.Value[:8])
+			}
+		}
+	}
+	return v
+}
+
+func roleForMode(mode string) role.Role {
+	switch mode {
+	case "client", "clientd":
+		return role.RoleClient
+	case "endpoint":
+		return role.RoleEgress
+	default:
+		return role.Role(mode)
+	}
+}
+
+func warnDeprecatedMode(mode string) {
+	switch mode {
+	case "client":
+		fmt.Fprintln(os.Stderr, "warning: --mode client is deprecated for v2.0; use --mode clientd")
+	case "endpoint":
+		fmt.Fprintln(os.Stderr, "warning: --mode endpoint is deprecated for v2.0; use --mode egress")
 	}
 }
 
 func main() {
-	options := parseNodeOptions()
-
-	logging.SetGlobalLevel(options.logLevel)
-
-	var logger zerolog.Logger
-	if options.mode == modeClient {
-		rotator := newClientLogRotator(options.configDir)
-		logger = zerolog.New(rotator).
-			With().
-			Timestamp().
-			Str("component", "awg-mesh-node").
-			Logger()
-	} else {
-		logger = logging.NewLogger("awg-mesh-node")
-	}
-
-	if !isValidMode(options.mode) {
-		logger.Fatal().
-			Str("mode", options.mode).
-			Str("valid_modes", modeMaster+","+modeEndpoint+","+modeClient).
-			Msg("invalid node mode")
-	}
-
-	if err := bootstrapTokenHash(options.configDir, logger); err != nil {
-		logger.Fatal().Err(err).Msg("token bootstrap failed")
-	}
-
-	cfg := node.NodeConfig{
-		Name:         options.name,
-		Mode:         options.mode,
-		OverlayIP:    options.overlayIP,
-		ListenPort:   options.listenPort,
-		ConfigDir:    options.configDir,
-		TopologyPath: options.topology,
-	}
-
-	meshNode, err := node.NewNode(cfg)
-	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to create node")
-	}
-
-	node.RegisterMetrics()
-	metricsServer, metricsErr := node.StartMetricsServer(options.metricsAddr, options.configDir)
-	if metricsErr != nil {
-		logger.Warn().
-			Err(metricsErr).
-			Str("metrics_addr", options.metricsAddr).
-			Msg("failed to start metrics server")
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	logger.Info().
-		Str("version", version()).
-		Str("mode", options.mode).
-		Str("name", options.name).
-		Msg("awg-mesh-node starting")
-
-	if err := meshNode.Run(ctx); err != nil {
-		logger.Fatal().Err(err).Msg("node run failed")
-	}
-
-	if ctx.Err() != nil {
-		shutdownMetricsServer(metricsServer, logger)
-		meshNode.Shutdown()
-		logger.Info().Msg("node exited cleanly")
-	}
-}
-
-// parseNodeOptions reads CLI flags with MESH_* env var fallback for flags that
-// were not explicitly set on the command line. Flags win over env vars — this
-// matches 12-factor container conventions where env vars are the usual config
-// transport and flags are reserved for debug/override.
-func parseNodeOptions() nodeOptions {
-	mode := flag.String("mode", modeMaster, "Node mode: master|endpoint|client (env: MESH_MODE)")
-	name := flag.String("name", "", "Node name (env: MESH_NAME)")
-	overlayIP := flag.String("overlay-ip", "", "Node overlay IP address (env: MESH_OVERLAY_IP)")
-	listenPort := flag.Int("listen-port", 51820, "AWG listen port (env: MESH_LISTEN_PORT)")
-	configDir := flag.String("config-dir", "/config", "Node config directory (env: MESH_CONFIG_DIR)")
-	topologyPath := flag.String("topology", "", "Path to topology YAML (env: MESH_TOPOLOGY)")
-	logLevel := flag.String("log-level", "info", "Log level: debug|info|warn|error (env: MESH_LOG_LEVEL)")
-	metricsAddr := flag.String("metrics-addr", "127.0.0.1:9091", "Prometheus metrics listen address (env: MESH_METRICS_ADDR)")
+	var (
+		mode                      = flag.String("mode", "", "node mode: control-plane | master | endpoint | client | clientd | egress | ingress | balancer")
+		version                   = flag.Bool("version", false, "print version and exit")
+		listenAddr                = flag.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
+		stateDir                  = flag.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
+		auditCap                  = flag.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
+		allowInsecurePublicBind   = flag.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
+		clientdControlPlane       = flag.String("control-plane", "", "clientd: control-plane gRPC addr")
+		clientdName               = flag.String("name", "", "clientd: node name")
+		clientdOverlayIP          = flag.String("overlay-ip", "", "clientd: assigned overlay IP")
+		clientdRegion             = flag.String("region", "", "clientd: node region")
+		clientdCert               = flag.String("cert", "", "clientd: node certificate PEM path")
+		clientdIface              = flag.String("iface", "awg-mesh0", "clientd: WireGuard interface name")
+		clientdProtocol           = flag.String("protocol", "amneziawg", "clientd: transport protocol: vanilla-wg or amneziawg")
+		allowInsecureControlPlane = flag.Bool("allow-insecure-control-plane", false, "clientd: allow insecure control-plane gRPC to non-loopback targets")
+	)
 	flag.Parse()
 
-	setFlags := explicitFlags()
-
-	return nodeOptions{
-		mode:        envFallbackString(setFlags, "mode", *mode, "MESH_MODE"),
-		name:        envFallbackString(setFlags, "name", *name, "MESH_NAME"),
-		overlayIP:   envFallbackString(setFlags, "overlay-ip", *overlayIP, "MESH_OVERLAY_IP"),
-		listenPort:  envFallbackInt(setFlags, "listen-port", *listenPort, "MESH_LISTEN_PORT"),
-		configDir:   envFallbackString(setFlags, "config-dir", *configDir, "MESH_CONFIG_DIR"),
-		topology:    envFallbackString(setFlags, "topology", *topologyPath, "MESH_TOPOLOGY"),
-		logLevel:    envFallbackString(setFlags, "log-level", *logLevel, "MESH_LOG_LEVEL"),
-		metricsAddr: envFallbackString(setFlags, "metrics-addr", *metricsAddr, "MESH_METRICS_ADDR"),
-	}
-}
-
-// explicitFlags returns the names of flags that were explicitly set on the
-// command line. These take precedence over MESH_* env vars.
-func explicitFlags() map[string]bool {
-	set := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) {
-		set[f.Name] = true
-	})
-	return set
-}
-
-func envFallbackString(setFlags map[string]bool, flagName, flagValue, envName string) string {
-	if setFlags[flagName] {
-		return flagValue
-	}
-	if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
-		return v
-	}
-	return flagValue
-}
-
-func envFallbackInt(setFlags map[string]bool, flagName string, flagValue int, envName string) int {
-	if setFlags[flagName] {
-		return flagValue
-	}
-	raw := strings.TrimSpace(os.Getenv(envName))
-	if raw == "" {
-		return flagValue
-	}
-	parsed, err := strconv.Atoi(raw)
-	if err != nil {
-		// Logger is not yet constructed here; emit the diagnostic directly
-		// so an operator with a typo in MESH_LISTEN_PORT (e.g. "51820x")
-		// sees the fall-back happen instead of silently getting the default.
-		fmt.Fprintf(os.Stderr,
-			"warning: %s=%q is not a valid integer, using flag default %d (%v)\n",
-			envName, raw, flagValue, err)
-		return flagValue
-	}
-	return parsed
-}
-
-// bootstrapTokenHash copies the MESH_TOKEN_HASH env var into <configDir>/mesh.token
-// on first boot. The value must be a v2 argon2id hash (prefix "mesh1."); bcrypt and
-// plaintext values are rejected with a structured error so the node refuses to start
-// with an invalid token, keeping auth state on the node correct.
-// Subsequent boots see an existing token file and leave the env var untouched.
-func bootstrapTokenHash(configDir string, logger zerolog.Logger) error {
-	rawVal, set := os.LookupEnv("MESH_TOKEN_HASH")
-	if !set {
-		return nil // env var absent entirely — no-op on subsequent boots
-	}
-	hash := strings.TrimSpace(rawVal)
-	if hash == "" {
-		logger.Error().
-			Str("event", "token_hash_invalid").
-			Str("format", "unknown").
-			Msg("MESH_TOKEN_HASH must be v2 format")
-		return errors.New("MESH_TOKEN_HASH is set but empty — must be a v2 argon2id hash")
+	if *version {
+		fmt.Printf("awg-mesh-node %s\n", versionString())
+		os.Exit(0)
 	}
 
-	if _, _, _, _, _, _, _, err := pkgtls.ParseV2(hash); err != nil {
-		logger.Error().
-			Str("event", "token_hash_invalid").
-			Str("format", "unknown").
-			Msg("MESH_TOKEN_HASH must be v2 format")
-		return fmt.Errorf("MESH_TOKEN_HASH is not a valid v2 token hash: %w", err)
+	if *mode == "" {
+		fmt.Fprintln(os.Stderr, "error: --mode is required")
+		fmt.Fprintf(os.Stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
+		os.Exit(2)
 	}
 
-	cleanDir := strings.TrimSpace(configDir)
-	if cleanDir == "" {
-		return errors.New("config directory is empty — cannot bootstrap token hash")
+	implCR, ok := supportedModes[*mode]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "error: unsupported mode %q\n", *mode)
+		fmt.Fprintf(os.Stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
+		os.Exit(2)
+	}
+	warnDeprecatedMode(*mode)
+
+	if *mode != "control-plane" {
+		r := roleForMode(*mode)
+		if err := role.ValidateComposability([]role.Role{r}); err != nil {
+			fmt.Fprintf(os.Stderr, "error: role %q failed validation: %v\n", *mode, err)
+			os.Exit(2)
+		}
 	}
 
-	tokenPath := filepath.Join(cleanDir, "mesh.token")
-	if _, err := os.Stat(tokenPath); err == nil {
-		return nil // token already present; env var ignored on subsequent boots
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat token file %q: %w", tokenPath, err)
-	}
-
-	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
-		return fmt.Errorf("create config dir %q: %w", cleanDir, err)
-	}
-
-	tmpPath := tokenPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(hash), 0o600); err != nil {
-		return fmt.Errorf("write token temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, tokenPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename token file: %w", err)
-	}
-
-	logger.Warn().
-		Str("path", tokenPath).
-		Msg("token hash bootstrapped from MESH_TOKEN_HASH env var — mount a real file for production-grade secret handling")
-	return nil
-}
-
-func shutdownMetricsServer(server *http.Server, logger zerolog.Logger) {
-	if server == nil {
+	if *mode == "control-plane" {
+		runControlPlane(*listenAddr, *stateDir, *auditCap, *allowInsecurePublicBind)
 		return
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
-	defer cancel()
+	if *mode == "clientd" || *mode == "client" {
+		args := []string{
+			"--control-plane", *clientdControlPlane,
+			"--name", *clientdName,
+			"--overlay-ip", *clientdOverlayIP,
+			"--region", *clientdRegion,
+			"--cert", *clientdCert,
+			"--state-dir", *stateDir,
+			"--iface", *clientdIface,
+			"--protocol", *clientdProtocol,
+		}
+		if *allowInsecureControlPlane {
+			args = append(args, "--allow-insecure-control-plane")
+		}
+		code := clientd.RunCommand(context.Background(), args, os.Stdout, os.Stderr)
+		os.Exit(code)
+	}
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Warn().Err(err).Msg("failed to shut down metrics server")
+	fmt.Printf("awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
+		versionString(), *mode, implCR)
+	fmt.Fprintln(os.Stderr, "CR-001 skeleton: this binary intentionally exits without doing any networking.")
+}
+
+func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePublicBind bool) {
+	fmt.Printf("awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
+		versionString(), listenAddr, stateDir)
+	d, err := control_plane.NewDaemon(control_plane.Config{
+		ListenAddr:              listenAddr,
+		StateDir:                stateDir,
+		AuditCap:                auditCap,
+		AllowInsecurePublicBind: allowInsecurePublicBind,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "control-plane: %v\n", err)
+		os.Exit(1)
+	}
+	if err := d.Run(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "control-plane: %v\n", err)
+		os.Exit(1)
 	}
 }
 
-func isValidMode(mode string) bool {
-	switch mode {
-	case modeMaster, modeEndpoint, modeClient:
-		return true
-	default:
-		return false
+// sortedKeys returns the keys of a map[string]string in lexicographic order.
+// Inlined here to keep the skeleton free of new dependencies.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
 	}
-}
-
-// versionFromBuild is injected at build time via
-//
-//	go build -ldflags "-X main.versionFromBuild=<ref>"
-//
-// Empty when not injected — falls through to debug.ReadBuildInfo().
-var versionFromBuild = ""
-
-func version() string {
-	if versionFromBuild != "" {
-		return versionFromBuild
-	}
-
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "dev"
-	}
-
-	if v := info.Main.Version; v != "" && v != "(devel)" {
-		return v
-	}
-
-	var revision string
-	for _, s := range info.Settings {
-		if s.Key == "vcs.revision" {
-			revision = s.Value
-			break
+	// Tiny n; insertion sort keeps the binary lean and avoids importing "sort".
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j-1] > out[j]; j-- {
+			out[j-1], out[j] = out[j], out[j-1]
 		}
 	}
-
-	if revision != "" {
-		if len(revision) > 8 {
-			revision = revision[:8]
-		}
-		return revision
-	}
-
-	return "dev"
+	return out
 }

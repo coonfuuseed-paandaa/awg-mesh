@@ -65,10 +65,10 @@ func TestGenerateDeployRSC(t *testing.T) {
 	}
 
 	mustNotContain := []string{
-		"key=MESH_MASTERS",     // dead env var — node binary doesn't read it
-		"key=MESH_AWG_CONFIG",  // dead duplicate of MESH_MASTERS
-		"key=MESH_CONFIG_DIR",  // redundant — /config is the binary default
-		"192.168.100",          // old default subnet — must be gone
+		"key=MESH_MASTERS",    // dead env var — node binary doesn't read it
+		"key=MESH_AWG_CONFIG", // dead duplicate of MESH_MASTERS
+		"key=MESH_CONFIG_DIR", // redundant — /config is the binary default
+		"192.168.100",         // old default subnet — must be gone
 	}
 
 	// Plaintext MESH_TOKEN= must never land in a generated script.
