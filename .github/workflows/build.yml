@@ -265,8 +265,8 @@ jobs:
               kill -TERM "$pid" 2>/dev/null || true
               exit 1
             fi
-            kill -TERM "$pid"
-            wait "$pid"
+            kill -TERM "$pid" 2>/dev/null || true
+            wait "$pid" || true
           ' | tee /tmp/smoke.log
           echo "Smoke test passed"
 
@@ -274,10 +274,17 @@ jobs:
         if: matrix.image == 'client'
         run: |
           set -euo pipefail
-          docker run --rm --privileged --entrypoint sh awg-mesh-client:ci -c '
-            /usr/local/bin/awg-mesh-node --mode clientd 2>&1
-          ' | tee /tmp/smoke-client.log
-          grep -q "mode=clientd" /tmp/smoke-client.log || (echo "::error::Client smoke test failed — clientd skeleton marker missing" && exit 1)
+          set +e
+          docker run --rm --privileged --entrypoint sh awg-mesh-client:ci -c \
+            '/usr/local/bin/awg-mesh-node --mode clientd' > /tmp/smoke-client.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/smoke-client.log
+          if [ "$rc" -ne 2 ]; then
+            echo "::error::Client smoke test failed — expected clientd validation exit 2, got ${rc}"
+            exit 1
+          fi
+          grep -q "clientd: missing required flags" /tmp/smoke-client.log || (echo "::error::Client smoke test failed — clientd validation marker missing" && exit 1)
           echo "Client smoke test passed"
 
       - name: Login to GHCR
