@@ -1,11 +1,13 @@
 // awg-mesh-node v2.0 — role-aware entrypoint.
 //
-// CR-001/CR-002 (F-009 foundation): skeleton entrypoint with control-plane
-// daemon wired. Other modes still print a placeholder line and exit 0:
+// Implemented modes:
 //
-//	control-plane → CR-002 (mesh-ctl daemon, ledger, peer-list distribution) — IMPLEMENTED
+//	control-plane → CR-002 (mesh-ctl daemon, ledger, peer-list distribution)
 //	master        → CR-004 (vanilla-WG + AmneziaWG dual listener)
 //	clientd       → CR-003 (self-config agent on every non-Mikrotik node)
+//
+// Remaining role implementations still print placeholders until their CRs land:
+//
 //	egress        → CR-005 (MASQUERADE on internet-bound iface)
 //	ingress       → CR-006 (SNI passthrough + TLS terminate + ACME + HTTP/3 + UDP)
 //	balancer      → CR-007 (policy engine: dumb / labeled / smart-future)
@@ -15,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -22,11 +25,12 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 // supportedModes is the set of valid --mode values + the implementing CR.
-// Daemon logic for each mode lands in the listed CR.
 var supportedModes = map[string]string{
 	"control-plane": "CR-002",
 	"master":        "CR-004",
@@ -71,71 +75,93 @@ func roleForMode(mode string) role.Role {
 	}
 }
 
-func warnDeprecatedMode(mode string) {
+func warnDeprecatedMode(mode string, stderr io.Writer) {
 	switch mode {
 	case "client":
-		fmt.Fprintln(os.Stderr, "warning: --mode client is deprecated for v2.0; use --mode clientd")
+		fmt.Fprintln(stderr, "warning: --mode client is deprecated for v2.0; use --mode clientd")
 	case "endpoint":
-		fmt.Fprintln(os.Stderr, "warning: --mode endpoint is deprecated for v2.0; use --mode egress")
+		fmt.Fprintln(stderr, "warning: --mode endpoint is deprecated for v2.0; use --mode egress")
 	}
 }
 
 func main() {
-	var (
-		mode                      = flag.String("mode", "", "node mode: control-plane | master | endpoint | client | clientd | egress | ingress | balancer")
-		version                   = flag.Bool("version", false, "print version and exit")
-		listenAddr                = flag.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
-		stateDir                  = flag.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
-		auditCap                  = flag.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
-		allowInsecurePublicBind   = flag.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
-		clientdControlPlane       = flag.String("control-plane", "", "clientd: control-plane gRPC addr")
-		clientdName               = flag.String("name", "", "clientd: node name")
-		clientdOverlayIP          = flag.String("overlay-ip", "", "clientd: assigned overlay IP")
-		clientdRegion             = flag.String("region", "", "clientd: node region")
-		clientdCert               = flag.String("cert", "", "clientd: node certificate PEM path")
-		clientdIface              = flag.String("iface", "awg-mesh0", "clientd: WireGuard interface name")
-		clientdProtocol           = flag.String("protocol", "amneziawg", "clientd: transport protocol: vanilla-wg or amneziawg")
-		allowInsecureControlPlane = flag.Bool("allow-insecure-control-plane", false, "clientd: allow insecure control-plane gRPC to non-loopback targets")
-	)
-	flag.Parse()
+	os.Exit(runCommand(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func runCommand(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("awg-mesh-node", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	mode := fs.String("mode", "", "node mode: control-plane | master | endpoint | client | clientd | egress | ingress | balancer")
+	version := fs.Bool("version", false, "print version and exit")
+	listenAddr := fs.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
+	stateDir := fs.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
+	auditCap := fs.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
+	allowInsecurePublicBind := fs.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
+	controlPlaneAddr := fs.String("control-plane", "", "clientd: control-plane gRPC addr")
+	nodeName := fs.String("name", "", "node name")
+	overlayIP := fs.String("overlay-ip", "", "assigned overlay IP")
+	clientdRegion := fs.String("region", "", "clientd: node region")
+	clientdCert := fs.String("cert", "", "clientd: node certificate PEM path")
+	clientdIface := fs.String("iface", "awg-mesh0", "clientd: WireGuard interface name")
+	clientdProtocol := fs.String("protocol", string(wg.ProtocolAmneziaWG), "clientd: transport protocol: vanilla-wg or amneziawg")
+	allowInsecureControlPlane := fs.Bool("allow-insecure-control-plane", false, "clientd: allow insecure control-plane gRPC to non-loopback targets")
+	masterClientIface := fs.String("client-iface", wg.DefaultClientInterfaceName, "master: client-facing vanilla-WG interface name")
+	masterMeshIface := fs.String("mesh-iface", wg.DefaultMeshInterfaceName, "master: mesh-internal AmneziaWG interface name")
+	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
+	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
+	dryRun := fs.Bool("dry-run", false, "validate selected mode and print runtime plan without opening network resources")
+
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if *version {
-		fmt.Printf("awg-mesh-node %s\n", versionString())
-		os.Exit(0)
+		fmt.Fprintf(stdout, "awg-mesh-node %s\n", versionString())
+		return 0
 	}
 
 	if *mode == "" {
-		fmt.Fprintln(os.Stderr, "error: --mode is required")
-		fmt.Fprintf(os.Stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
-		os.Exit(2)
+		fmt.Fprintln(stderr, "error: --mode is required")
+		fmt.Fprintf(stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
+		return 2
 	}
 
 	implCR, ok := supportedModes[*mode]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "error: unsupported mode %q\n", *mode)
-		fmt.Fprintf(os.Stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
-		os.Exit(2)
+		fmt.Fprintf(stderr, "error: unsupported mode %q\n", *mode)
+		fmt.Fprintf(stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
+		return 2
 	}
-	warnDeprecatedMode(*mode)
+	warnDeprecatedMode(*mode, stderr)
 
 	if *mode != "control-plane" {
 		r := roleForMode(*mode)
 		if err := role.ValidateComposability([]role.Role{r}); err != nil {
-			fmt.Fprintf(os.Stderr, "error: role %q failed validation: %v\n", *mode, err)
-			os.Exit(2)
+			fmt.Fprintf(stderr, "error: role %q failed validation: %v\n", *mode, err)
+			return 2
 		}
 	}
 
-	if *mode == "control-plane" {
-		runControlPlane(*listenAddr, *stateDir, *auditCap, *allowInsecurePublicBind)
-		return
-	}
-
-	if *mode == "clientd" || *mode == "client" {
-		args := []string{
-			"--control-plane", *clientdControlPlane,
-			"--name", *clientdName,
-			"--overlay-ip", *clientdOverlayIP,
+	switch *mode {
+	case "control-plane":
+		return runControlPlane(*listenAddr, *stateDir, *auditCap, *allowInsecurePublicBind, stdout, stderr)
+	case "master":
+		return runMaster(context.Background(), node.MasterConfig{
+			Name:      *nodeName,
+			OverlayIP: *overlayIP,
+			DualListener: wg.DualListenerConfig{
+				ClientInterfaceName: *masterClientIface,
+				MeshInterfaceName:   *masterMeshIface,
+				ClientListenPort:    *masterClientListenPort,
+				MeshListenPort:      *masterMeshListenPort,
+			},
+		}, *dryRun, stdout, stderr)
+	case "client", "clientd":
+		clientdArgs := []string{
+			"--control-plane", *controlPlaneAddr,
+			"--name", *nodeName,
+			"--overlay-ip", *overlayIP,
 			"--region", *clientdRegion,
 			"--cert", *clientdCert,
 			"--state-dir", *stateDir,
@@ -143,19 +169,19 @@ func main() {
 			"--protocol", *clientdProtocol,
 		}
 		if *allowInsecureControlPlane {
-			args = append(args, "--allow-insecure-control-plane")
+			clientdArgs = append(clientdArgs, "--allow-insecure-control-plane")
 		}
-		code := clientd.RunCommand(context.Background(), args, os.Stdout, os.Stderr)
-		os.Exit(code)
+		return clientd.RunCommand(context.Background(), clientdArgs, stdout, stderr)
+	default:
+		fmt.Fprintf(stdout, "awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
+			versionString(), *mode, implCR)
+		fmt.Fprintln(stderr, "CR-001 skeleton: this binary intentionally exits without doing any networking.")
+		return 0
 	}
-
-	fmt.Printf("awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
-		versionString(), *mode, implCR)
-	fmt.Fprintln(os.Stderr, "CR-001 skeleton: this binary intentionally exits without doing any networking.")
 }
 
-func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePublicBind bool) {
-	fmt.Printf("awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
+func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {
+	fmt.Fprintf(stdout, "awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
 		versionString(), listenAddr, stateDir)
 	d, err := control_plane.NewDaemon(control_plane.Config{
 		ListenAddr:              listenAddr,
@@ -164,13 +190,50 @@ func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePub
 		AllowInsecurePublicBind: allowInsecurePublicBind,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "control-plane: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "control-plane: %v\n", err)
+		return 1
 	}
 	if err := d.Run(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "control-plane: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "control-plane: %v\n", err)
+		return 1
 	}
+	return 0
+}
+
+func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, stderr io.Writer) int {
+	master, err := node.NewMaster(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "master: %v\n", err)
+		return 2
+	}
+	status := master.Status()
+	if dryRun {
+		fmt.Fprintf(stdout, "master dry-run node=%s overlay=%s client=%s:%d/%s mesh=%s:%d/%s\n",
+			status.Name,
+			status.OverlayIP,
+			status.Listeners.ClientInterfaceName,
+			status.Listeners.ClientListenPort,
+			status.Listeners.ClientProtocol,
+			status.Listeners.MeshInterfaceName,
+			status.Listeners.MeshListenPort,
+			status.Listeners.MeshProtocol,
+		)
+		return 0
+	}
+	fmt.Fprintf(stdout, "awg-mesh-node %s — mode=master — node=%s overlay=%s client=%s:%d mesh=%s:%d\n",
+		versionString(),
+		status.Name,
+		status.OverlayIP,
+		status.Listeners.ClientInterfaceName,
+		status.Listeners.ClientListenPort,
+		status.Listeners.MeshInterfaceName,
+		status.Listeners.MeshListenPort,
+	)
+	if err := master.Run(ctx); err != nil {
+		fmt.Fprintf(stderr, "master: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // sortedKeys returns the keys of a map[string]string in lexicographic order.

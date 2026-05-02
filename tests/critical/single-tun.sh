@@ -5,9 +5,9 @@
 # (DetectSchemaVersion returns SchemaV1 → callers raise SCHEMA-V1-DEPRECATED)
 # and v2.0 fixtures pass ValidateV2.
 #
-# Single-TUN architecture (FR-3) is enforced at runtime by the daemon
-# (CR-002+). At foundation stage, the schema-level signal is the
-# observable proof that v1.x cannot resurface in topology files.
+# CR-004 adds runtime-level evidence for FR-3's master exception: the master
+# owns exactly two configured listeners, while other roles remain single-TUN
+# scoped in later CRs.
 
 set -euo pipefail
 
@@ -24,4 +24,5 @@ if ! command -v "$GO" >/dev/null 2>&1; then
 fi
 
 $GO test -count=1 -short -run 'TestValidateV2|TestDetectSchemaVersion|TestMigrateV1ToV2_Stub' ./pkg/topology/... >/dev/null
-echo "PASS — v1.x topology rejected, v2.0 topology validated, schema invariants enforced"
+$GO test -count=1 -run 'TestMasterRunStartsAndClosesOnCancel|TestRunMasterDryRunUsesDefaultDualListener' ./pkg/node/... ./cmd/awg-mesh-node/... >/dev/null
+echo "PASS — v1.x topology rejected, v2.0 topology validated, master dual-listener invariant enforced"
