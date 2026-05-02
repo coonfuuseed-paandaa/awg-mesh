@@ -1,0 +1,14 @@
+# tests/simulation/Dockerfile.smoke
+# Pre-built image for F-009 CR-001 foundation smoke. Bakes libpcap-dev once
+# so the per-check Docker invocations don't apt-get on every run (which
+# previously stretched the smoke run beyond 1 hour on slow mirrors).
+FROM golang:1.25-bookworm
+
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends libpcap-dev ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV CGO_ENABLED=1 \
+    GOFLAGS="-mod=readonly"
+
+WORKDIR /work

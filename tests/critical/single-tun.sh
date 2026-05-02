@@ -14,10 +14,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
-if ! command -v go >/dev/null 2>&1; then
+GO=${GO_BIN:-/usr/local/go/bin/go}
+if ! command -v "$GO" >/dev/null 2>&1; then
+    GO=go
+fi
+if ! command -v "$GO" >/dev/null 2>&1; then
     echo "SKIP — go toolchain not available; run inside Docker"
     exit 0
 fi
 
-go test -count=1 -short -run 'TestValidateV2|TestDetectSchemaVersion|TestMigrateV1ToV2_Stub' ./pkg/topology/... >/dev/null
+$GO test -count=1 -short -run 'TestValidateV2|TestDetectSchemaVersion|TestMigrateV1ToV2_Stub' ./pkg/topology/... >/dev/null
 echo "PASS — v1.x topology rejected, v2.0 topology validated, schema invariants enforced"

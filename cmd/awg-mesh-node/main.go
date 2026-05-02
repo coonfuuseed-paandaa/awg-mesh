@@ -1,22 +1,18 @@
-// awg-mesh-node v2.0 — role-aware entrypoint skeleton.
+// awg-mesh-node v2.0 — role-aware entrypoint.
 //
-// CR-001 (F-009 foundation): this file is a skeleton entrypoint that parses
-// `--mode` and `--version`, prints the chosen role, and exits cleanly. Daemon
-// implementations land in subsequent CRs:
+// CR-001/CR-002 (F-009 foundation): skeleton entrypoint with control-plane
+// daemon wired. Other modes still print a placeholder line and exit 0:
 //
-//	control-plane → CR-002 (mesh-ctl daemon, ledger, peer-list distribution)
+//	control-plane → CR-002 (mesh-ctl daemon, ledger, peer-list distribution) — IMPLEMENTED
 //	master        → CR-004 (vanilla-WG + AmneziaWG dual listener)
 //	clientd       → CR-003 (self-config agent on every non-Mikrotik node)
 //	egress        → CR-005 (MASQUERADE on internet-bound iface)
 //	ingress       → CR-006 (SNI passthrough + TLS terminate + ACME + HTTP/3 + UDP)
 //	balancer      → CR-007 (policy engine: dumb / labeled / smart-future)
-//
-// At v2.0.0-alpha.1 every --mode prints a placeholder line and exits 0. This
-// makes CR-001 atomic: the binary compiles and runs end-to-end without v1.x
-// code, even though no role does any networking yet.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -24,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 )
 
@@ -54,8 +51,12 @@ func versionString() string {
 
 func main() {
 	var (
-		mode    = flag.String("mode", "", "node mode: control-plane | master | clientd | egress | ingress | balancer")
-		version = flag.Bool("version", false, "print version and exit")
+		mode                    = flag.String("mode", "", "node mode: control-plane | master | clientd | egress | ingress | balancer")
+		version                 = flag.Bool("version", false, "print version and exit")
+		listenAddr              = flag.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
+		stateDir                = flag.String("state-dir", "/var/lib/awg-mesh", "control-plane: state directory")
+		auditCap                = flag.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
+		allowInsecurePublicBind = flag.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
 	)
 	flag.Parse()
 
@@ -77,12 +78,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	// Validate role-tag composability for non-control-plane modes when --mode
-	// represents a single role flag. control-plane is not a role; it's the
-	// mesh-ctl daemon. Other modes map 1:1 to role.Role.
 	if *mode != "control-plane" {
 		r := role.Role(*mode)
-		// "clientd" daemon serves the "client" role; map manually.
 		if *mode == "clientd" {
 			r = role.RoleClient
 		}
@@ -92,9 +89,33 @@ func main() {
 		}
 	}
 
+	if *mode == "control-plane" {
+		runControlPlane(*listenAddr, *stateDir, *auditCap, *allowInsecurePublicBind)
+		return
+	}
+
 	fmt.Printf("awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
 		versionString(), *mode, implCR)
 	fmt.Fprintln(os.Stderr, "CR-001 skeleton: this binary intentionally exits without doing any networking.")
+}
+
+func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePublicBind bool) {
+	fmt.Printf("awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
+		versionString(), listenAddr, stateDir)
+	d, err := control_plane.NewDaemon(control_plane.Config{
+		ListenAddr:              listenAddr,
+		StateDir:                stateDir,
+		AuditCap:                auditCap,
+		AllowInsecurePublicBind: allowInsecurePublicBind,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "control-plane: %v\n", err)
+		os.Exit(1)
+	}
+	if err := d.Run(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "control-plane: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // sortedKeys returns the keys of a map[string]string in lexicographic order.

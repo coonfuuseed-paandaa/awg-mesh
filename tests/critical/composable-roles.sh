@@ -13,10 +13,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
-if ! command -v go >/dev/null 2>&1; then
+GO=${GO_BIN:-/usr/local/go/bin/go}
+if ! command -v "$GO" >/dev/null 2>&1; then
+    GO=go
+fi
+if ! command -v "$GO" >/dev/null 2>&1; then
     echo "SKIP — go toolchain not available; run inside Docker"
     exit 0
 fi
 
-go test -count=1 -short ./pkg/role/... >/dev/null
+$GO test -count=1 -short ./pkg/role/... >/dev/null
 echo "PASS — pkg/role composability validator (17 cases) green"

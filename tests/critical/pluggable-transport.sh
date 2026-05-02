@@ -11,7 +11,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
-if ! command -v go >/dev/null 2>&1; then
+GO=${GO_BIN:-/usr/local/go/bin/go}
+if ! command -v "$GO" >/dev/null 2>&1; then
+    GO=go
+fi
+if ! command -v "$GO" >/dev/null 2>&1; then
     echo "SKIP — go toolchain not available; run inside Docker"
     exit 0
 fi
@@ -47,5 +51,5 @@ func main() {
 GOEOF
 
 # Build inside the repo's module context.
-go run "${TMP}/check.go" >/dev/null
+$GO run "${TMP}/check.go" >/dev/null
 echo "PASS — Transport interface implemented by vanilla-WG and AmneziaWG, Protocol/Name accessors work"

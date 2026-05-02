@@ -1,28 +1,29 @@
 #!/usr/bin/env bash
 # tests/simulation/F-009-CR-001-foundation-smoke.sh
 #
-# Foundation-level Docker simulation for F-009 CR-001 (flat-mesh-foundation).
+# Foundation-level Docker simulation for F-009 CR-001/CR-002.
 #
-# CR-001 ships skeleton only — no daemon logic, no networking. The simulation
-# proves the v2.0 substrate is buildable and exits cleanly:
+# CR-001 ships the v2.0 role/topology/transport substrate. CR-002 adds the
+# control-plane daemon. The simulation proves the substrate builds, the
+# control-plane starts, and CR-scoped critical tests keep passing:
 #
 #   R1  go build ./... succeeds
 #   R2  go vet ./... clean
 #   R3  gofmt -l . clean
 #   R4  go test -count=1 -short ./... PASS
 #   R5  awg-mesh-node binary builds, --version reports v2.0.0-alpha.1
-#   R6  awg-mesh-node --mode <each role> exits 0 with placeholder line
+#   R6  control-plane starts; remaining skeleton roles exit 0
 #   R7  awg-mesh-node with no --mode exits 2 (usage error)
 #   R8  awg-mesh-node --mode invalid exits 2 (usage error)
 #   R9  mesh-ctl binary builds, version subcommand reports v2.0.0-alpha.1
 #   R10 pkg/topology unit tests verify v1.x rejected, v2.0 accepted
 #   R11 pkg/role unit tests verify role composability validator
-#   R12 tests/critical/run-all.sh runs without crash, returns 0 PASS / 18 SKIP / 0 FAIL
+#   R12 tests/critical/run-all.sh runs without crash, returns 0 FAIL
 #
 # Replaces tests/simulation/issue-92-rotation.sh (v1.x release gate). Per
 # F-009 plan, CR-011 (critical-suite v2) implements production-grade v2.0
-# release-gate sim with real container deployments. CR-001 sim is foundation
-# smoke only — proves the codebase compiles and the binary runs.
+# release-gate sim with real container deployments. This smoke is foundation
+# scope only — compile/build/start/control-plane contract, not data-plane packets.
 #
 # Usage (from repo root, requires Docker + libpcap-dev image build):
 #   bash tests/simulation/F-009-CR-001-foundation-smoke.sh
@@ -33,7 +34,16 @@ set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly WSL_REPO_PATH="${WSL_REPO_PATH:-${REPO_ROOT}}"
-readonly DOCKER_IMAGE="${DOCKER_IMAGE:-golang:1.25-bookworm}"
+readonly DOCKER_IMAGE="${DOCKER_IMAGE:-awg-mesh-smoke:foundation}"
+readonly DOCKER_DOCKERFILE="${REPO_ROOT}/tests/simulation/Dockerfile.smoke"
+# Per-check timeout cap. No single Docker invocation should exceed this — if
+# it does, we kill the run and report the failure rather than letting the
+# whole smoke hang for hours (lesson from 1h-23m apt-get-update wedge).
+readonly DOCKER_RUN_TIMEOUT="${DOCKER_RUN_TIMEOUT:-180}"
+# Volume names for cached Go module + build cache so dependencies are not
+# re-downloaded on every R-check.
+readonly GOMODCACHE_VOL="${GOMODCACHE_VOL:-awg-mesh-smoke-gomod}"
+readonly GOCACHE_VOL="${GOCACHE_VOL:-awg-mesh-smoke-gocache}"
 
 cd "${REPO_ROOT}"
 
@@ -52,22 +62,77 @@ bad() {
     fail_names+=("$1")
 }
 
+run_host_with_timeout() {
+    local limit="$1"
+    shift
+    "$@" &
+    local pid=$!
+    local deadline=$((SECONDS + limit))
+    while kill -0 "${pid}" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline )); then
+            kill "${pid}" >/dev/null 2>&1 || true
+            wait "${pid}" 2>/dev/null || true
+            return 124
+        fi
+        sleep 1
+    done
+    wait "${pid}"
+}
+
 run_in_docker() {
+    local cmd="$1"
+    local limit="${2:-${DOCKER_RUN_TIMEOUT}}"
+    local container_name="awg-mesh-smoke-${RANDOM}-${RANDOM}"
     docker run --rm \
+        --name "${container_name}" \
         --cap-add=NET_ADMIN \
         -v "${WSL_REPO_PATH}:/work" \
+        -v "${GOMODCACHE_VOL}:/go/pkg/mod" \
+        -v "${GOCACHE_VOL}:/root/.cache/go-build" \
         -w /work \
         "${DOCKER_IMAGE}" \
-        bash -c "$1"
+        bash -c "${cmd}" &
+    local pid=$!
+    local deadline=$((SECONDS + limit))
+    while kill -0 "${pid}" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline )); then
+            docker rm -f "${container_name}" >/dev/null 2>&1 || true
+            wait "${pid}" 2>/dev/null || true
+            echo "timeout after ${limit}s: ${container_name}" >&2
+            return 124
+        fi
+        sleep 1
+    done
+    wait "${pid}"
+}
+
+# Build the smoke image once. libpcap-dev pre-baked → per-check invocations
+# don't apt-get update on every run (which is what wedged the smoke previously).
+ensure_smoke_image() {
+    if [ "${SMOKE_REBUILD_IMAGE:-0}" != "1" ] && docker image inspect "${DOCKER_IMAGE}" >/dev/null 2>&1; then
+        echo "Reusing existing smoke image: ${DOCKER_IMAGE}"
+        return 0
+    fi
+    if [ "${SMOKE_REBUILD_IMAGE:-0}" = "1" ]; then
+        echo "SMOKE_REBUILD_IMAGE=1 — rebuilding smoke image: ${DOCKER_IMAGE}"
+    fi
+    echo "Building smoke image ${DOCKER_IMAGE} from ${DOCKER_DOCKERFILE}..."
+    if ! run_host_with_timeout 600 docker build -t "${DOCKER_IMAGE}" -f "${DOCKER_DOCKERFILE}" "${REPO_ROOT}/tests/simulation"; then
+        echo "[FATAL] Smoke image build failed or timed out after 600s. Aborting." >&2
+        exit 99
+    fi
 }
 
 echo "=== F-009 CR-001 foundation smoke ==="
-echo "Repo:  ${REPO_ROOT}"
-echo "Image: ${DOCKER_IMAGE}"
+echo "Repo:    ${REPO_ROOT}"
+echo "Image:   ${DOCKER_IMAGE}"
+echo "Timeout: ${DOCKER_RUN_TIMEOUT}s per check"
 echo ""
 
-# Pre-flight: build the docker prep prelude once so per-check invocations are fast.
-PRELUDE='set -euo pipefail; apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq libpcap-dev >/dev/null 2>&1'
+ensure_smoke_image
+
+# Image bakes libpcap-dev — no apt-get in per-check prelude. Just set -e.
+PRELUDE='set -euo pipefail'
 
 # R1: go build clean
 if run_in_docker "${PRELUDE}; go build ./... 2>&1" >/tmp/F009-r1.log 2>&1; then
@@ -108,9 +173,20 @@ else
     bad "R5" "build/run failed: $(tail -5 /tmp/F009-r5.log)"
 fi
 
-# R6: each role exits 0
-roles=(control-plane master clientd egress ingress balancer)
+# R6: control-plane starts and accepts shutdown; skeleton roles exit 0.
+roles=(master clientd egress ingress balancer)
 r6_failed=0
+set +e
+run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode control-plane --listen 127.0.0.1:0 --state-dir /tmp/awg-mesh-cp" 8 >/tmp/F009-r6-control-plane.log 2>&1
+r6_status=$?
+set -e
+if ! grep -q 'control-plane: listening' /tmp/F009-r6-control-plane.log; then
+    r6_failed=1
+    bad "R6 (--mode control-plane)" "did not reach listening state: $(tail -5 /tmp/F009-r6-control-plane.log)"
+elif [ "${r6_status}" -ne 124 ]; then
+    r6_failed=1
+    bad "R6 (--mode control-plane)" "expected watchdog stop (124), got ${r6_status}: $(tail -5 /tmp/F009-r6-control-plane.log)"
+fi
 for role in "${roles[@]}"; do
     if ! run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode ${role} 2>&1" \
         >/tmp/F009-r6-${role}.log 2>&1; then
@@ -120,7 +196,7 @@ for role in "${roles[@]}"; do
     fi
 done
 if [ "${r6_failed}" -eq 0 ]; then
-    ok "R6 — awg-mesh-node --mode {control-plane,master,clientd,egress,ingress,balancer} all exit 0"
+    ok "R6 — control-plane starts; skeleton roles exit 0"
 fi
 
 # R7: no --mode → exit 2
