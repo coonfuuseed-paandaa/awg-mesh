@@ -188,11 +188,15 @@ func TestBuildPeerConfigsValidationAndStrippedSeed(t *testing.T) {
 	if !errors.Is(err, ErrNonMasterPeerRejected) {
 		t.Fatalf("expected non-master rejection, got %v", err)
 	}
+	key := bytesOf(0x42)
+	_, err = BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleEgress}, Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: key, AllowedIPs: []string{"10.0.0.1/32"}}}})
+	if err != nil {
+		t.Fatalf("egress role should accept master peer: %v", err)
+	}
 	_, err = PeerEntryToWGConfig(PeerEntry{PeerName: "master-a", AllowedIPs: []string{"10.0.0.1/32"}})
 	if !errors.Is(err, ErrPeerPublicKeyRequired) {
 		t.Fatalf("expected stripped peer-list public-key error, got %v", err)
 	}
-	key := bytesOf(0x42)
 	configs, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: key, AllowedIPs: []string{"10.0.0.1/32"}, PersistentKeepaliveSecs: 25, Protocol: wg.ProtocolAmneziaWG}}})
 	if err != nil {
 		t.Fatalf("valid master peer rejected: %v", err)
@@ -255,6 +259,19 @@ func TestTransportConfiguratorSkipsStrippedSnapshot(t *testing.T) {
 	}
 	if got := transport.addPeerCount(); got != 0 {
 		t.Fatalf("expected no AddPeer calls, got %d", got)
+	}
+}
+
+func TestTransportConfiguratorUsesLocalRoles(t *testing.T) {
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	configurator := TransportConfigurator{Transport: transport, LocalRoles: []role.Role{role.RoleEgress}}
+
+	state := State{Peers: []PeerEntry{{PeerName: "egress-peer", PeerRole: role.RoleEgress, PeerPubkey: bytesOf(0x42), AllowedIPs: []string{"10.0.0.2/32"}}}}
+	if err := configurator.Apply(context.Background(), state); err != nil {
+		t.Fatalf("egress configurator should accept non-master peer: %v", err)
+	}
+	if got := len(transport.configsSnapshot()); got != 1 {
+		t.Fatalf("expected one Configure call, got %d", got)
 	}
 }
 

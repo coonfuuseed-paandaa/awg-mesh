@@ -5,10 +5,10 @@
 //	control-plane → CR-002 (mesh-ctl daemon, ledger, peer-list distribution)
 //	master        → CR-004 (vanilla-WG + AmneziaWG dual listener)
 //	clientd       → CR-003 (self-config agent on every non-Mikrotik node)
+//	egress        → CR-005 (clientd + MASQUERADE on internet-bound iface)
 //
 // Remaining role implementations still print placeholders until their CRs land:
 //
-//	egress        → CR-005 (MASQUERADE on internet-bound iface)
 //	ingress       → CR-006 (SNI passthrough + TLS terminate + ACME + HTTP/3 + UDP)
 //	balancer      → CR-007 (policy engine: dumb / labeled / smart-future)
 package main
@@ -118,6 +118,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	masterMeshIface := fs.String("mesh-iface", wg.DefaultMeshInterfaceName, "master: mesh-internal AmneziaWG interface name")
 	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
 	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
+	egressInternetIface := fs.String("internet-iface", "", "egress: internet-bound interface for MASQUERADE")
 	dryRun := fs.Bool("dry-run", false, "validate selected mode and print runtime plan without opening network resources")
 
 	if err := fs.Parse(args); err != nil {
@@ -165,6 +166,24 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 				MeshListenPort:      *masterMeshListenPort,
 			},
 		}, *dryRun, stdout, stderr)
+	case "endpoint", "egress":
+		clientdCfg := clientd.CommandConfig{
+			ControlPlane:              *controlPlaneAddr,
+			Name:                      *nodeName,
+			OverlayIP:                 *overlayIP,
+			Region:                    *clientdRegion,
+			CertPath:                  *clientdCert,
+			StateDir:                  *stateDir,
+			InterfaceName:             *clientdIface,
+			Protocol:                  wg.Protocol(*clientdProtocol),
+			Roles:                     []role.Role{role.RoleEgress},
+			AllowInsecureControlPlane: *allowInsecureControlPlane,
+		}
+		return runEgress(context.Background(), node.EgressConfig{
+			Name:              *nodeName,
+			OverlayIP:         *overlayIP,
+			InternetInterface: *egressInternetIface,
+		}, clientdCfg, *dryRun, stdout, stderr)
 	case "client", "clientd":
 		clientdArgs := []string{
 			"--control-plane", *controlPlaneAddr,
@@ -239,6 +258,50 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 	)
 	if err := master.Run(ctx); err != nil {
 		writef(stderr, "master: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runEgress(ctx context.Context, cfg node.EgressConfig, clientCfg clientd.CommandConfig, dryRun bool, stdout, stderr io.Writer) int {
+	egress, err := node.NewEgress(cfg)
+	if err != nil {
+		writef(stderr, "egress: %v\n", err)
+		return 2
+	}
+	status := egress.Status()
+	if dryRun {
+		writef(stdout, "egress dry-run node=%s overlay=%s internet=%s nat=%s:%s/%s\n",
+			status.Name,
+			status.OverlayIP,
+			status.InternetInterface,
+			status.Masquerade.Table,
+			status.Masquerade.Chain,
+			status.Masquerade.Operation,
+		)
+		return 0
+	}
+	validatedClientCfg, err := clientd.ValidateCommandConfig(clientCfg)
+	if err != nil {
+		writef(stderr, "egress: clientd: %v\n", err)
+		return 2
+	}
+	cfg.AgentRunner = func(ctx context.Context) error {
+		return clientd.RunWithConfig(ctx, validatedClientCfg, stdout)
+	}
+	egress, err = node.NewEgress(cfg)
+	if err != nil {
+		writef(stderr, "egress: %v\n", err)
+		return 2
+	}
+	writef(stdout, "awg-mesh-node %s — mode=egress — node=%s overlay=%s internet=%s\n",
+		versionString(),
+		status.Name,
+		status.OverlayIP,
+		status.InternetInterface,
+	)
+	if err := egress.Run(ctx); err != nil {
+		writef(stderr, "egress: %v\n", err)
 		return 1
 	}
 	return 0

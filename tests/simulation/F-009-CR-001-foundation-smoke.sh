@@ -173,9 +173,9 @@ else
     bad "R5" "build/run failed: $(tail -5 /tmp/F009-r5.log)"
 fi
 
-# R6: control-plane starts, master dry-run validates, skeleton roles exit 0,
-# and real client/clientd reports usage.
-roles=(endpoint egress ingress balancer)
+# R6: control-plane starts, implemented role dry-runs validate, remaining
+# skeleton roles exit 0, and real client/clientd reports usage.
+roles=(ingress balancer)
 r6_failed=0
 set +e
 run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode control-plane --listen 127.0.0.1:0 --state-dir /tmp/awg-mesh-cp" 8 >/tmp/F009-r6-control-plane.log 2>&1
@@ -204,6 +204,22 @@ elif ! grep -q 'client=wg-clients:51820/vanilla-wg mesh=wg-mesh:51821/amneziawg'
     r6_failed=1
     bad "R6 (--mode master --dry-run)" "dual listener plan missing: $(cat /tmp/F009-r6-master.log)"
 fi
+if ! run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode egress --dry-run --name egress-01 --overlay-ip 172.21.92.20 --internet-iface eth0 2>&1" \
+    >/tmp/F009-r6-egress.log 2>&1; then
+    r6_failed=1
+    bad "R6 (--mode egress --dry-run)" "exited non-zero: $(tail -3 /tmp/F009-r6-egress.log)"
+elif ! grep -q 'nat=awg_mesh:nat_postrouting/oifname eth0 masquerade' /tmp/F009-r6-egress.log; then
+    r6_failed=1
+    bad "R6 (--mode egress --dry-run)" "NAT plan missing: $(cat /tmp/F009-r6-egress.log)"
+fi
+if ! run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode endpoint --dry-run --name egress-01 --overlay-ip 172.21.92.20 --internet-iface eth0 2>&1" \
+    >/tmp/F009-r6-endpoint.log 2>&1; then
+    r6_failed=1
+    bad "R6 (--mode endpoint --dry-run)" "exited non-zero: $(tail -3 /tmp/F009-r6-endpoint.log)"
+elif ! grep -q 'warning: --mode endpoint is deprecated' /tmp/F009-r6-endpoint.log || ! grep -q 'egress dry-run node=egress-01' /tmp/F009-r6-endpoint.log; then
+    r6_failed=1
+    bad "R6 (--mode endpoint --dry-run)" "endpoint alias plan/warning missing: $(cat /tmp/F009-r6-endpoint.log)"
+fi
 clientd_out=$(run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node 2>/dev/null; set +e; /tmp/awg-mesh-node --mode clientd; echo \"EXIT=\$?\"" 2>&1 || true)
 if ! echo "${clientd_out}" | grep -q "EXIT=2"; then
     r6_failed=1
@@ -221,7 +237,7 @@ elif ! echo "${client_out}" | grep -q "missing required flags"; then
     bad "R6 (--mode client)" "expected missing required flags usage text, got: ${client_out}"
 fi
 if [ "${r6_failed}" -eq 0 ]; then
-    ok "R6 — control-plane starts; skeleton roles exit 0; client/clientd reports required flags"
+    ok "R6 — control-plane starts; master/egress dry-runs validate; skeleton roles exit 0; client/clientd reports required flags"
 fi
 
 # R7: no --mode → exit 2

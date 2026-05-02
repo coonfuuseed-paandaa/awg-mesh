@@ -30,6 +30,7 @@ type CommandConfig struct {
 	StateDir                  string
 	InterfaceName             string
 	Protocol                  wg.Protocol
+	Roles                     []role.Role
 	AllowInsecureControlPlane bool
 }
 
@@ -99,6 +100,12 @@ func ValidateCommandConfig(cfg CommandConfig) (CommandConfig, error) {
 	if cfg.Protocol != wg.ProtocolVanilla && cfg.Protocol != wg.ProtocolAmneziaWG {
 		return CommandConfig{}, fmt.Errorf("invalid --protocol %q", cfg.Protocol)
 	}
+	if len(cfg.Roles) == 0 {
+		cfg.Roles = []role.Role{role.RoleClient}
+	}
+	if err := role.ValidateComposability(cfg.Roles); err != nil {
+		return CommandConfig{}, fmt.Errorf("validate roles: %w", err)
+	}
 	if err := wg.ValidateInterfaceName(cfg.InterfaceName); err != nil {
 		return CommandConfig{}, fmt.Errorf("invalid --iface: %w", err)
 	}
@@ -148,7 +155,7 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 
 	agent, err := NewAgent(Config{
 		NodeName:      cfg.Name,
-		Roles:         []role.Role{role.RoleClient},
+		Roles:         cfg.Roles,
 		OverlayIP:     cfg.OverlayIP,
 		Region:        cfg.Region,
 		NodeCertPEM:   certPEM,
@@ -156,7 +163,7 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 		InterfaceName: cfg.InterfaceName,
 		Protocol:      cfg.Protocol,
 		StatePath:     filepath.Join(cfg.StateDir, "clientd-state.json"),
-	}, pb.NewControlPlaneClient(conn), TransportConfigurator{Transport: transport})
+	}, pb.NewControlPlaneClient(conn), TransportConfigurator{Transport: transport, LocalRoles: cfg.Roles})
 	if err != nil {
 		return err
 	}
