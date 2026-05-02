@@ -242,26 +242,42 @@ jobs:
       - name: Smoke Test (node only)
         if: matrix.image == 'node'
         run: |
+          set -euo pipefail
           docker run --rm --privileged --entrypoint sh awg-mesh-node:ci -c '
-            echo test > /config/mesh.token &&
-            timeout 5 /usr/local/bin/awg-mesh-node --mode endpoint --name ci-test --overlay-ip 10.0.0.99 2>&1 || true
+            set -eu
+            /usr/local/bin/awg-mesh-node --mode control-plane --listen 127.0.0.1:0 --state-dir /tmp/awg-mesh-cp >/tmp/cp.log 2>&1 &
+            pid=$!
+            ready=0
+            for _ in $(seq 1 50); do
+              if grep -q "control-plane: listening" /tmp/cp.log; then
+                ready=1
+                break
+              fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                cat /tmp/cp.log
+                exit 1
+              fi
+              sleep 0.1
+            done
+            cat /tmp/cp.log
+            if [ "$ready" -ne 1 ]; then
+              echo "control-plane did not reach listening state"
+              kill -TERM "$pid" 2>/dev/null || true
+              exit 1
+            fi
+            kill -TERM "$pid"
+            wait "$pid"
           ' | tee /tmp/smoke.log
-          # v1.12.2+: endpoint uses lazy per-master iface creation on AddPeer RPC instead of
-          # creating a wg0 on startup. Accept either the new lazy marker or the legacy message
-          # so the check remains backward-compatible if the endpoint ever runs in the old mode.
-          grep -qE "endpoint_lazy_iface_mode|endpoint per-master iface created|endpoint interface created" /tmp/smoke.log \
-            || (echo "::error::Smoke test failed — no endpoint iface signal (lazy or legacy)" && exit 1)
-          grep -q "gRPC server listening" /tmp/smoke.log || (echo "::error::Smoke test failed — no gRPC server" && exit 1)
           echo "Smoke test passed"
 
       - name: Smoke Test (client only)
         if: matrix.image == 'client'
         run: |
+          set -euo pipefail
           docker run --rm --privileged --entrypoint sh awg-mesh-client:ci -c '
-            echo test > /config/mesh.token &&
-            timeout 5 /usr/local/bin/awg-mesh-node --mode client --name ci-client --overlay-ip 10.0.0.200 2>&1 || true
+            /usr/local/bin/awg-mesh-node --mode clientd 2>&1
           ' | tee /tmp/smoke-client.log
-          grep -q "gRPC server listening" /tmp/smoke-client.log || (echo "::error::Client smoke test failed — no gRPC server" && exit 1)
+          grep -q "mode=clientd" /tmp/smoke-client.log || (echo "::error::Client smoke test failed — clientd skeleton marker missing" && exit 1)
           echo "Client smoke test passed"
 
       - name: Login to GHCR
