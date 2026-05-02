@@ -30,15 +30,25 @@ import (
 var supportedModes = map[string]string{
 	"control-plane": "CR-002",
 	"master":        "CR-004",
+	"endpoint":      "CR-005",
+	"client":        "CR-003",
 	"clientd":       "CR-003",
 	"egress":        "CR-005",
 	"ingress":       "CR-006",
 	"balancer":      "CR-007",
 }
 
+// versionFromBuild is injected at build time via:
+//
+//	go build -ldflags "-X main.versionFromBuild=<ref>"
+var versionFromBuild = ""
+
 // versionString returns "<Version> (<commit>)" when build info is available,
 // or just <Version> otherwise. Matches the v1.x pattern in cmd/mesh-ctl.
 func versionString() string {
+	if versionFromBuild != "" {
+		return versionFromBuild
+	}
 	v := awgmesh.Version
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, s := range info.Settings {
@@ -50,9 +60,29 @@ func versionString() string {
 	return v
 }
 
+func roleForMode(mode string) role.Role {
+	switch mode {
+	case "client", "clientd":
+		return role.RoleClient
+	case "endpoint":
+		return role.RoleEgress
+	default:
+		return role.Role(mode)
+	}
+}
+
+func warnDeprecatedMode(mode string) {
+	switch mode {
+	case "client":
+		fmt.Fprintln(os.Stderr, "warning: --mode client is deprecated for v2.0; use --mode clientd")
+	case "endpoint":
+		fmt.Fprintln(os.Stderr, "warning: --mode endpoint is deprecated for v2.0; use --mode egress")
+	}
+}
+
 func main() {
 	var (
-		mode                      = flag.String("mode", "", "node mode: control-plane | master | clientd | egress | ingress | balancer")
+		mode                      = flag.String("mode", "", "node mode: control-plane | master | endpoint | client | clientd | egress | ingress | balancer")
 		version                   = flag.Bool("version", false, "print version and exit")
 		listenAddr                = flag.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
 		stateDir                  = flag.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
@@ -86,12 +116,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
 		os.Exit(2)
 	}
+	warnDeprecatedMode(*mode)
 
 	if *mode != "control-plane" {
-		r := role.Role(*mode)
-		if *mode == "clientd" {
-			r = role.RoleClient
-		}
+		r := roleForMode(*mode)
 		if err := role.ValidateComposability([]role.Role{r}); err != nil {
 			fmt.Fprintf(os.Stderr, "error: role %q failed validation: %v\n", *mode, err)
 			os.Exit(2)
@@ -103,7 +131,7 @@ func main() {
 		return
 	}
 
-	if *mode == "clientd" {
+	if *mode == "clientd" || *mode == "client" {
 		args := []string{
 			"--control-plane", *clientdControlPlane,
 			"--name", *clientdName,

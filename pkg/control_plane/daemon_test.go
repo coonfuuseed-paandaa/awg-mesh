@@ -58,7 +58,11 @@ func TestDaemon_LifecycleAndAcceptsRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("conn.Close: %v", err)
+		}
+	}()
 	client := pb.NewControlPlaneClient(conn)
 
 	regCtx, regCancel := context.WithTimeout(context.Background(), 2*time.Second)

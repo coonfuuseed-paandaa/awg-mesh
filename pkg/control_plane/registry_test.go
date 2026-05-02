@@ -74,6 +74,21 @@ func TestRegistry_NameWithDifferentCertRejected(t *testing.T) {
 	}
 }
 
+func TestRegistry_ReRegisterRejectsOverlayMove(t *testing.T) {
+	r := NewRegistry()
+	mustRegister(t, r, RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})
+
+	err := r.Register(RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.2", NodeCertPEM: fakeCert})
+	if !errors.Is(err, ErrRegistryOverlayMove) {
+		t.Fatalf("expected ErrRegistryOverlayMove, got %v", err)
+	}
+	mustRegister(t, r, RegisteredNode{Name: "n2", Roles: []role.Role{role.RoleEgress}, OverlayIP: "10.0.0.2", NodeCertPEM: fakeCertOther})
+	got, ok := r.Lookup("n1")
+	if !ok || got.OverlayIP != "10.0.0.1" {
+		t.Fatalf("original overlay changed after rejected move: %+v", got)
+	}
+}
+
 func TestRegistry_HeartbeatUnknown(t *testing.T) {
 	r := NewRegistry()
 	err := r.Heartbeat("ghost", nil)
@@ -84,9 +99,9 @@ func TestRegistry_HeartbeatUnknown(t *testing.T) {
 
 func TestRegistry_MastersInRegion(t *testing.T) {
 	r := NewRegistry()
-	_ = r.Register(RegisteredNode{Name: "m-ru", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert, Region: "ru"})
-	_ = r.Register(RegisteredNode{Name: "m-de", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.2", NodeCertPEM: fakeCert, Region: "de"})
-	_ = r.Register(RegisteredNode{Name: "e-us", Roles: []role.Role{role.RoleEgress}, OverlayIP: "10.0.0.3", NodeCertPEM: fakeCert, Region: "us"})
+	mustRegister(t, r, RegisteredNode{Name: "m-ru", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert, Region: "ru"})
+	mustRegister(t, r, RegisteredNode{Name: "m-de", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.2", NodeCertPEM: fakeCert, Region: "de"})
+	mustRegister(t, r, RegisteredNode{Name: "e-us", Roles: []role.Role{role.RoleEgress}, OverlayIP: "10.0.0.3", NodeCertPEM: fakeCert, Region: "us"})
 
 	ru := r.MastersInRegion("ru")
 	if len(ru) != 1 || ru[0] != "m-ru" {
@@ -100,7 +115,7 @@ func TestRegistry_MastersInRegion(t *testing.T) {
 
 func TestRegistry_Remove(t *testing.T) {
 	r := NewRegistry()
-	_ = r.Register(RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})
+	mustRegister(t, r, RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})
 	if err := r.Remove("n1"); err != nil {
 		t.Fatal(err)
 	}
@@ -156,5 +171,12 @@ func TestRegistry_ClonesMutableFields(t *testing.T) {
 	again, _ = r.Lookup("n1")
 	if again.Roles[0] != role.RoleMaster || again.HealthIndicators["state"] != "ok" {
 		t.Fatalf("list returned mutable internals: %+v", again)
+	}
+}
+
+func mustRegister(t *testing.T, r *Registry, node RegisteredNode) {
+	t.Helper()
+	if err := r.Register(node); err != nil {
+		t.Fatalf("Register(%s): %v", node.Name, err)
 	}
 }

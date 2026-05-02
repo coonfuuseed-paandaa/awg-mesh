@@ -88,7 +88,13 @@ func (s *Server) RegisterNode(ctx context.Context, req *pb.RegisterNodeRequest) 
 				NodeName:  req.GetNodeName(),
 				Detail:    err.Error(),
 			})
-			_ = s.registry.Remove(req.GetNodeName())
+			if removeErr := s.registry.Remove(req.GetNodeName()); removeErr != nil {
+				s.audit.Append(AuditEvent{
+					EventType: "register-rollback-failed",
+					NodeName:  req.GetNodeName(),
+					Detail:    removeErr.Error(),
+				})
+			}
 			return &pb.RegisterNodeResponse{Accepted: false, RejectReason: err.Error()}, nil
 		}
 	}
@@ -210,17 +216,20 @@ func (s *Server) DecommissionNode(ctx context.Context, req *pb.DecommissionReque
 		return &pb.DecommissionResponse{Success: false, Error: "node not in registry"}, nil
 	}
 
-	candidates := s.registry.MastersInRegion(target.Region)
-	candidates = filterOut(candidates, name)
-	if len(candidates) == 0 {
-		// Region empty — fall back to any master mesh-wide.
-		candidates = filterOut(s.registry.MastersInRegion(""), name)
-	}
-	if len(candidates) == 0 {
-		return &pb.DecommissionResponse{Success: false, Error: "no surviving master available for reassignment"}, nil
+	var chooser func(overlayIP string) string
+	if len(s.ledger.OwnedBy(name)) > 0 {
+		candidates := s.registry.MastersInRegion(target.Region)
+		candidates = filterOut(candidates, name)
+		if len(candidates) == 0 {
+			// Region empty — fall back to any master mesh-wide.
+			candidates = filterOut(s.registry.MastersInRegion(""), name)
+		}
+		if len(candidates) == 0 {
+			return &pb.DecommissionResponse{Success: false, Error: "no surviving master available for reassignment"}, nil
+		}
+		chooser = roundRobinChooser(candidates)
 	}
 
-	chooser := roundRobinChooser(candidates)
 	count, err := s.ledger.Drain(name, "decommission", chooser)
 	if err != nil {
 		s.audit.Append(AuditEvent{

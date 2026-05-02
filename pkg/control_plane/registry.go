@@ -27,12 +27,13 @@ type RegisteredNode struct {
 
 // Registry errors.
 var (
-	ErrRegistryEmptyName  = errors.New("registry: node name required")
-	ErrRegistryEmptyRoles = errors.New("registry: node roles required")
-	ErrRegistryNoCert     = errors.New("registry: node cert required")
-	ErrRegistryNotFound   = errors.New("registry: node not found")
-	ErrRegistryOverlayDup = errors.New("registry: overlay_ip already registered to another node")
-	ErrRegistryNameDup    = errors.New("registry: node name already registered with different cert")
+	ErrRegistryEmptyName   = errors.New("registry: node name required")
+	ErrRegistryEmptyRoles  = errors.New("registry: node roles required")
+	ErrRegistryNoCert      = errors.New("registry: node cert required")
+	ErrRegistryNotFound    = errors.New("registry: node not found")
+	ErrRegistryOverlayDup  = errors.New("registry: overlay_ip already registered to another node")
+	ErrRegistryNameDup     = errors.New("registry: node name already registered with different cert")
+	ErrRegistryOverlayMove = errors.New("registry: overlay_ip change on re-register is not supported")
 )
 
 // Registry holds the authoritative list of nodes that have called RegisterNode.
@@ -84,6 +85,9 @@ func (r *Registry) Register(node RegisteredNode) error {
 	if prev, ok := r.byName[node.Name]; ok {
 		if !certBytesEqual(prev.NodeCertPEM, node.NodeCertPEM) {
 			return ErrRegistryNameDup
+		}
+		if prev.OverlayIP != node.OverlayIP {
+			return fmt.Errorf("%w: %q -> %q", ErrRegistryOverlayMove, prev.OverlayIP, node.OverlayIP)
 		}
 		// Re-register: refresh metadata, preserve RegisteredAt of original.
 		node.RegisteredAt = prev.RegisteredAt

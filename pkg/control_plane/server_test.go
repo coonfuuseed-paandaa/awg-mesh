@@ -2,6 +2,8 @@ package control_plane
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -29,7 +31,8 @@ func startTestServer(t *testing.T) (pb.ControlPlaneClient, *Server, func()) {
 	}
 	gs := grpc.NewServer()
 	pb.RegisterControlPlaneServer(gs, srv)
-	go func() { _ = gs.Serve(lis) }()
+	serveErrCh := make(chan error, 1)
+	go func() { serveErrCh <- gs.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -38,8 +41,18 @@ func startTestServer(t *testing.T) (pb.ControlPlaneClient, *Server, func()) {
 	}
 	client := pb.NewControlPlaneClient(conn)
 	teardown := func() {
-		_ = conn.Close()
+		if err := conn.Close(); err != nil {
+			t.Errorf("conn.Close: %v", err)
+		}
 		gs.Stop()
+		select {
+		case err := <-serveErrCh:
+			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				t.Errorf("grpc Serve: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("grpc Serve did not stop")
+		}
 	}
 	return client, srv, teardown
 }
@@ -268,7 +281,9 @@ func TestServer_StreamPeerList_LiveUpdate(t *testing.T) {
 	}
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		_, _ = srv.ledger.Reassign("10.0.0.5", "master-01", "scheduled")
+		if _, err := srv.ledger.Reassign("10.0.0.5", "master-01", "scheduled"); err != nil {
+			t.Errorf("Reassign: %v", err)
+		}
 	}()
 	upd, err := stream.Recv()
 	if err != nil {
@@ -325,6 +340,38 @@ func TestServer_DecommissionNode(t *testing.T) {
 	}
 }
 
+func TestServer_DecommissionNode_AllowsZeroOwnedNodeWithoutSuccessor(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	resp, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "egress-01",
+		Roles:       []string{string(role.RoleEgress)},
+		NodeCertPem: fakeCert,
+		OverlayIp:   "10.0.0.50",
+		Region:      "ru",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("expected accepted, got %q", resp.GetRejectReason())
+	}
+
+	decomm, err := client.DecommissionNode(ctx, &pb.DecommissionRequest{NodeName: "egress-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decomm.GetSuccess() || decomm.GetReassignedOverlayCount() != 0 {
+		t.Fatalf("expected zero-owned decommission success, got %+v", decomm)
+	}
+	if _, ok := srv.registry.Lookup("egress-01"); ok {
+		t.Fatal("egress-01 should be removed from registry")
+	}
+}
+
 func TestServer_QueryAudit_FiltersAndStreams(t *testing.T) {
 	client, srv, teardown := startTestServer(t)
 	defer teardown()
@@ -341,8 +388,11 @@ func TestServer_QueryAudit_FiltersAndStreams(t *testing.T) {
 	got := 0
 	for {
 		_, err := stream.Recv()
-		if err != nil {
+		if errors.Is(err, io.EOF) {
 			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
 		}
 		got++
 	}
@@ -358,9 +408,15 @@ func TestServer_StubsReturnUnimplemented(t *testing.T) {
 	defer cancel()
 
 	// StreamServiceRegistry stub.
-	stream, _ := client.StreamServiceRegistry(ctx, &pb.StreamServiceRegistryRequest{IngressNode: "i1"})
-	_, err := stream.Recv()
-	if st, _ := status.FromError(err); st.Code() != codes.Unimplemented {
+	stream, err := client.StreamServiceRegistry(ctx, &pb.StreamServiceRegistryRequest{IngressNode: "i1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = stream.Recv()
+	if err == nil {
+		t.Fatal("StreamServiceRegistry expected Unimplemented, got nil")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.Unimplemented {
 		t.Fatalf("StreamServiceRegistry expected Unimplemented, got %v", err)
 	}
 }

@@ -12,7 +12,7 @@
 #   R3  gofmt -l . clean
 #   R4  go test -count=1 -short ./... PASS
 #   R5  awg-mesh-node binary builds, --version reports v2.0.0-alpha.1
-#   R6  control-plane starts; skeleton roles exit 0; clientd reports required flags
+#   R6  control-plane starts; skeleton roles exit 0; client/clientd reports required flags
 #   R7  awg-mesh-node with no --mode exits 2 (usage error)
 #   R8  awg-mesh-node --mode invalid exits 2 (usage error)
 #   R9  mesh-ctl binary builds, version subcommand reports v2.0.0-alpha.1
@@ -164,7 +164,7 @@ fi
 
 # R5: awg-mesh-node --version
 if run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --version 2>&1" >/tmp/F009-r5.log 2>&1; then
-    if grep -q "awg-mesh-node 2.0.0-alpha.1" /tmp/F009-r5.log; then
+    if grep -q "awg-mesh-node v2.0.0-alpha.1" /tmp/F009-r5.log; then
         ok "R5 — awg-mesh-node --version reports v2.0.0-alpha.1"
     else
         bad "R5" "version output mismatch: $(cat /tmp/F009-r5.log)"
@@ -173,8 +173,8 @@ else
     bad "R5" "build/run failed: $(tail -5 /tmp/F009-r5.log)"
 fi
 
-# R6: control-plane starts, skeleton roles exit 0, and real clientd reports usage.
-roles=(master egress ingress balancer)
+# R6: control-plane starts, skeleton roles exit 0, and real client/clientd reports usage.
+roles=(master endpoint egress ingress balancer)
 r6_failed=0
 set +e
 run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode control-plane --listen 127.0.0.1:0 --state-dir /tmp/awg-mesh-cp" 8 >/tmp/F009-r6-control-plane.log 2>&1
@@ -203,8 +203,16 @@ elif ! echo "${clientd_out}" | grep -q "missing required flags"; then
     r6_failed=1
     bad "R6 (--mode clientd)" "expected missing required flags usage text, got: ${clientd_out}"
 fi
+client_out=$(run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node 2>/dev/null; set +e; /tmp/awg-mesh-node --mode client; echo \"EXIT=\$?\"" 2>&1 || true)
+if ! echo "${client_out}" | grep -q "EXIT=2"; then
+    r6_failed=1
+    bad "R6 (--mode client)" "expected EXIT=2, got: ${client_out}"
+elif ! echo "${client_out}" | grep -q "missing required flags"; then
+    r6_failed=1
+    bad "R6 (--mode client)" "expected missing required flags usage text, got: ${client_out}"
+fi
 if [ "${r6_failed}" -eq 0 ]; then
-    ok "R6 — control-plane starts; skeleton roles exit 0; clientd reports required flags"
+    ok "R6 — control-plane starts; skeleton roles exit 0; client/clientd reports required flags"
 fi
 
 # R7: no --mode → exit 2

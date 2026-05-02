@@ -44,7 +44,7 @@ v2.0 (F-009) collapses to a **flat AmneziaWG mesh with role-tagged nodes**.
 
 ## Roles
 
-Every node in v2.0 carries one or more **roles** declared in `topology.yml`:
+Every node in v2.0 carries one or more **roles** declared in `mesh-topology.yml`:
 
 | Role | Function |
 |------|----------|

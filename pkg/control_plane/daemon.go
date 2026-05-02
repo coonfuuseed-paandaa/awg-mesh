@@ -145,10 +145,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		log.Printf("control-plane: received signal %s, shutting down", sig)
 	case err := <-errCh:
 		cancel()
-		if err != nil {
+		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			return fmt.Errorf("daemon: serve: %w", err)
 		}
-		return nil
 	}
 
 	cancel()
@@ -202,7 +201,11 @@ func (d *Daemon) flushAudit() {
 		log.Printf("control-plane: audit flush open failed: %v", err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Printf("control-plane: audit flush close failed: %v", err)
+		}
+	}()
 	for _, e := range events {
 		if _, err := fmt.Fprintf(f, "%s\t%s\t%s\t%s\n", e.Timestamp.UTC().Format(time.RFC3339), e.EventType, e.NodeName, e.Detail); err != nil {
 			log.Printf("control-plane: audit flush write failed: %v", err)

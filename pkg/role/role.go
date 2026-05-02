@@ -1,6 +1,6 @@
 // Package role defines the role taxonomy for awg-mesh v2.0 nodes.
 //
-// A node carries one or more roles declared in topology.yml. Role composability
+// A node carries one or more roles declared in mesh-topology.yml. Role composability
 // rules enforce the v2.0 architecture invariants per F-009:
 //   - "client" is exclusive: a client node is a leaf and cannot serve as
 //     master, balancer, egress, or ingress simultaneously.
@@ -16,7 +16,7 @@ import (
 // Role is an enum of supported node roles.
 type Role string
 
-// Role constants. Use these in topology.yml::nodes[*].roles.
+// Role constants. Use these in mesh-topology.yml::nodes[*].roles.
 const (
 	RoleClient   Role = "client"
 	RoleMaster   Role = "master"

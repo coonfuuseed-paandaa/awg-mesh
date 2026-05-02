@@ -44,6 +44,7 @@ var (
 	ErrLedgerOverlayInvalid = errors.New("ledger: overlay_ip is not a valid IP")
 	ErrLedgerEmptyMaster    = errors.New("ledger: owning_master must be non-empty")
 	ErrLedgerNotFound       = errors.New("ledger: overlay_ip not found")
+	ErrLedgerOwnerChanged   = errors.New("ledger: overlay owner changed")
 )
 
 // Ledger is the mesh-wide ownership map. Implementations must be safe for
@@ -79,6 +80,10 @@ func (l *Ledger) SetListener(listener LedgerListener) {
 // Returns the new entry version. The first call for a given overlay_ip
 // behaves as an insert; subsequent calls bump Version.
 func (l *Ledger) Reassign(overlayIP, newOwner, reason string) (int64, error) {
+	return l.reassign(overlayIP, "", newOwner, reason, false)
+}
+
+func (l *Ledger) reassign(overlayIP, expectedOwner, newOwner, reason string, checkOwner bool) (int64, error) {
 	if newOwner == "" {
 		return 0, ErrLedgerEmptyMaster
 	}
@@ -91,8 +96,15 @@ func (l *Ledger) Reassign(overlayIP, newOwner, reason string) (int64, error) {
 	previous := ""
 	entry, ok := l.entries[overlayIP]
 	if ok {
+		if checkOwner && entry.OwningMaster != expectedOwner {
+			l.mu.Unlock()
+			return 0, fmt.Errorf("%w: overlay_ip %s owned by %s, expected %s", ErrLedgerOwnerChanged, overlayIP, entry.OwningMaster, expectedOwner)
+		}
 		previous = entry.OwningMaster
 		entry.PreviousOwner = previous
+	} else if checkOwner {
+		l.mu.Unlock()
+		return 0, ErrLedgerNotFound
 	} else {
 		entry = &OwnershipEntry{OverlayIP: overlayIP}
 		l.entries[overlayIP] = entry
@@ -101,6 +113,7 @@ func (l *Ledger) Reassign(overlayIP, newOwner, reason string) (int64, error) {
 	entry.Reason = reason
 	entry.LastReassignedAt = time.Now().UTC()
 	entry.Version++
+	entryVersion := entry.Version
 	l.version++
 	snapshot := l.snapshotLocked()
 	listener := l.listener
@@ -110,7 +123,7 @@ func (l *Ledger) Reassign(overlayIP, newOwner, reason string) (int64, error) {
 	if listener != nil {
 		listener.OnLedgerMutation(snapshot, version)
 	}
-	return entry.Version, nil
+	return entryVersion, nil
 }
 
 // Lookup returns the entry for overlay_ip if present.
@@ -198,6 +211,9 @@ func (l *Ledger) Drain(sourceMaster, reason string, chooseMaster func(overlayIP 
 	owned := l.OwnedBy(sourceMaster)
 	reassigned := 0
 	for _, entry := range owned {
+		if chooseMaster == nil {
+			return reassigned, fmt.Errorf("ledger: drain aborted at overlay_ip %s — chooseMaster is nil", entry.OverlayIP)
+		}
 		newOwner := chooseMaster(entry.OverlayIP)
 		if newOwner == "" {
 			return reassigned, fmt.Errorf("ledger: drain aborted at overlay_ip %s — chooseMaster returned empty", entry.OverlayIP)
@@ -205,7 +221,10 @@ func (l *Ledger) Drain(sourceMaster, reason string, chooseMaster func(overlayIP 
 		if newOwner == sourceMaster {
 			continue // chooseMaster returned the source master itself; skip.
 		}
-		if _, err := l.Reassign(entry.OverlayIP, newOwner, reason); err != nil {
+		if _, err := l.reassign(entry.OverlayIP, sourceMaster, newOwner, reason, true); err != nil {
+			if errors.Is(err, ErrLedgerOwnerChanged) || errors.Is(err, ErrLedgerNotFound) {
+				continue
+			}
 			return reassigned, fmt.Errorf("ledger: drain failed at overlay_ip %s: %w", entry.OverlayIP, err)
 		}
 		reassigned++

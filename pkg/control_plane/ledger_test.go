@@ -73,6 +73,28 @@ func TestLedger_OwnedByAndDrain(t *testing.T) {
 	}
 }
 
+func TestLedger_DrainSkipsOverlayMovedAfterSnapshot(t *testing.T) {
+	l := NewLedger()
+	mustReassign(t, l, "172.21.92.10", "master-A", "scheduled")
+
+	count, err := l.Drain("master-A", "drain", func(overlayIP string) string {
+		if _, err := l.Reassign(overlayIP, "master-C", "failover"); err != nil {
+			t.Fatalf("Reassign during chooser: %v", err)
+		}
+		return "master-B"
+	})
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("Drain count = %d, want 0", count)
+	}
+	got, ok := l.Lookup("172.21.92.10")
+	if !ok || got.OwningMaster != "master-C" {
+		t.Fatalf("drain stole concurrent owner: %+v", got)
+	}
+}
+
 func TestLedger_Remove(t *testing.T) {
 	l := NewLedger()
 	mustReassign(t, l, "172.21.92.34", "master-01", "scheduled")
