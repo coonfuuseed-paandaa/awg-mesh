@@ -18,7 +18,7 @@ func TestControlPlaneNATTraverserDisabledOnUnimplemented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	result, err := (ControlPlaneNATTraverser{Client: pb.NewControlPlaneClient(conn)}).Probe(context.Background())
 	if err != nil {

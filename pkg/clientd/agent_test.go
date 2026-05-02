@@ -68,7 +68,7 @@ func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	configurator := &recordingConfigurator{notify: make(chan State, 8)}
 	cachePath := t.TempDir() + "/clientd-state.json"
@@ -108,7 +108,7 @@ func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
 	}
 
 	var sawPeerV2, sawOwnershipV3 bool
-	for i := 0; i < 4 && !(sawPeerV2 && sawOwnershipV3); i++ {
+	for i := 0; i < 4 && (!sawPeerV2 || !sawOwnershipV3); i++ {
 		select {
 		case state := <-configurator.notify:
 			if state.PeerListVersion == 2 && len(state.Peers) == 1 && state.Peers[0].PeerName == "master-b" {
@@ -274,7 +274,7 @@ func TestAgentRunStrippedPeerUpdateDoesNotExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
 	agent, err := NewAgent(Config{
@@ -337,7 +337,7 @@ func TestAgentRunReturnsErrorWhenPeerStreamEndsBeforeCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	agent, err := NewAgent(Config{
 		NodeName:      "client-a",

@@ -12,7 +12,7 @@ func ValidateInterfaceName(name string) error {
 		return fmt.Errorf("interface name %q exceeds %d characters", name, maxInterfaceNameLength)
 	}
 	if containsDotDot(name) {
-		return fmt.Errorf("interface name %q must not contain ..", name)
+		return fmt.Errorf("interface name %q must not contain dot-dot", name)
 	}
 	for _, r := range name {
 		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '-' {

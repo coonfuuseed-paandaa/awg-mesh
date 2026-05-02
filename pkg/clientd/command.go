@@ -37,11 +37,11 @@ type CommandConfig struct {
 func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg, err := ParseCommandConfig(args, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "clientd: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "clientd: %v\n", err)
 		return 2
 	}
 	if err := RunWithConfig(ctx, cfg, stdout); err != nil {
-		fmt.Fprintf(stderr, "clientd: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "clientd: %v\n", err)
 		return 1
 	}
 	return 0
@@ -160,7 +160,7 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "clientd node=%s control-plane=%s iface=%s protocol=%s\n", cfg.Name, cfg.ControlPlane, cfg.InterfaceName, cfg.Protocol)
+	_, _ = fmt.Fprintf(stdout, "clientd node=%s control-plane=%s iface=%s protocol=%s\n", cfg.Name, cfg.ControlPlane, cfg.InterfaceName, cfg.Protocol)
 	return agent.Run(ctx)
 }
 
