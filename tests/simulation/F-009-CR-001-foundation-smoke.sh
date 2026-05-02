@@ -12,7 +12,7 @@
 #   R3  gofmt -l . clean
 #   R4  go test -count=1 -short ./... PASS
 #   R5  awg-mesh-node binary builds, --version reports v2.0.0-alpha.1
-#   R6  control-plane starts; remaining skeleton roles exit 0
+#   R6  control-plane starts; skeleton roles exit 0; clientd reports required flags
 #   R7  awg-mesh-node with no --mode exits 2 (usage error)
 #   R8  awg-mesh-node --mode invalid exits 2 (usage error)
 #   R9  mesh-ctl binary builds, version subcommand reports v2.0.0-alpha.1
@@ -173,8 +173,8 @@ else
     bad "R5" "build/run failed: $(tail -5 /tmp/F009-r5.log)"
 fi
 
-# R6: control-plane starts and accepts shutdown; skeleton roles exit 0.
-roles=(master clientd egress ingress balancer)
+# R6: control-plane starts, skeleton roles exit 0, and real clientd reports usage.
+roles=(master egress ingress balancer)
 r6_failed=0
 set +e
 run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode control-plane --listen 127.0.0.1:0 --state-dir /tmp/awg-mesh-cp" 8 >/tmp/F009-r6-control-plane.log 2>&1
@@ -195,8 +195,16 @@ for role in "${roles[@]}"; do
         break
     fi
 done
+clientd_out=$(run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node 2>/dev/null; set +e; /tmp/awg-mesh-node --mode clientd; echo \"EXIT=\$?\"" 2>&1 || true)
+if ! echo "${clientd_out}" | grep -q "EXIT=2"; then
+    r6_failed=1
+    bad "R6 (--mode clientd)" "expected EXIT=2, got: ${clientd_out}"
+elif ! echo "${clientd_out}" | grep -q "missing required flags"; then
+    r6_failed=1
+    bad "R6 (--mode clientd)" "expected missing required flags usage text, got: ${clientd_out}"
+fi
 if [ "${r6_failed}" -eq 0 ]; then
-    ok "R6 — control-plane starts; skeleton roles exit 0"
+    ok "R6 — control-plane starts; skeleton roles exit 0; clientd reports required flags"
 fi
 
 # R7: no --mode → exit 2

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 )
@@ -51,12 +52,20 @@ func versionString() string {
 
 func main() {
 	var (
-		mode                    = flag.String("mode", "", "node mode: control-plane | master | clientd | egress | ingress | balancer")
-		version                 = flag.Bool("version", false, "print version and exit")
-		listenAddr              = flag.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
-		stateDir                = flag.String("state-dir", "/var/lib/awg-mesh", "control-plane: state directory")
-		auditCap                = flag.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
-		allowInsecurePublicBind = flag.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
+		mode                      = flag.String("mode", "", "node mode: control-plane | master | clientd | egress | ingress | balancer")
+		version                   = flag.Bool("version", false, "print version and exit")
+		listenAddr                = flag.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
+		stateDir                  = flag.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
+		auditCap                  = flag.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
+		allowInsecurePublicBind   = flag.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
+		clientdControlPlane       = flag.String("control-plane", "", "clientd: control-plane gRPC addr")
+		clientdName               = flag.String("name", "", "clientd: node name")
+		clientdOverlayIP          = flag.String("overlay-ip", "", "clientd: assigned overlay IP")
+		clientdRegion             = flag.String("region", "", "clientd: node region")
+		clientdCert               = flag.String("cert", "", "clientd: node certificate PEM path")
+		clientdIface              = flag.String("iface", "awg-mesh0", "clientd: WireGuard interface name")
+		clientdProtocol           = flag.String("protocol", "amneziawg", "clientd: transport protocol: vanilla-wg or amneziawg")
+		allowInsecureControlPlane = flag.Bool("allow-insecure-control-plane", false, "clientd: allow insecure control-plane gRPC to non-loopback targets")
 	)
 	flag.Parse()
 
@@ -92,6 +101,24 @@ func main() {
 	if *mode == "control-plane" {
 		runControlPlane(*listenAddr, *stateDir, *auditCap, *allowInsecurePublicBind)
 		return
+	}
+
+	if *mode == "clientd" {
+		args := []string{
+			"--control-plane", *clientdControlPlane,
+			"--name", *clientdName,
+			"--overlay-ip", *clientdOverlayIP,
+			"--region", *clientdRegion,
+			"--cert", *clientdCert,
+			"--state-dir", *stateDir,
+			"--iface", *clientdIface,
+			"--protocol", *clientdProtocol,
+		}
+		if *allowInsecureControlPlane {
+			args = append(args, "--allow-insecure-control-plane")
+		}
+		code := clientd.RunCommand(context.Background(), args, os.Stdout, os.Stderr)
+		os.Exit(code)
 	}
 
 	fmt.Printf("awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",

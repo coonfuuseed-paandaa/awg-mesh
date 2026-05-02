@@ -1,21 +1,21 @@
-package wg
+//go:build linux
 
-import "errors"
+package wg
 
 // awgTransport implements Transport over AmneziaWG (vanilla WG with S/H/I/J
 // header obfuscation). Used on every mesh-internal link per F-009.
-//
-// CR-001: stub — daemon implementation lands in CR-004 (master) and CR-003
-// (clientd) which both consume the Transport interface. The skeleton here
-// proves the Transport interface compiles against an AWG implementation.
 type awgTransport struct {
-	name string
+	name  string
+	iface *Interface
 }
 
 // NewAWGTransport returns a Transport implementation for AmneziaWG.
-// CR-001: stub constructor — full impl in CR-004 / CR-003.
 func NewAWGTransport(name string) (Transport, error) {
-	return &awgTransport{name: name}, nil
+	iface, err := newTransportInterface(name)
+	if err != nil {
+		return nil, err
+	}
+	return &awgTransport{name: name, iface: iface}, nil
 }
 
 // Protocol reports ProtocolAmneziaWG.
@@ -24,25 +24,30 @@ func (t *awgTransport) Protocol() Protocol { return ProtocolAmneziaWG }
 // Name returns the underlying TUN device name.
 func (t *awgTransport) Name() string { return t.name }
 
-// Configure — CR-001: stub — implemented in CR-004/CR-003.
+// Configure applies a device-level configuration through the UAPI-backed Interface.
 func (t *awgTransport) Configure(cfg Config) error {
-	return errors.New("awgTransport.Configure: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.Configure(cfg)
 }
 
-// AddPeer — CR-001: stub — implemented in CR-004/CR-003.
+// AddPeer adds or updates one peer through UAPI.
 func (t *awgTransport) AddPeer(p PeerConfig) error {
-	return errors.New("awgTransport.AddPeer: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.Configure(Config{Peers: []PeerConfig{p}, ReplacePeers: false})
 }
 
-// RemovePeer — CR-001: stub — implemented in CR-004/CR-003.
+// RemovePeer removes one peer through UAPI.
 func (t *awgTransport) RemovePeer(key Key) error {
-	return errors.New("awgTransport.RemovePeer: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.Configure(Config{Peers: []PeerConfig{{PublicKey: key, Remove: true}}, ReplacePeers: false})
 }
 
-// Stats — CR-001: stub — implemented in CR-004/CR-003.
+// Stats returns current device state through UAPI.
 func (t *awgTransport) Stats() (*Device, error) {
-	return nil, errors.New("awgTransport.Stats: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.GetDevice()
 }
 
-// Close — CR-001: stub — implemented in CR-004/CR-003.
-func (t *awgTransport) Close() error { return nil }
+// Close releases interface resources.
+func (t *awgTransport) Close() error {
+	if t == nil || t.iface == nil {
+		return nil
+	}
+	return t.iface.Close()
+}

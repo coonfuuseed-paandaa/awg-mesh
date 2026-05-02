@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
@@ -25,8 +24,8 @@ type Interface struct {
 
 // NewInterface creates and starts a new AWG interface instance.
 func NewInterface(name string, mtu int, logger *device.Logger) (*Interface, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, errors.New("interface name is required")
+	if err := ValidateInterfaceName(name); err != nil {
+		return nil, err
 	}
 	if mtu <= 0 {
 		return nil, fmt.Errorf("mtu must be positive, got %d", mtu)
@@ -129,8 +128,8 @@ func (iface *Interface) Configure(cfg Config) error {
 // gone), this function returns an error and the caller should fall back to raw
 // netlink deletion.
 func OpenExistingInterface(name string) (*Interface, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, errors.New("interface name is required")
+	if err := ValidateInterfaceName(name); err != nil {
+		return nil, err
 	}
 	// Probe the UAPI socket with a transient connection. If the socket does not
 	// exist or is not accepting connections, the old process is gone and we

@@ -1,22 +1,22 @@
-package wg
+//go:build linux
 
-import "errors"
+package wg
 
 // vanillaTransport implements Transport over standard WireGuard (no header
 // obfuscation). Used on master's client-facing listener for Mikrotik native
 // vanilla-WG compatibility per F-009 D-13.
-//
-// CR-001: stub — daemon implementation lands in CR-004 (master protocol bridge).
-// The skeleton here proves the Transport interface compiles against a vanilla
-// implementation; full kernel/userspace WG wiring is wired up in CR-004.
 type vanillaTransport struct {
-	name string
+	name  string
+	iface *Interface
 }
 
-// NewVanillaTransport returns a Transport implementation for vanilla
-// WireGuard. CR-001: returns an error — full constructor lands in CR-004.
+// NewVanillaTransport returns a Transport implementation for vanilla WireGuard.
 func NewVanillaTransport(name string) (Transport, error) {
-	return &vanillaTransport{name: name}, nil
+	iface, err := newTransportInterface(name)
+	if err != nil {
+		return nil, err
+	}
+	return &vanillaTransport{name: name, iface: iface}, nil
 }
 
 // Protocol reports ProtocolVanilla.
@@ -25,25 +25,30 @@ func (t *vanillaTransport) Protocol() Protocol { return ProtocolVanilla }
 // Name returns the underlying TUN device name.
 func (t *vanillaTransport) Name() string { return t.name }
 
-// Configure — CR-001: stub — implemented in CR-004.
+// Configure applies a device-level configuration through the UAPI-backed Interface.
 func (t *vanillaTransport) Configure(cfg Config) error {
-	return errors.New("vanillaTransport.Configure: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.Configure(cfg)
 }
 
-// AddPeer — CR-001: stub — implemented in CR-004.
+// AddPeer adds or updates one peer through UAPI.
 func (t *vanillaTransport) AddPeer(p PeerConfig) error {
-	return errors.New("vanillaTransport.AddPeer: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.Configure(Config{Peers: []PeerConfig{p}, ReplacePeers: false})
 }
 
-// RemovePeer — CR-001: stub — implemented in CR-004.
+// RemovePeer removes one peer through UAPI.
 func (t *vanillaTransport) RemovePeer(key Key) error {
-	return errors.New("vanillaTransport.RemovePeer: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.Configure(Config{Peers: []PeerConfig{{PublicKey: key, Remove: true}}, ReplacePeers: false})
 }
 
-// Stats — CR-001: stub — implemented in CR-004.
+// Stats returns current device state through UAPI.
 func (t *vanillaTransport) Stats() (*Device, error) {
-	return nil, errors.New("vanillaTransport.Stats: not implemented in CR-001 — full impl in CR-004")
+	return t.iface.GetDevice()
 }
 
-// Close — CR-001: stub — implemented in CR-004.
-func (t *vanillaTransport) Close() error { return nil }
+// Close releases interface resources.
+func (t *vanillaTransport) Close() error {
+	if t == nil || t.iface == nil {
+		return nil
+	}
+	return t.iface.Close()
+}
