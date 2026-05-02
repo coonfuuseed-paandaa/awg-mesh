@@ -29,7 +29,8 @@ type ReloadInput struct {
 
 // TransportConfigurator applies peer snapshots through pkg/wg Transport.
 type TransportConfigurator struct {
-	Transport wg.Transport
+	Transport  wg.Transport
+	LocalRoles []role.Role
 }
 
 // Apply validates the state and updates local Transport peers.
@@ -45,7 +46,11 @@ func (c TransportConfigurator) Apply(ctx context.Context, state State) error {
 	if c.Transport == nil {
 		return errors.New("transport is required")
 	}
-	peers, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: state.Peers, Ownership: state.Ownership})
+	localRoles := c.LocalRoles
+	if len(localRoles) == 0 {
+		localRoles = []role.Role{role.RoleClient}
+	}
+	peers, err := BuildPeerConfigs(ReloadInput{LocalRoles: localRoles, Peers: state.Peers, Ownership: state.Ownership})
 	if err != nil {
 		if errors.Is(err, ErrPeerPublicKeyRequired) {
 			return nil

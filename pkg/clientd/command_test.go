@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
@@ -27,6 +28,9 @@ func TestParseCommandConfigRequiredFlagsAndProtocol(t *testing.T) {
 	}
 	if cfg.Protocol != wg.ProtocolVanilla || cfg.Name != "client-a" {
 		t.Fatalf("unexpected parsed config: %#v", cfg)
+	}
+	if len(cfg.Roles) != 1 || cfg.Roles[0] != role.RoleClient {
+		t.Fatalf("default roles = %#v, want client", cfg.Roles)
 	}
 }
 
@@ -58,6 +62,23 @@ func TestValidateCommandConfigRejectsInvalidInterfaceName(t *testing.T) {
 	cfg.InterfaceName = "../bad"
 	if _, err := ValidateCommandConfig(cfg); err == nil || !strings.Contains(err.Error(), "invalid --iface") {
 		t.Fatalf("expected invalid interface name rejection, got %v", err)
+	}
+}
+
+func TestValidateCommandConfigAllowsEgressRoleOverride(t *testing.T) {
+	cfg := validCommandConfig(t)
+	cfg.Roles = []role.Role{role.RoleEgress}
+	validated, err := ValidateCommandConfig(cfg)
+	if err != nil {
+		t.Fatalf("egress role override rejected: %v", err)
+	}
+	if len(validated.Roles) != 1 || validated.Roles[0] != role.RoleEgress {
+		t.Fatalf("validated roles = %#v, want egress", validated.Roles)
+	}
+
+	cfg.Roles = []role.Role{role.RoleClient, role.RoleEgress}
+	if _, err := ValidateCommandConfig(cfg); err == nil || !strings.Contains(err.Error(), "client") {
+		t.Fatalf("expected invalid role combination, got %v", err)
 	}
 }
 
