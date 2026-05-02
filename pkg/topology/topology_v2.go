@@ -32,7 +32,7 @@ var (
 	ErrV2NodeMissingOverlay = errors.New("topology: node missing overlay_ip")
 	ErrV2OverlayDuplicate   = errors.New("topology: duplicate overlay_ip across nodes")
 	ErrV2OverlayOutOfRange  = errors.New("topology: node overlay_ip not in mesh.overlay_supernet")
-	ErrSchemaV1Deprecated   = errors.New("SCHEMA-V1-DEPRECATED: this is a v1.x topology file. Run 'mesh-ctl migrate' to convert (CR-013).")
+	ErrSchemaV1Deprecated   = errors.New("SCHEMA-V1-DEPRECATED: this is a v1.x topology file. Run 'mesh-ctl migrate' to convert (CR-013)")
 )
 
 // TopologyV2 is the v2.0 flat-mesh schema.

@@ -204,6 +204,9 @@ func (d *Daemon) flushAudit() {
 	}
 	defer f.Close()
 	for _, e := range events {
-		fmt.Fprintf(f, "%s\t%s\t%s\t%s\n", e.Timestamp.UTC().Format(time.RFC3339), e.EventType, e.NodeName, e.Detail)
+		if _, err := fmt.Fprintf(f, "%s\t%s\t%s\t%s\n", e.Timestamp.UTC().Format(time.RFC3339), e.EventType, e.NodeName, e.Detail); err != nil {
+			log.Printf("control-plane: audit flush write failed: %v", err)
+			return
+		}
 	}
 }

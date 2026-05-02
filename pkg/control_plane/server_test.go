@@ -29,7 +29,7 @@ func startTestServer(t *testing.T) (pb.ControlPlaneClient, *Server, func()) {
 	}
 	gs := grpc.NewServer()
 	pb.RegisterControlPlaneServer(gs, srv)
-	go gs.Serve(lis)
+	go func() { _ = gs.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -38,7 +38,7 @@ func startTestServer(t *testing.T) (pb.ControlPlaneClient, *Server, func()) {
 	}
 	client := pb.NewControlPlaneClient(conn)
 	teardown := func() {
-		conn.Close()
+		_ = conn.Close()
 		gs.Stop()
 	}
 	return client, srv, teardown
@@ -156,7 +156,9 @@ func TestServer_Heartbeat_Roundtrip(t *testing.T) {
 	if resp.GetServerAtUnix() == 0 {
 		t.Fatalf("server time empty")
 	}
-	stream.CloseSend()
+	if err := stream.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify registry now has heartbeat timestamp.
 	got, ok := srv.registry.Lookup("n1")
@@ -174,7 +176,9 @@ func TestServer_Heartbeat_UnknownNodeError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream.Send(&pb.HeartbeatRequest{NodeName: "ghost"})
+	if err := stream.Send(&pb.HeartbeatRequest{NodeName: "ghost"}); err != nil {
+		t.Fatal(err)
+	}
 	_, err = stream.Recv()
 	if err == nil {
 		t.Fatal("expected NotFound error for unknown node")
@@ -233,7 +237,9 @@ func TestServer_StreamOwnership_LiveUpdate(t *testing.T) {
 	// Drive a mutation.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		srv.ledger.Reassign("10.0.0.5", "master-01", "scheduled")
+		if _, err := srv.ledger.Reassign("10.0.0.5", "master-01", "scheduled"); err != nil {
+			t.Errorf("Reassign: %v", err)
+		}
 	}()
 	upd, err := stream.Recv()
 	if err != nil {
@@ -294,8 +300,12 @@ func TestServer_DecommissionNode(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	srv.ledger.Reassign("172.21.92.10", "master-A", "scheduled")
-	srv.ledger.Reassign("172.21.92.11", "master-A", "scheduled")
+	if _, err := srv.ledger.Reassign("172.21.92.10", "master-A", "scheduled"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.ledger.Reassign("172.21.92.11", "master-A", "scheduled"); err != nil {
+		t.Fatal(err)
+	}
 
 	resp, err := client.DecommissionNode(ctx, &pb.DecommissionRequest{NodeName: "master-A", DrainSeconds: 0})
 	if err != nil {

@@ -1,45 +1,12 @@
 package cmd
 
 import (
-	"crypto"
-	"crypto/x509"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 )
-
-// ensureCA loads the mesh CA from configDir, creating one on first run.
-//
-// CR-002 control plane will reuse this on operator-facing `mesh-ctl init`.
-// In CR-001 the CA helpers stay shared between mesh-ctl subcommands and the
-// future control-plane daemon (single source of truth for CA bootstrap).
-func ensureCA(configDir string) (*x509.Certificate, crypto.PrivateKey, error) {
-	caCert, caKey, err := pkgtls.LoadCA(configDir)
-	if err == nil {
-		return caCert, caKey, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, err
-	}
-
-	fmt.Fprintf(os.Stderr, "First run: creating mesh CA in %s\n", configDir)
-
-	caCert, caKey, err = pkgtls.GenerateCA("awg-mesh-ca")
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate CA: %w", err)
-	}
-
-	if err := pkgtls.SaveCA(configDir, caCert, caKey); err != nil {
-		return nil, nil, fmt.Errorf("save CA: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "CA created: %s/ca.crt, %s/ca.key\n", configDir, configDir)
-	return caCert, caKey, nil
-}
 
 // saveToken writes the bearer token under nodeDir.
 func saveToken(nodeDir, token string) error {
@@ -76,12 +43,7 @@ func caPath(configDir string) string {
 // containsName reports whether needle appears in list. Used by mesh-ctl
 // subcommands that filter nodes by --node flag against topology lists.
 func containsName(list []string, needle string) bool {
-	for _, value := range list {
-		if value == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, needle)
 }
 
 // F-009 CR-001: removed v1.x onboarding helpers:
