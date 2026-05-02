@@ -78,10 +78,18 @@ func roleForMode(mode string) role.Role {
 func warnDeprecatedMode(mode string, stderr io.Writer) {
 	switch mode {
 	case "client":
-		fmt.Fprintln(stderr, "warning: --mode client is deprecated for v2.0; use --mode clientd")
+		writeLine(stderr, "warning: --mode client is deprecated for v2.0; use --mode clientd")
 	case "endpoint":
-		fmt.Fprintln(stderr, "warning: --mode endpoint is deprecated for v2.0; use --mode egress")
+		writeLine(stderr, "warning: --mode endpoint is deprecated for v2.0; use --mode egress")
 	}
+}
+
+func writeLine(w io.Writer, msg string) {
+	_, _ = fmt.Fprintln(w, msg)
+}
+
+func writef(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
 }
 
 func main() {
@@ -117,20 +125,20 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *version {
-		fmt.Fprintf(stdout, "awg-mesh-node %s\n", versionString())
+		writef(stdout, "awg-mesh-node %s\n", versionString())
 		return 0
 	}
 
 	if *mode == "" {
-		fmt.Fprintln(stderr, "error: --mode is required")
-		fmt.Fprintf(stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
+		writeLine(stderr, "error: --mode is required")
+		writef(stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
 		return 2
 	}
 
 	implCR, ok := supportedModes[*mode]
 	if !ok {
-		fmt.Fprintf(stderr, "error: unsupported mode %q\n", *mode)
-		fmt.Fprintf(stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
+		writef(stderr, "error: unsupported mode %q\n", *mode)
+		writef(stderr, "supported modes: %s\n", strings.Join(sortedKeys(supportedModes), ", "))
 		return 2
 	}
 	warnDeprecatedMode(*mode, stderr)
@@ -138,7 +146,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	if *mode != "control-plane" {
 		r := roleForMode(*mode)
 		if err := role.ValidateComposability([]role.Role{r}); err != nil {
-			fmt.Fprintf(stderr, "error: role %q failed validation: %v\n", *mode, err)
+			writef(stderr, "error: role %q failed validation: %v\n", *mode, err)
 			return 2
 		}
 	}
@@ -173,15 +181,15 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		return clientd.RunCommand(context.Background(), clientdArgs, stdout, stderr)
 	default:
-		fmt.Fprintf(stdout, "awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
+		writef(stdout, "awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
 			versionString(), *mode, implCR)
-		fmt.Fprintln(stderr, "CR-001 skeleton: this binary intentionally exits without doing any networking.")
+		writeLine(stderr, "CR-001 skeleton: this binary intentionally exits without doing any networking.")
 		return 0
 	}
 }
 
 func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {
-	fmt.Fprintf(stdout, "awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
+	writef(stdout, "awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
 		versionString(), listenAddr, stateDir)
 	d, err := control_plane.NewDaemon(control_plane.Config{
 		ListenAddr:              listenAddr,
@@ -190,11 +198,11 @@ func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePub
 		AllowInsecurePublicBind: allowInsecurePublicBind,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "control-plane: %v\n", err)
+		writef(stderr, "control-plane: %v\n", err)
 		return 1
 	}
 	if err := d.Run(context.Background()); err != nil {
-		fmt.Fprintf(stderr, "control-plane: %v\n", err)
+		writef(stderr, "control-plane: %v\n", err)
 		return 1
 	}
 	return 0
@@ -203,12 +211,12 @@ func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePub
 func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, stderr io.Writer) int {
 	master, err := node.NewMaster(cfg)
 	if err != nil {
-		fmt.Fprintf(stderr, "master: %v\n", err)
+		writef(stderr, "master: %v\n", err)
 		return 2
 	}
 	status := master.Status()
 	if dryRun {
-		fmt.Fprintf(stdout, "master dry-run node=%s overlay=%s client=%s:%d/%s mesh=%s:%d/%s\n",
+		writef(stdout, "master dry-run node=%s overlay=%s client=%s:%d/%s mesh=%s:%d/%s\n",
 			status.Name,
 			status.OverlayIP,
 			status.Listeners.ClientInterfaceName,
@@ -220,7 +228,7 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 		)
 		return 0
 	}
-	fmt.Fprintf(stdout, "awg-mesh-node %s — mode=master — node=%s overlay=%s client=%s:%d mesh=%s:%d\n",
+	writef(stdout, "awg-mesh-node %s — mode=master — node=%s overlay=%s client=%s:%d mesh=%s:%d\n",
 		versionString(),
 		status.Name,
 		status.OverlayIP,
@@ -230,7 +238,7 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 		status.Listeners.MeshListenPort,
 	)
 	if err := master.Run(ctx); err != nil {
-		fmt.Fprintf(stderr, "master: %v\n", err)
+		writef(stderr, "master: %v\n", err)
 		return 1
 	}
 	return 0
