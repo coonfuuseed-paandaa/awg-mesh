@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # tests/critical/pluggable-transport.sh — F-009 CR-001 deliverable test.
 #
-# Verifies the v2.0 Transport interface (pkg/wg/transport.go) is
-# implementable: both vanilla-WG and AmneziaWG implementations conform.
-# Daemon-side wiring lands in CR-004; CR-001 only proves the interface
-# contract.
+# Verifies the v2.0 Transport interface and CR-004 master dual-listener
+# contract: both vanilla-WG and AmneziaWG implementations conform, and the
+# master bridge configures separate protocol listeners.
 
 set -euo pipefail
 
@@ -20,7 +19,13 @@ if ! command -v "$GO" >/dev/null 2>&1; then
     exit 0
 fi
 
-# Inline interface-conformance check. Compile-only — no runtime side effects.
+# Focused CR-004 tests use fake transports, so they do not require privileged
+# kernel TUN creation.
+$GO test -count=1 -run 'TestDualListener' ./pkg/wg/... >/dev/null
+
+# Inline interface-conformance check. Runtime construction may use the real
+# UAPI-backed implementation; if the current environment lacks kernel support,
+# the focused unit tests above remain the authoritative CR-004 gate.
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
