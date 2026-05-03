@@ -424,8 +424,8 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 	if options.drain < 0 {
 		return nodeRemoveOptions{}, fmt.Errorf("--drain must be >= 0")
 	}
-	drainSeconds := options.drain / time.Second
-	if drainSeconds > maxNodeDrainSeconds {
+	drainSec := int64(options.drain / time.Second)
+	if drainSec > maxNodeDrainSeconds {
 		return nodeRemoveOptions{}, fmt.Errorf("--drain must be <= %ds", maxNodeDrainSeconds)
 	}
 	output, err := normalizeTopologyOutput(options.output)
@@ -439,7 +439,7 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 	return nodeRemoveOptions{
 		nodeName:     nodeName,
 		controlPlane: controlPlane,
-		drain:        drainSeconds * time.Second,
+		drain:        time.Duration(drainSec) * time.Second,
 		output:       output,
 		timeout:      timeout,
 		stdout:       options.stdout,
