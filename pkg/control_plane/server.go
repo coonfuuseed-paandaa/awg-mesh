@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,6 +36,7 @@ type Server struct {
 	audit          *AuditLog
 	peerListBcast  *PeerListBroadcaster
 	ownershipBcast *OwnershipBroadcaster
+	rotation       *meshrotation.Orchestrator
 }
 
 // NewServer wires the provided dependencies into a Server. The ledger
@@ -46,6 +48,7 @@ func NewServer(registry *Registry, ledger *Ledger, audit *AuditLog) *Server {
 		audit:          audit,
 		peerListBcast:  NewPeerListBroadcaster(),
 		ownershipBcast: NewOwnershipBroadcaster(),
+		rotation:       meshrotation.NewOrchestrator(meshrotation.NewMemoryApplier(), meshrotation.OrchestratorConfig{}),
 	}
 	ledger.SetListener(ledgerListenerFn(func(snap []OwnershipEntry, version int64) {
 		s.ownershipBcast.Broadcast(OwnershipUpdateMsg{Entries: snap, Version: version})
@@ -277,11 +280,57 @@ func (s *Server) QueryAudit(req *pb.QueryAuditRequest, stream pb.ControlPlane_Qu
 	return nil
 }
 
-// --- Stubs for streams handled by later CRs. ---
-
+// RotateAWGParamsMeshWide executes one mesh-wide AWG rotation request and
+// streams one ACK/ERROR result per mesh-internal target.
 func (s *Server) RotateAWGParamsMeshWide(stream pb.ControlPlane_RotateAWGParamsMeshWideServer) error {
-	return status.Error(codes.Unimplemented, "rotation orchestration lands in CR-008")
+	req, err := stream.Recv()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return status.Error(codes.InvalidArgument, "rotate request required")
+		}
+		return err
+	}
+	if s.rotation == nil {
+		s.rotation = meshrotation.NewOrchestrator(meshrotation.NewMemoryApplier(), meshrotation.OrchestratorConfig{})
+	}
+	rotationReq := meshrotation.Request{
+		Tier:       req.GetTier(),
+		Params:     req.GetNewParams(),
+		ApplyAt:    unixMicrosOrZero(req.GetApplyAtUnixMicros()),
+		RotationID: req.GetRotationId(),
+		Reason:     "control-plane",
+		Targets:    rotationTargetsFromRegistry(s.registry.List()),
+	}
+	meshInternalTargetCount := len(meshrotation.MeshInternalTargets(rotationReq.Targets))
+	s.audit.Append(AuditEvent{
+		EventType: "rotate-start",
+		Detail:    fmt.Sprintf("tier=%s rotation_id=%s targets=%d", req.GetTier(), req.GetRotationId(), meshInternalTargetCount),
+		Actor:     "operator",
+	})
+	exec, execErr := s.rotation.Execute(stream.Context(), rotationReq)
+	if len(exec.Results) > 0 {
+		if err := streamRotationResults(stream, exec); err != nil {
+			return err
+		}
+	}
+	s.audit.Append(AuditEvent{
+		EventType: "rotate-result",
+		Detail:    fmt.Sprintf("rotation_id=%s status=%s results=%d", exec.Plan.RotationID, exec.Status, len(exec.Results)),
+		Actor:     "operator",
+	})
+	if execErr == nil {
+		return nil
+	}
+	if errors.Is(execErr, meshrotation.ErrNoRotationTargets) {
+		return status.Error(codes.FailedPrecondition, execErr.Error())
+	}
+	if errors.Is(execErr, meshrotation.ErrPartialApply) {
+		return status.Errorf(codes.Aborted, "rotation partial apply: %s", exec.Plan.RotationID)
+	}
+	return status.Error(codes.InvalidArgument, execErr.Error())
 }
+
+// --- Stubs for streams handled by later CRs. ---
 
 func (s *Server) SignalExchange(stream pb.ControlPlane_SignalExchangeServer) error {
 	return status.Error(codes.Unimplemented, "NAT signal relay lands in CR-007")
@@ -362,6 +411,40 @@ func unixOrZero(t int64) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(t, 0).UTC()
+}
+
+func unixMicrosOrZero(t int64) time.Time {
+	if t == 0 {
+		return time.Time{}
+	}
+	return time.UnixMicro(t).UTC()
+}
+
+func rotationTargetsFromRegistry(nodes []RegisteredNode) []meshrotation.Target {
+	targets := make([]meshrotation.Target, 0, len(nodes))
+	for _, node := range nodes {
+		targets = append(targets, meshrotation.Target{
+			Name:      node.Name,
+			Roles:     append([]role.Role(nil), node.Roles...),
+			OverlayIP: node.OverlayIP,
+		})
+	}
+	return targets
+}
+
+func streamRotationResults(stream pb.ControlPlane_RotateAWGParamsMeshWideServer, exec meshrotation.Execution) error {
+	for _, result := range exec.Results {
+		resp := &pb.RotateResponse{
+			NodeName:   result.Target.Name,
+			RotationId: exec.Plan.RotationID,
+			Ack:        result.Ack,
+			Error:      result.Error,
+		}
+		if err := stream.Send(resp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ledgerListenerFn lets us pass closure-style listeners to Ledger.SetListener.
