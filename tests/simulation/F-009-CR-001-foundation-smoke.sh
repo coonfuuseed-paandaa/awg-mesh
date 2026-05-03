@@ -12,7 +12,7 @@
 #   R3  gofmt -l . clean
 #   R4  go test -count=1 -short ./... PASS
 #   R5  awg-mesh-node binary builds, --version reports v2.0.0-alpha.1
-#   R6  control-plane starts; skeleton roles exit 0; client/clientd reports required flags
+#   R6  control-plane starts; implemented role dry-runs validate; client/clientd reports required flags
 #   R7  awg-mesh-node with no --mode exits 2 (usage error)
 #   R8  awg-mesh-node --mode invalid exits 2 (usage error)
 #   R9  mesh-ctl binary builds, version subcommand reports v2.0.0-alpha.1
@@ -173,9 +173,8 @@ else
     bad "R5" "build/run failed: $(tail -5 /tmp/F009-r5.log)"
 fi
 
-# R6: control-plane starts, implemented role dry-runs validate, remaining
-# skeleton roles exit 0, and real client/clientd reports usage.
-roles=(balancer)
+# R6: control-plane starts, implemented role dry-runs validate, and real
+# client/clientd reports usage.
 r6_failed=0
 set +e
 run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode control-plane --listen 127.0.0.1:0 --state-dir /tmp/awg-mesh-cp" 8 >/tmp/F009-r6-control-plane.log 2>&1
@@ -188,14 +187,6 @@ elif [ "${r6_status}" -ne 124 ]; then
     r6_failed=1
     bad "R6 (--mode control-plane)" "expected watchdog stop (124), got ${r6_status}: $(tail -5 /tmp/F009-r6-control-plane.log)"
 fi
-for role in "${roles[@]}"; do
-    if ! run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode ${role} 2>&1" \
-        >/tmp/F009-r6-${role}.log 2>&1; then
-        r6_failed=1
-        bad "R6 (--mode ${role})" "exited non-zero: $(tail -3 /tmp/F009-r6-${role}.log)"
-        break
-    fi
-done
 if ! run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode master --dry-run --name master-01 --overlay-ip 172.21.92.2 2>&1" \
     >/tmp/F009-r6-master.log 2>&1; then
     r6_failed=1
@@ -228,6 +219,14 @@ elif ! grep -q 'ingress dry-run node=ingress-01' /tmp/F009-r6-ingress.log || ! g
     r6_failed=1
     bad "R6 (--mode ingress --dry-run)" "ingress plan missing: $(cat /tmp/F009-r6-ingress.log)"
 fi
+if ! run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode balancer --dry-run --name master-01 --overlay-ip 172.21.92.1 --balancer-egress egress-ru=172.21.92.10:51821,weight=2 --balancer-egress egress-eu=172.21.92.11:51821,weight=1 --balancer-dscp 10=egress-ru 2>&1" \
+    >/tmp/F009-r6-balancer.log 2>&1; then
+    r6_failed=1
+    bad "R6 (--mode balancer --dry-run)" "exited non-zero: $(tail -3 /tmp/F009-r6-balancer.log)"
+elif ! grep -q 'balancer dry-run node=master-01' /tmp/F009-r6-balancer.log || ! grep -q 'dscp=10->egress-ru' /tmp/F009-r6-balancer.log; then
+    r6_failed=1
+    bad "R6 (--mode balancer --dry-run)" "balancer plan missing: $(cat /tmp/F009-r6-balancer.log)"
+fi
 clientd_out=$(run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node 2>/dev/null; set +e; /tmp/awg-mesh-node --mode clientd; echo \"EXIT=\$?\"" 2>&1 || true)
 if ! echo "${clientd_out}" | grep -q "EXIT=2"; then
     r6_failed=1
@@ -245,7 +244,7 @@ elif ! echo "${client_out}" | grep -q "missing required flags"; then
     bad "R6 (--mode client)" "expected missing required flags usage text, got: ${client_out}"
 fi
 if [ "${r6_failed}" -eq 0 ]; then
-    ok "R6 — control-plane starts; master/egress/ingress dry-runs validate; skeleton roles exit 0; client/clientd reports required flags"
+    ok "R6 — control-plane starts; master/egress/ingress/balancer dry-runs validate; client/clientd reports required flags"
 fi
 
 # R7: no --mode → exit 2

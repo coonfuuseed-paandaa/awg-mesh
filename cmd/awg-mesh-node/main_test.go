@@ -230,6 +230,102 @@ func TestRunIngressRejectsInvalidRoute(t *testing.T) {
 	}
 }
 
+func TestRunBalancerDryRunUsesPolicyAndTargets(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "balancer",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.1",
+		"--balancer-mode", "labeled",
+		"--balancer-egress", "egress-ru=172.21.92.10:51821,weight=2",
+		"--balancer-egress", "egress-eu=172.21.92.11:51821,weight=1",
+		"--balancer-dscp", "10=egress-ru",
+		"--balancer-fwmark", "100=egress-eu",
+		"--balancer-health-interval", "2s",
+		"--balancer-flow-idle-timeout", "9s",
+		"--balancer-metrics", ":9093",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"balancer dry-run node=master-01",
+		"overlay=172.21.92.1",
+		"mode=labeled",
+		"egresses=2",
+		"health=2s",
+		"flow_idle=9s",
+		"metrics=:9093",
+		"egress=egress-ru->172.21.92.10:51821/weight=2",
+		"egress=egress-eu->172.21.92.11:51821/weight=1",
+		"dscp=10->egress-ru",
+		"fwmark=100->egress-eu",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestRunBalancerDryRunDiffersByPolicy(t *testing.T) {
+	t.Parallel()
+
+	var firstOut, firstErr strings.Builder
+	firstCode := runCommand([]string{
+		"--mode", "balancer",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.1",
+		"--balancer-egress", "egress-ru=172.21.92.10:51821,weight=2",
+	}, &firstOut, &firstErr)
+	if firstCode != 0 {
+		t.Fatalf("first dry-run exit %d stderr=%s", firstCode, firstErr.String())
+	}
+
+	var secondOut, secondErr strings.Builder
+	secondCode := runCommand([]string{
+		"--mode", "balancer",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.1",
+		"--balancer-mode", "labeled",
+		"--balancer-egress", "egress-eu=172.21.92.11:51821,weight=1",
+		"--balancer-dscp", "10=egress-eu",
+	}, &secondOut, &secondErr)
+	if secondCode != 0 {
+		t.Fatalf("second dry-run exit %d stderr=%s", secondCode, secondErr.String())
+	}
+	if firstOut.String() == secondOut.String() {
+		t.Fatalf("dry-run output ignored mode/target/label: %s", firstOut.String())
+	}
+	if !strings.Contains(secondOut.String(), "mode=labeled") || !strings.Contains(secondOut.String(), "dscp=10->egress-eu") {
+		t.Fatalf("second dry-run missing changed fields: %s", secondOut.String())
+	}
+}
+
+func TestRunBalancerRejectsInvalidTarget(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "balancer",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.1",
+		"--balancer-egress", "egress-ru=service.local:51821",
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "must be an overlay IP") {
+		t.Fatalf("expected target validation error, got %s", stderr.String())
+	}
+}
+
 func TestCompatibilityAliasesPreserved(t *testing.T) {
 	t.Parallel()
 
