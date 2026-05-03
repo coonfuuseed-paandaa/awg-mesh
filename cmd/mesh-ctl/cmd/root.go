@@ -51,13 +51,12 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(newTokenCommand())
 	rootCmd.AddCommand(newCaptureCommand())
 	rootCmd.AddCommand(newRotateCommand())
+	rootCmd.AddCommand(newUpgradeCommand())
 	rootCmd.AddCommand(newIPCommand())
 	rootCmd.AddCommand(newConfigCommand())
 	rootCmd.AddCommand(newRoutingCommand())
 	rootCmd.AddCommand(newBootstrapCommand())
 	rootCmd.AddCommand(newInspectCommand())
-	// F-009 CR-001: legacy `upgrade` + `upgrade compose` subcommands removed.
-	// Replaced by FR-19 in-place upgrade flow in CR-010 mesh-ctl redesign.
 
 	return rootCmd
 }
