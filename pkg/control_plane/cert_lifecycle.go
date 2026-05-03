@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
@@ -19,7 +20,7 @@ const (
 
 // CertIssuer creates replacement node credentials for certificate lifecycle updates.
 type CertIssuer interface {
-	IssueNodeCert(node RegisteredNode, validFor time.Duration) ([]byte, []byte, *x509.Certificate, error)
+	IssueNodeCert(node RegisteredNode, hosts []string, validFor time.Duration) ([]byte, []byte, *x509.Certificate, error)
 }
 
 // CAIssuer issues node credentials from an in-memory mesh CA.
@@ -28,11 +29,11 @@ type CAIssuer struct {
 	CAKey  crypto.PrivateKey
 }
 
-func (i CAIssuer) IssueNodeCert(node RegisteredNode, validFor time.Duration) ([]byte, []byte, *x509.Certificate, error) {
+func (i CAIssuer) IssueNodeCert(node RegisteredNode, hosts []string, validFor time.Duration) ([]byte, []byte, *x509.Certificate, error) {
 	if i.CACert == nil || i.CAKey == nil {
 		return nil, nil, nil, errors.New("cert issuer CA material is required")
 	}
-	certPEM, keyPEM, err := pkgtls.IssueCertWithValidity(i.CACert, i.CAKey, node.Name, certHostsForNode(node), validFor)
+	certPEM, keyPEM, err := pkgtls.IssueCertWithValidity(i.CACert, i.CAKey, node.Name, hosts, validFor)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -98,10 +99,13 @@ func (c *CertLifecycle) NextDueUpdate(node RegisteredNode) (*pb.CertUpdate, time
 		return nil, time.Time{}, false, fmt.Errorf("node certificate CN %q does not match node %q", current.Subject.CommonName, node.Name)
 	}
 	now := c.now().UTC()
+	if hasActivePendingCert(node, now) {
+		return nil, current.NotAfter, false, nil
+	}
 	if now.Add(c.renewBefore).Before(current.NotAfter) {
 		return nil, current.NotAfter, false, nil
 	}
-	certPEM, keyPEM, cert, err := c.issuer.IssueNodeCert(node, c.validFor)
+	certPEM, keyPEM, cert, err := c.issuer.IssueNodeCert(node, certHostsForNode(node, current), c.validFor)
 	if err != nil {
 		return nil, time.Time{}, false, fmt.Errorf("issue replacement node certificate for %q: %w", node.Name, err)
 	}
@@ -118,7 +122,11 @@ func (c *CertLifecycle) DelayUntilDue(node RegisteredNode) time.Duration {
 	if err != nil {
 		return 0
 	}
-	delay := current.NotAfter.Add(-c.renewBefore).Sub(c.now().UTC())
+	now := c.now().UTC()
+	if hasActivePendingCert(node, now) {
+		return c.pollInterval
+	}
+	delay := current.NotAfter.Add(-c.renewBefore).Sub(now)
 	if delay < 0 {
 		return 0
 	}
@@ -128,10 +136,42 @@ func (c *CertLifecycle) DelayUntilDue(node RegisteredNode) time.Duration {
 	return delay
 }
 
-func certHostsForNode(node RegisteredNode) []string {
-	hosts := []string{node.Name}
+func hasActivePendingCert(node RegisteredNode, now time.Time) bool {
+	if len(node.PendingCertPEM) == 0 {
+		return false
+	}
+	return node.CertOverlapUntil.IsZero() || !now.After(node.CertOverlapUntil)
+}
+
+func certHostsForNode(node RegisteredNode, current *x509.Certificate) []string {
+	hosts := make([]string, 0)
+	seen := make(map[string]struct{})
+	if current != nil {
+		addUniqueHost(&hosts, seen, current.Subject.CommonName)
+		for _, dnsName := range current.DNSNames {
+			addUniqueHost(&hosts, seen, dnsName)
+		}
+		for _, ip := range current.IPAddresses {
+			addUniqueHost(&hosts, seen, ip.String())
+		}
+	}
+	addUniqueHost(&hosts, seen, node.Name)
 	if node.OverlayIP != "" {
-		hosts = append(hosts, node.OverlayIP)
+		addUniqueHost(&hosts, seen, node.OverlayIP)
 	}
 	return hosts
+}
+
+func addUniqueHost(hosts *[]string, seen map[string]struct{}, host string) {
+	if host == "" {
+		return
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	if _, ok := seen[host]; ok {
+		return
+	}
+	seen[host] = struct{}{}
+	*hosts = append(*hosts, host)
 }

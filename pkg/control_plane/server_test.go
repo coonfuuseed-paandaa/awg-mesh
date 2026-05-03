@@ -2,6 +2,7 @@ package control_plane
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net"
@@ -413,7 +414,7 @@ func TestServer_StreamCertUpdateIssuesDueCertAndAllowsReregister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateCA: %v", err)
 	}
-	oldCert, _, err := pkgtls.IssueCertWithValidity(caCert, caKey, "client-01", []string{"client-01", "172.21.92.130"}, 6*24*time.Hour)
+	oldCert, _, err := pkgtls.IssueCertWithValidity(caCert, caKey, "client-01", []string{"client-01", "172.21.92.130", "client-01.mesh.example"}, 6*24*time.Hour)
 	if err != nil {
 		t.Fatalf("IssueCertWithValidity old: %v", err)
 	}
@@ -462,8 +463,29 @@ func TestServer_StreamCertUpdateIssuesDueCertAndAllowsReregister(t *testing.T) {
 	if cn != "client-01" {
 		t.Fatalf("updated cert CN = %q, want client-01", cn)
 	}
+	parsedUpdate, err := pkgtls.ParseCertPEM(update.GetCertPem())
+	if err != nil {
+		t.Fatalf("ParseCertPEM updated cert: %v", err)
+	}
+	if !certHasDNSName(parsedUpdate, "client-01.mesh.example") {
+		t.Fatalf("updated cert dropped existing DNS SANs: %#v", parsedUpdate.DNSNames)
+	}
 	if update.GetValidUntilUnix() != notAfter.Unix() || update.GetValidFromUnix() == 0 {
 		t.Fatalf("unexpected validity window: %+v notAfter=%s", update, notAfter)
+	}
+	pendingNode, ok := srv.registry.Lookup("client-01")
+	if !ok {
+		t.Fatal("registered node missing after cert update")
+	}
+	_, _, due, err := lifecycle.NextDueUpdate(pendingNode)
+	if err != nil {
+		t.Fatalf("NextDueUpdate with pending cert: %v", err)
+	}
+	if due {
+		t.Fatal("pending cert should suppress duplicate replacement issuance")
+	}
+	if delay := lifecycle.DelayUntilDue(pendingNode); delay != 10*time.Millisecond {
+		t.Fatalf("pending cert delay = %s, want poll interval", delay)
 	}
 
 	resp, err = client.RegisterNode(ctx, &pb.RegisterNodeRequest{
@@ -484,6 +506,15 @@ func TestServer_StreamCertUpdateIssuesDueCertAndAllowsReregister(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("cert-update-issued audit events = %d, want 1", len(events))
 	}
+}
+
+func certHasDNSName(cert *x509.Certificate, want string) bool {
+	for _, got := range cert.DNSNames {
+		if got == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestServer_StreamCertUpdateRejectsUnknownNode(t *testing.T) {

@@ -200,6 +200,14 @@ func TestAgentAppliesCertUpdateToLocalFiles(t *testing.T) {
 		gotCert, certErr := os.ReadFile(certPath)
 		gotKey, keyErr := os.ReadFile(keyPath)
 		if certErr == nil && keyErr == nil && string(gotCert) == string(certPEM) && string(gotKey) == string(keyPEM) {
+			select {
+			case got := <-server.registered:
+				if string(got.GetNodeCertPem()) != string(certPEM) {
+					t.Fatalf("cert update re-registration used old cert bytes: %q", string(got.GetNodeCertPem()))
+				}
+			case <-time.After(streamTestTimeout):
+				t.Fatalf("timed out waiting for cert update re-registration")
+			}
 			cancel()
 			if err := <-done; err != nil {
 				t.Fatalf("agent returned error after cancel: %v", err)

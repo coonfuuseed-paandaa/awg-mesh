@@ -180,6 +180,10 @@ func (a *Agent) Run(ctx context.Context) error {
 				if err := ApplyCertUpdate(a.cfg.CertPath, a.cfg.KeyPath, update.cert); err != nil {
 					return err
 				}
+				a.cfg.NodeCertPEM = append([]byte(nil), update.cert.GetCertPem()...)
+				if err := a.register(runCtx); err != nil {
+					return fmt.Errorf("re-register after cert update: %w", err)
+				}
 				continue
 			}
 			if !changed {

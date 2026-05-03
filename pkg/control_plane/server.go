@@ -367,7 +367,13 @@ func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPl
 				NodeName:  name,
 				Detail:    fmt.Sprintf("valid_until=%d overlap_until=%d", update.GetValidUntilUnix(), overlapUntil.Unix()),
 			})
-			return stream.Send(update)
+			if err := stream.Send(update); err != nil {
+				if stream.Context().Err() != nil {
+					return nil
+				}
+				return err
+			}
+			continue
 		}
 
 		timer := time.NewTimer(s.certLifecycle.DelayUntilDue(node))

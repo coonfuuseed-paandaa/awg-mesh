@@ -107,7 +107,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	listenAddr := fs.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
 	stateDir := fs.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
 	caDir := fs.String("ca-dir", "", "control-plane: CA material directory containing ca.crt and ca.key")
-	certRotationDays := fs.Int("cert-rotation-days", 0, "control-plane: mTLS cert rotation interval in days (default 90)")
+	certRotationDays := fs.Int("cert-rotation-days", 90, "control-plane: mTLS cert rotation interval in days")
 	auditCap := fs.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
 	allowInsecurePublicBind := fs.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
 	controlPlaneAddr := fs.String("control-plane", "", "clientd: control-plane gRPC addr")
