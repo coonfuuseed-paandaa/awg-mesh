@@ -203,9 +203,10 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 	masterAKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-a", masterClientWGPublicKeyFile))
 	masterBKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-b", masterClientWGPublicKeyFile))
 	for _, want := range []string{
-		"/interface/wireguard",
+		"/interface/wireguard/add",
 		"private-key=\"",
-		"add address=172.21.92.130/32 interface=awg-mesh",
+		"/ip/address/add address=172.21.92.130/32 interface=awg-mesh",
+		"/interface/wireguard/peers/add",
 		"public-key=\"" + masterAKey + "\" endpoint-address=203.0.113.10 endpoint-port=51820",
 		"public-key=\"" + masterBKey + "\" endpoint-address=198.51.100.11 endpoint-port=51820",
 		"allowed-address=172.21.92.2/32,172.21.92.34/32",

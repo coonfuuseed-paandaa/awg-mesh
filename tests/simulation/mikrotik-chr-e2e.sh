@@ -2,24 +2,22 @@
 # mikrotik-chr-e2e.sh — full E2E sim against REAL RouterOS CHR (no proxy).
 #
 # Replaces alpine-based mikrotik-onboard.sh with honest emulation: real CHR
-# in Docker QEMU, real /import flow, real /container/start, real overlay
-# data plane.
+# in Docker QEMU, real v2 control-plane registration, real master runtime
+# startup, and real RouterOS native WireGuard /import flow.
 #
 # Architecture:
 #   Docker network: awg-mesh-test-${SUFFIX}/24
-#   ├── master-01      (Docker Linux) — mesh master
-#   ├── master-02      (Docker Linux) — mesh master
-#   ├── endpoint-01    (Docker Linux) — mesh endpoint
+#   ├── control-plane  (Docker Linux) — v2 registry/control-plane daemon
+#   ├── master-01      (Docker Linux) — v2 native master runtime
 #   └── chr-mikrotik   (Docker QEMU)  — real RouterOS CHR
 #       inside CHR userspace:
-#         /interface/veth/add → BR_AWG_MESH (per generated .rsc)
-#         /container/awg-mesh-client running → AmneziaWG client mode
-#         handshake → master-01/02 over overlay 172.21.92.x
+#         /interface/wireguard/add name=awg-mesh (per generated .rsc)
+#         peer endpoint → master-01 bridge IP on the local Docker network
 #
 # Pre-conditions (run build-chr-baseline.sh first):
 #   - awg-mesh-chr-baseline:${CHR_VERSION} Docker image exists
 #   - awg-mesh-node:local image (Linux mesh node)
-#   - awg-mesh-client:local image (client container — will be loaded into CHR via /container/add file=)
+#   - awg-mesh-client:local image (kept as release preflight parity with Docker builds)
 #   - mesh-ctl in PATH or at <repo>/bin/mesh-ctl
 #   - sshpass + ssh + scp on PATH
 #
@@ -39,33 +37,27 @@ readonly MESHCTL_BIN="${MESHCTL_BIN:-${REPO_ROOT}/../bin/mesh-ctl}"
 
 readonly SUFFIX="$(printf "%05d" "${RANDOM}")"
 readonly NET_NAME="awg-mesh-test-${SUFFIX}"
-readonly NET_SUBNET="172.21.92.0/24"
+readonly NET_SUBNET="192.168.93.0/24"
 
-# CHR bridge IP (for SSH) — must NOT collide with overlay subnet
-readonly CHR_HOST_BRIDGE_IP="172.21.92.250"
-readonly MST_BRIDGE_IP="172.21.92.10"
-readonly EP_BRIDGE_IP="172.21.92.11"
+# Docker bridge IPs must not collide with the overlay subnet under test.
+readonly CP_BRIDGE_IP="192.168.93.5"
+readonly CHR_HOST_BRIDGE_IP="192.168.93.250"
+readonly MST_BRIDGE_IP="192.168.93.10"
+readonly CP_GRPC_HOST_PORT="$((21000 + RANDOM % 1000))"
 readonly SSH_HOST_PORT="$((22000 + RANDOM % 1000))"
-readonly MST_GRPC_HOST_PORT="$((23000 + RANDOM % 1000))"
-readonly EP_GRPC_HOST_PORT="$((24000 + RANDOM % 1000))"
 readonly SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5"
 readonly CHR_PASS="lintpass"
 
 # Mesh nodes
-readonly MASTER_01="mst-01"
-readonly MASTER_02="mst-02"
-readonly ENDPOINT_01="ep-01"
+readonly MASTER_01="master-01"
 readonly CLIENT_NAME="mtk-home"
 
+readonly CTR_CP="chrmesh-${SUFFIX}-control-plane"
 readonly CTR_MST_01="chrmesh-${SUFFIX}-${MASTER_01}"
-readonly CTR_MST_02="chrmesh-${SUFFIX}-${MASTER_02}"
-readonly CTR_EP_01="chrmesh-${SUFFIX}-${ENDPOINT_01}"
 readonly CTR_CHR="chrmesh-${SUFFIX}-chr"
 
 readonly CTL_CONFIG_DIR="$(mktemp -d -t chr-e2e-ctl-XXXXXX)"
 readonly TOPO_FILE="$(mktemp -t chr-e2e-topo-XXXXXX.yml)"
-readonly CLIENT_TAR="$(mktemp -t chr-e2e-client-XXXXXX.tar)"
-readonly DEPLOY_DIR="$(mktemp -d -t chr-e2e-deploy-XXXXXX)"
 
 # ---------------------------------------------------------------------------
 # Counters
@@ -89,17 +81,16 @@ cleanup() {
         echo "[cleanup] NO_CLEANUP=1 — leaving everything for inspection."
         echo "  CHR:        ${CTR_CHR}  (SSH: sshpass -p '${CHR_PASS}' ssh -p ${SSH_HOST_PORT} admin@127.0.0.1)"
         echo "  Network:    ${NET_NAME}"
-        echo "  Mesh nodes: ${CTR_MST_01} ${CTR_MST_02} ${CTR_EP_01}"
+        echo "  Mesh nodes: ${CTR_CP} ${CTR_MST_01}"
         echo "  Topology:   ${TOPO_FILE}"
         echo "  Ctl config: ${CTL_CONFIG_DIR}"
-        echo "  Deploy dir: ${DEPLOY_DIR}"
         return
     fi
     echo "[cleanup] Tearing down..."
-    docker rm -f "${CTR_CHR}" "${CTR_MST_01}" "${CTR_MST_02}" "${CTR_EP_01}" > /dev/null 2>&1 || true
+    docker rm -f "${CTR_CHR}" "${CTR_MST_01}" "${CTR_CP}" > /dev/null 2>&1 || true
     docker network rm "${NET_NAME}" > /dev/null 2>&1 || true
-    rm -rf "${CTL_CONFIG_DIR}" "${DEPLOY_DIR}"
-    rm -f "${TOPO_FILE}" "${CLIENT_TAR}"
+    rm -rf "${CTL_CONFIG_DIR}"
+    rm -f "${TOPO_FILE}"
     if [[ "${rc}" -eq 0 && "${FAILURES}" -eq 0 ]]; then
         echo "[cleanup] Done. Test PASSED."
     else
@@ -159,6 +150,7 @@ info "CHR baseline:    ${BASELINE_IMAGE}"
 info "Node image:      ${NODE_IMAGE}"
 info "Client image:    ${CLIENT_IMAGE}"
 info "mesh-ctl:        ${MESHCTL_BIN_RESOLVED}"
+info "CP gRPC port:    ${CP_GRPC_HOST_PORT}"
 info "SSH host port:   ${SSH_HOST_PORT}"
 info "Suffix:          ${SUFFIX}"
 
@@ -171,137 +163,144 @@ docker network create --subnet "${NET_SUBNET}" "${NET_NAME}" > /dev/null
 pass "T1: network created"
 
 # ---------------------------------------------------------------------------
-# T2: Generate topology + start mesh nodes
-#     This is a minimal smoke topology — ONE master, ONE endpoint, ONE
-#     mikrotik client. Multi-master rotation flow is covered by
-#     issue-92-rotation.sh; CHR-e2e focuses on .rsc-import correctness.
+# T2: Generate v2 topology + prepare node artifacts
+#     This is a minimal v2 operator topology: one native-WG master and one
+#     RouterOS client. Extra ingress/egress nodes are declared so generated
+#     AllowedIPs prove route distribution without requiring their runtimes.
 # ---------------------------------------------------------------------------
 echo ""
-echo "[T2] Writing topology + booting mesh nodes..."
+echo "[T2] Writing topology + preparing node artifacts..."
 
 cat > "${TOPO_FILE}" <<EOF
-masters:
+schema_version: 2
+
+mesh:
+  name: chr-e2e
+  overlay_supernet: 172.21.92.0/24
+
+nodes:
   - name: ${MASTER_01}
-    host: 127.0.0.1
-    peer_host: ${MST_BRIDGE_IP}
+    roles: [master, balancer]
     overlay_ip: 172.21.92.2
-    listen_port: 51820
-    grpc_port: ${MST_GRPC_HOST_PORT}
-    endpoints:
-      - ${ENDPOINT_01}
-
-endpoints:
-  - name: ${ENDPOINT_01}
-    host: 127.0.0.1
-    peer_host: ${EP_BRIDGE_IP}
+    bridge_ip: ${MST_BRIDGE_IP}
+    region: test
+    client_protocol: vanilla-wg
+  - name: ingress-de
+    roles: [ingress]
+    overlay_ip: 172.21.92.20
+    region: de
+  - name: egress-us
+    roles: [egress]
     overlay_ip: 172.21.92.34
-    listen_port: 51820
-    grpc_port: ${EP_GRPC_HOST_PORT}
-
-clients:
+    region: us
   - name: ${CLIENT_NAME}
-    type: mikrotik
-    overlay_ip: 172.21.92.36
-    masters: [${MASTER_01}]
-    mikrotik:
-      image: ${CLIENT_IMAGE}
-      storage_root: /docker
-
-overlay:
-  space: 172.21.92.0/24
-  ranges:
-    - name: masters
-      cidr: 172.21.92.0/27
-    - name: endpoints
-      cidr: 172.21.92.32/27
-
-transport:
-  pool: 10.93.0.0/16
-  prefix_length: 30
+    roles: [client]
+    platform: mikrotik
+    overlay_ip: 172.21.92.130
+    region: home
+    preferred_master: ${MASTER_01}
 EOF
 
-# Master prepare + endpoint prepare (generates tokens)
-"${MESHCTL_BIN_RESOLVED}" --topology "${TOPO_FILE}" --config-dir "${CTL_CONFIG_DIR}" master prepare "${MASTER_01}" > /dev/null
-"${MESHCTL_BIN_RESOLVED}" --topology "${TOPO_FILE}" --config-dir "${CTL_CONFIG_DIR}" endpoint prepare "${ENDPOINT_01}" > /dev/null
-"${MESHCTL_BIN_RESOLVED}" --topology "${TOPO_FILE}" --config-dir "${CTL_CONFIG_DIR}" client prepare "${CLIENT_NAME}" > /dev/null
+meshctl() {
+    "${MESHCTL_BIN_RESOLVED}" \
+        --topology "${TOPO_FILE}" \
+        --config-dir "${CTL_CONFIG_DIR}" \
+        "$@"
+}
 
-TOKEN_MASTER=$(cat "${CTL_CONFIG_DIR}/nodes/${MASTER_01}/mesh.token")
-TOKEN_ENDPOINT=$(cat "${CTL_CONFIG_DIR}/nodes/${ENDPOINT_01}/mesh.token")
-TOKEN_CLIENT=$(cat "${CTL_CONFIG_DIR}/nodes/${CLIENT_NAME}/mesh.token")
+meshctl topology validate > /dev/null
+pass "T2.a: schema v2 topology validates"
+
+meshctl node prepare "${MASTER_01}" > /dev/null
+meshctl node prepare --platform mikrotik "${CLIENT_NAME}" > /dev/null
+pass "T2.b: master + mikrotik node artifacts prepared"
+
+MASTER_CLIENT_KEY="${CTL_CONFIG_DIR}/nodes/${MASTER_01}/client-wg-private.key"
+if [[ ! -s "${MASTER_CLIENT_KEY}" ]]; then
+    fail "T2.c: master client-facing private key missing at ${MASTER_CLIENT_KEY}"
+    exit 4
+fi
+pass "T2.c: master client-facing WireGuard key exists"
+
+# ---------------------------------------------------------------------------
+# T3: Start v2 control-plane + master runtime and register prepared nodes
+# ---------------------------------------------------------------------------
+echo ""
+echo "[T3] Starting v2 control-plane and master runtime..."
+
+docker run -d \
+    --name "${CTR_CP}" \
+    --network "${NET_NAME}" \
+    --ip "${CP_BRIDGE_IP}" \
+    -p "${CP_GRPC_HOST_PORT}:9090" \
+    --entrypoint /usr/local/bin/awg-mesh-node \
+    "${NODE_IMAGE}" \
+    --mode control-plane \
+    --listen 0.0.0.0:9090 \
+    --allow-insecure-public-bind \
+    --state-dir /var/lib/awg-mesh > /dev/null
+
+CP_READY=0
+for i in $(seq 1 30); do
+    if docker logs "${CTR_CP}" 2>&1 | grep -q "control-plane: listening"; then
+        CP_READY=1
+        break
+    fi
+    sleep 1
+done
+if [[ "${CP_READY}" -ne 1 ]]; then
+    fail "T3.a: control-plane did not become ready"
+    docker logs --tail 30 "${CTR_CP}" >&2 || true
+    exit 1
+fi
+pass "T3.a: control-plane listening"
+
+meshctl node init "${MASTER_01}" --control-plane "127.0.0.1:${CP_GRPC_HOST_PORT}" > /dev/null
+meshctl node init "${CLIENT_NAME}" --control-plane "127.0.0.1:${CP_GRPC_HOST_PORT}" > /dev/null
+pass "T3.b: master + mikrotik client registered with control-plane"
 
 # Boot master
 docker run -d \
     --name "${CTR_MST_01}" \
     --network "${NET_NAME}" \
     --ip "${MST_BRIDGE_IP}" \
-    -p "${MST_GRPC_HOST_PORT}:9090" \
     --privileged \
-    --entrypoint sh \
-    -e "MESH_TOKEN_HASH=${TOKEN_MASTER}" \
+    -v "${CTL_CONFIG_DIR}/nodes/${MASTER_01}:/node-config:ro" \
+    --entrypoint /usr/local/bin/awg-mesh-node \
     "${NODE_IMAGE}" \
-    -c "[ -f /config/mesh.token ] || printf '%s' \"\${MESH_TOKEN_HASH}\" > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode master --name ${MASTER_01} --overlay-ip 172.21.92.2 --listen-port 51820" > /dev/null
-pass "T2.a: master ${MASTER_01} started"
+    --mode master \
+    --name "${MASTER_01}" \
+    --overlay-ip 172.21.92.2 \
+    --client-private-key-file /node-config/client-wg-private.key > /dev/null
 
-# Boot endpoint
-docker run -d \
-    --name "${CTR_EP_01}" \
-    --network "${NET_NAME}" \
-    --ip "${EP_BRIDGE_IP}" \
-    -p "${EP_GRPC_HOST_PORT}:9090" \
-    --privileged \
-    --entrypoint sh \
-    -e "MESH_TOKEN_HASH=${TOKEN_ENDPOINT}" \
-    "${NODE_IMAGE}" \
-    -c "[ -f /config/mesh.token ] || printf '%s' \"\${MESH_TOKEN_HASH}\" > /config/mesh.token; exec /usr/local/bin/awg-mesh-node --mode endpoint --name ${ENDPOINT_01} --overlay-ip 172.21.92.34 --listen-port 51820" > /dev/null
-pass "T2.b: endpoint ${ENDPOINT_01} started"
-
-# Wait for gRPC ready
-info "Waiting for gRPC ready on master + endpoint (up to 30s)..."
-for ctr in "${CTR_MST_01}" "${CTR_EP_01}"; do
-    READY=0
-    for i in $(seq 1 30); do
-        if docker logs "${ctr}" 2>&1 | grep -q "gRPC server listening"; then
-            READY=1
-            break
-        fi
-        sleep 1
-    done
-    if [[ "${READY}" -ne 1 ]]; then
-        fail "T2.c: ${ctr} gRPC not ready"
-        docker logs --tail 20 "${ctr}" >&2 || true
-        exit 1
+MASTER_READY=0
+for i in $(seq 1 15); do
+    if ! docker inspect -f '{{.State.Running}}' "${CTR_MST_01}" 2>/dev/null | grep -q true; then
+        break
     fi
+    if docker logs "${CTR_MST_01}" 2>&1 | grep -q "mode=master"; then
+        MASTER_READY=1
+        break
+    fi
+    sleep 1
 done
-pass "T2.c: gRPC up on master + endpoint"
+if [[ "${MASTER_READY}" -ne 1 ]]; then
+    fail "T3.c: master runtime did not stay ready"
+    docker logs --tail 30 "${CTR_MST_01}" >&2 || true
+    exit 1
+fi
+pass "T3.c: master runtime started"
 
 # ---------------------------------------------------------------------------
-# T3: mesh-ctl init (master + endpoint linkage)
-# ---------------------------------------------------------------------------
-echo ""
-echo "[T3] mesh-ctl init: linking master ↔ endpoint..."
-
-"${MESHCTL_BIN_RESOLVED}" --topology "${TOPO_FILE}" --config-dir "${CTL_CONFIG_DIR}" \
-    master init "${MASTER_01}" 2>&1 | tail -3 || {
-    fail "T3: master init failed"; exit 1
-}
-pass "T3.a: master init ${MASTER_01}"
-
-"${MESHCTL_BIN_RESOLVED}" --topology "${TOPO_FILE}" --config-dir "${CTL_CONFIG_DIR}" \
-    endpoint init "${ENDPOINT_01}" 2>&1 | tail -3 || {
-    fail "T3: endpoint init failed"; exit 1
-}
-pass "T3.b: endpoint init ${ENDPOINT_01}"
-
-# ---------------------------------------------------------------------------
-# T4: mesh-ctl client deploy → generates .rsc
+# T4: Locate generated RouterOS native WireGuard .rsc
 # ---------------------------------------------------------------------------
 echo ""
-echo "[T4] Locating MikroTik .rsc (generated by client prepare in T2)..."
+echo "[T4] Locating MikroTik .rsc generated by node prepare..."
 
-RSC_FILE="${CTL_CONFIG_DIR}/clients/${CLIENT_NAME}/${CLIENT_NAME}-mikrotik.rsc"
+RSC_FILE="${CTL_CONFIG_DIR}/nodes/${CLIENT_NAME}/routeros.rsc"
 if [[ ! -s "${RSC_FILE}" ]]; then
     fail "T4: .rsc not found at ${RSC_FILE}"
-    find "${CTL_CONFIG_DIR}/clients" -type f >&2 || true
+    find "${CTL_CONFIG_DIR}/nodes" -type f >&2 || true
     exit 4
 fi
 RSC_LINES=$(wc -l < "${RSC_FILE}")
@@ -315,16 +314,13 @@ echo "[T5] Booting CHR from baseline ${BASELINE_IMAGE}..."
 
 docker run -d \
     --name "${CTR_CHR}" \
+    --network "${NET_NAME}" \
+    --ip "${CHR_HOST_BRIDGE_IP}" \
     --device /dev/kvm \
     --device /dev/net/tun \
     --cap-add NET_ADMIN \
     -p "${SSH_HOST_PORT}:22" \
     "${BASELINE_IMAGE}" > /dev/null
-# Note: CHR runs on its OWN docker network (default bridge) to avoid
-# conflicting with mesh-nodes' pinned IPs in overlay subnet. The QEMU's
-# internal udhcpd hands the RouterOS guest a 172.17.0.x address.
-# Cross-network reach (CHR ↔ master overlay) is NOT required for /import
-# smoke verification — that part is exercised in T6 via SSH-from-host.
 
 info "Waiting CHR SSH ready (up to 60s; baseline boots fast)..."
 SSH_READY=0
@@ -356,44 +352,37 @@ pass "T6.a: .rsc uploaded to CHR"
 IMPORT_OUT=$(sshpass -p "${CHR_PASS}" ssh ${SSH_OPTS} -p "${SSH_HOST_PORT}" admin@127.0.0.1 \
     "/import file-name=deploy.rsc verbose=yes" 2>&1) && IMPORT_RC=0 || IMPORT_RC=$?
 
-# Tier-aware assertion: pre-7.21 CHR (legacy/transitional) cannot accept the
-# canonical-only dialect emitted by v1.14.0 — this is the expected failure
-# documented in MIKROTIK-VERSION-COMPAT.md §2 that motivates CR-002 multi-
-# version dialect support.
-TIER_LEGACY=0
-case "${CHR_VERSION}" in
-    7.[5-9]|7.1[0-7]*) TIER_LEGACY=1 ;;        # 7.5 — 7.17 — legacy
-    7.18*|7.19*|7.20*) TIER_LEGACY=1 ;;        # 7.18 — 7.20 — transitional, mounts= still
-    7.21*|7.23*|7.24*) TIER_LEGACY=0 ;;        # 7.21+, 7.23+ — canonical
-    7.22*) TIER_LEGACY=2 ;;                     # 7.22 — refused by generator (regression)
-esac
+if [[ "${IMPORT_RC}" -ne 0 ]]; then
+    fail "T6.b: /import exit ${IMPORT_RC} on CHR ${CHR_VERSION}"
+    echo "${IMPORT_OUT}" | tail -20 | sed 's/^/    /' >&2
+    exit 5
+fi
+if echo "${IMPORT_OUT}" | grep -qiE "syntax error|failure|invalid value|unknown parameter"; then
+    fail "T6.b: /import contained failure indicator"
+    echo "${IMPORT_OUT}" | grep -iE "syntax error|failure|invalid|unknown" | sed 's/^/    /' >&2
+    exit 5
+fi
+pass "T6.b: /import exit 0, no failure indicators"
 
-if [[ "${TIER_LEGACY}" -eq 1 ]]; then
-    if echo "${IMPORT_OUT}" | grep -qF "/container/mounts/add" \
-        && echo "${IMPORT_OUT}" | grep -qiE "syntax error.*column 11"; then
-        pass "T6.b: ${CHR_VERSION} REJECTS canonical 'list=' as expected (CR-002 dialect support pending)"
-        info "      → motivates CR-002: generator must emit 'name=' for tier ≤ 7.20"
-    else
-        fail "T6.b: expected legacy CHR to reject 'list=' syntax — got rc=${IMPORT_RC} but no expected error"
-        echo "${IMPORT_OUT}" | tail -10 | sed 's/^/    /' >&2
-        exit 5
-    fi
+WG_OUT=$(sshpass -p "${CHR_PASS}" ssh ${SSH_OPTS} -p "${SSH_HOST_PORT}" admin@127.0.0.1 \
+    "/interface/wireguard/print detail where name=\"awg-mesh\"" 2>&1)
+if echo "${WG_OUT}" | grep -q "awg-mesh"; then
+    pass "T6.c: awg-mesh WireGuard interface present"
 else
-    if [[ "${IMPORT_RC}" -ne 0 ]]; then
-        fail "T6.b: /import exit ${IMPORT_RC} on canonical CHR ${CHR_VERSION}"
-        echo "${IMPORT_OUT}" | tail -20 | sed 's/^/    /' >&2
-        exit 5
-    fi
-    if echo "${IMPORT_OUT}" | grep -qiE "syntax error|failure|invalid value|unknown parameter"; then
-        fail "T6.b: /import contained failure indicator on canonical CHR"
-        echo "${IMPORT_OUT}" | grep -iE "syntax error|failure|invalid|unknown" | sed 's/^/    /' >&2
-        exit 5
-    fi
-    pass "T6.b: /import exit 0, no failure indicators (canonical CHR ${CHR_VERSION})"
+    fail "T6.c: awg-mesh WireGuard interface missing"
+    echo "${WG_OUT}" | sed 's/^/    /' >&2
+    exit 5
+fi
 
-    # Verify post-import RouterOS state — only canonical tier can verify.
-    sshpass -p "${CHR_PASS}" ssh ${SSH_OPTS} -p "${SSH_HOST_PORT}" admin@127.0.0.1 \
-        "/interface print where name~\"AWG_MESH\"" 2>&1 | grep -q "AWG_MESH" && pass "T6.c: AWG_MESH interfaces present" || fail "T6.c: AWG_MESH interfaces missing"
+PEER_OUT=$(sshpass -p "${CHR_PASS}" ssh ${SSH_OPTS} -p "${SSH_HOST_PORT}" admin@127.0.0.1 \
+    "/interface/wireguard/peers/print detail" 2>&1)
+if echo "${PEER_OUT}" | grep -q "endpoint-address=${MST_BRIDGE_IP}" \
+    && echo "${PEER_OUT}" | grep -q "allowed-address=172.21.92.2/32"; then
+    pass "T6.d: WireGuard peer targets master bridge endpoint and master overlay"
+else
+    fail "T6.d: WireGuard peer does not match expected endpoint/AllowedIPs"
+    echo "${PEER_OUT}" | sed 's/^/    /' >&2
+    exit 5
 fi
 
 # ---------------------------------------------------------------------------
@@ -410,9 +399,5 @@ else
 fi
 echo "=================================================================="
 echo ""
-
-# NOTE: container start + data-plane ping verification deferred —
-# requires `/container/add file=` import of awg-mesh-client tar (next iteration).
-# Current sim verifies .rsc IMPORT correctness across CHR versions.
 
 exit "${EXIT_CODE}"
