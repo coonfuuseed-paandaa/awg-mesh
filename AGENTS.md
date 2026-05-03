@@ -107,12 +107,13 @@ applyPeerKeyUpdate device-handle drift).
 1. `go test -race -count=1 ./...` — all packages green (race detector mandatory; v1.14.0 tag-build caught a real overlayRouterFn race that re-runs masked)
 2. `docker build -t awg-mesh-node:local -f deploy/Dockerfile.node .`
 3. **F-009 CR-001 foundation smoke:** `bash tests/simulation/F-009-CR-001-foundation-smoke.sh` — MUST exit 0 with all 12 checks (R1..R12) PASS. Replaces v1.x `issue-92-rotation.sh` which was removed in F-009 CR-001 along with the v1.x role daemons. The CR-001 smoke covers build/vet/gofmt/test green, binary smoke for every `--mode`, schema validation v1.x reject + v2.0 accept, role composability, and critical-suite runner.
-4. **F-009 v2 critical suite:** `bash tests/critical/run-all.sh` MUST exit 0 for developer-mode checks. Before tagging any v2.x release, run `bash tests/critical/run-all.sh --strict`; strict mode fails on any skipped critical script and on `release-readiness.sh` blockers. As of CR-011, strict mode intentionally remains blocked until CR-012 emulation playbook, CR-013 migration tooling, CR-014 Mikrotik v2 generator, and CR-015 cert lifecycle land.
-5. **(blocked until CR-014)** `bash tests/simulation/mikrotik-chr-e2e.sh CHR=7.16.2` — REWRITTEN in CR-014 against vanilla-WG client↔master listener (constraint 13). Original v1.x version preserved in `.agent/historical/` for reference.
-6. G3 / G7 / G14 / Golden-fixture unit gates — STATUS: legacy v1.x targets removed alongside their parent code in CR-001. CR-011 critical-suite v2 now provides architecture-aligned unit and smoke gates under `tests/critical/`.
-7. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
+4. **F-009 v2 critical suite:** `bash tests/critical/run-all.sh` MUST exit 0 for developer-mode checks. Before tagging any v2.x release, run `bash tests/critical/run-all.sh --strict`; strict mode fails on any skipped critical script and on `release-readiness.sh` blockers. As of CR-012, strict mode intentionally remains blocked until CR-013 migration tooling, CR-014 Mikrotik v2 generator, and CR-015 cert lifecycle land.
+5. **F-009 v2 emulation playbook:** `bash tests/emulation-playbook/run.sh` MUST exit 0 and print `PRODUCT_WORKS`. The script executes the customer-mode walkthrough in `docs/PRODUCTION-TESTING-PLAYBOOK.md` and writes `.agent/reports/emulation-playbook-run-<timestamp>.md`.
+6. **(blocked until CR-014)** `bash tests/simulation/mikrotik-chr-e2e.sh CHR=7.16.2` — REWRITTEN in CR-014 against vanilla-WG client↔master listener (constraint 13). Original v1.x version preserved in `.agent/historical/` for reference.
+7. G3 / G7 / G14 / Golden-fixture unit gates — STATUS: legacy v1.x targets removed alongside their parent code in CR-001. CR-011 critical-suite v2 now provides architecture-aligned unit and smoke gates under `tests/critical/`.
+8. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
-> **F-009 release gate scope:** CR-001 foundation smoke proves the base binary/schema/role substrate. CR-011 critical-suite v2 ties landed CR-002..CR-010 contracts into `tests/critical/run-all.sh`. v2.0.0 release remains blocked until strict critical-suite mode clears every skip and release-readiness blocker.
+> **F-009 release gate scope:** CR-001 foundation smoke proves the base binary/schema/role substrate. CR-011 critical-suite v2 ties landed CR-002..CR-010 contracts into `tests/critical/run-all.sh`. CR-012 adds the customer-mode emulation playbook gate. v2.0.0 release remains blocked until strict critical-suite mode clears every skip and release-readiness blocker.
 
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,
