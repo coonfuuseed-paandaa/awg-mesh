@@ -35,8 +35,10 @@ for test_path in "${TESTS_DIR}"/*.sh; do
     test_name="$(basename "${test_path}")"
     [[ "${test_name}" == "${RUNNER_SELF}" ]] && continue
 
-    output="$(bash "${test_path}" 2>&1 || true)"
+    set +e
+    output="$(bash "${test_path}" 2>&1)"
     exit_code=$?
+    set -e
 
     if [[ ${exit_code} -eq 0 ]]; then
         if printf '%s' "${output}" | grep -q '^SKIP'; then
