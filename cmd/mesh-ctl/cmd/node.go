@@ -34,6 +34,7 @@ type nodePrepareOptions struct {
 	nodeName     string
 	topologyPath string
 	configDir    string
+	platform     string
 	output       string
 	stdout       io.Writer
 }
@@ -65,12 +66,15 @@ type nodeRemoveOptions struct {
 }
 
 type nodePrepareJSONOutput struct {
-	NodeName      string `json:"node_name"`
-	NodeDir       string `json:"node_dir"`
-	TokenPath     string `json:"token_path"`
-	TokenHashPath string `json:"token_hash_path"`
-	CertPath      string `json:"cert_path"`
-	KeyPath       string `json:"key_path"`
+	NodeName                string `json:"node_name"`
+	NodeDir                 string `json:"node_dir"`
+	TokenPath               string `json:"token_path"`
+	TokenHashPath           string `json:"token_hash_path"`
+	CertPath                string `json:"cert_path"`
+	KeyPath                 string `json:"key_path"`
+	RouterOSScriptPath      string `json:"routeros_script_path,omitempty"`
+	WireGuardPrivateKeyPath string `json:"wireguard_private_key_path,omitempty"`
+	WireGuardPublicKeyPath  string `json:"wireguard_public_key_path,omitempty"`
 }
 
 type nodeInitJSONOutput struct {
@@ -130,6 +134,7 @@ func newNodePrepareCommand() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().StringVar(&options.platform, "platform", "", "Prepare platform override (mikrotik)")
 	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
 	return cmd
 }
@@ -254,6 +259,19 @@ func runNodePrepareCommand(options nodePrepareOptions) error {
 		TokenHashPath: filepath.Join(nd, "mesh.token"),
 		CertPath:      filepath.Join(nd, "node.crt"),
 		KeyPath:       filepath.Join(nd, "node.key"),
+	}
+	switch platform := preparePlatform(options.platform, node); platform {
+	case "", "linux":
+	case "mikrotik":
+		artifacts, err := prepareMikrotikRouterOS(topo, node, options.configDir, nd)
+		if err != nil {
+			return err
+		}
+		result.RouterOSScriptPath = artifacts.RouterOSScriptPath
+		result.WireGuardPrivateKeyPath = artifacts.WireGuardPrivateKeyPath
+		result.WireGuardPublicKeyPath = artifacts.WireGuardPublicKeyPath
+	default:
+		return fmt.Errorf("unsupported prepare platform %q (supported: mikrotik)", platform)
 	}
 	return writeNodePrepareResult(commandOutput(options.stdout), output, result)
 }
@@ -458,8 +476,13 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 func writeNodePrepareResult(out io.Writer, output string, result nodePrepareJSONOutput) error {
 	switch output {
 	case topologyOutputHuman:
-		_, err := fmt.Fprintf(out, "node %q prepared: node_dir=%s token=%s token_hash=%s cert=%s key=%s\n",
+		line := fmt.Sprintf("node %q prepared: node_dir=%s token=%s token_hash=%s cert=%s key=%s",
 			result.NodeName, result.NodeDir, result.TokenPath, result.TokenHashPath, result.CertPath, result.KeyPath)
+		if result.RouterOSScriptPath != "" {
+			line += fmt.Sprintf(" routeros_script=%s wireguard_private_key=%s wireguard_public_key=%s",
+				result.RouterOSScriptPath, result.WireGuardPrivateKeyPath, result.WireGuardPublicKeyPath)
+		}
+		_, err := fmt.Fprintln(out, line)
 		return err
 	case topologyOutputJSON:
 		enc := json.NewEncoder(out)

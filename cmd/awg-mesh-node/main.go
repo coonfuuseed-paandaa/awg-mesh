@@ -120,6 +120,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	masterMeshIface := fs.String("mesh-iface", wg.DefaultMeshInterfaceName, "master: mesh-internal AmneziaWG interface name")
 	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
 	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
+	masterClientPrivateKeyFile := fs.String("client-private-key-file", "", "master: base64 WireGuard private key file for the client-facing vanilla-WG listener")
 	egressInternetIface := fs.String("internet-iface", "", "egress: internet-bound interface for MASQUERADE")
 	ingressPublicAddr := fs.String("ingress-public-addr", "", "ingress: public HTTP/TLS bind address")
 	ingressTenant := fs.String("ingress-tenant", ingress.DefaultTenant, "ingress: tenant for routes declared with --ingress-route")
@@ -180,6 +181,11 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	case "control-plane":
 		return runControlPlane(*listenAddr, *stateDir, *auditCap, *allowInsecurePublicBind, stdout, stderr)
 	case "master":
+		clientPrivateKey, err := loadOptionalWGPrivateKey(*masterClientPrivateKeyFile)
+		if err != nil {
+			writef(stderr, "master: %v\n", err)
+			return 2
+		}
 		return runMaster(context.Background(), node.MasterConfig{
 			Name:      *nodeName,
 			OverlayIP: *overlayIP,
@@ -188,6 +194,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 				MeshInterfaceName:   *masterMeshIface,
 				ClientListenPort:    *masterClientListenPort,
 				MeshListenPort:      *masterMeshListenPort,
+				ClientPrivateKey:    clientPrivateKey,
 			},
 		}, *dryRun, stdout, stderr)
 	case "endpoint", "egress":
@@ -243,6 +250,25 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		writeLine(stderr, "CR-001 skeleton: this binary intentionally exits without doing any networking.")
 		return 0
 	}
+}
+
+func loadOptionalWGPrivateKey(path string) (*wg.Key, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("read client private key file %q: %w", trimmed, err)
+	}
+	key, err := wg.ParseKey(strings.TrimSpace(string(data)))
+	if err != nil {
+		return nil, fmt.Errorf("parse client private key file %q: %w", trimmed, err)
+	}
+	if key.IsZero() {
+		return nil, fmt.Errorf("client private key file %q must not contain the zero key", trimmed)
+	}
+	return &key, nil
 }
 
 func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {

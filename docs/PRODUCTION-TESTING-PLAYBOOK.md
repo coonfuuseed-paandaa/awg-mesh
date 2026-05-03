@@ -22,7 +22,8 @@ This playbook deliberately does not validate:
 
 - Full packet data plane on a real multi-host mesh. That is covered by the
   critical suite and simulation gates.
-- RouterOS CHR behavior. CR-014 owns the v2 MikroTik gate.
+- RouterOS CHR behavior. The CR-014 static RouterOS script gate runs in the
+  critical suite; real CHR import remains in the release gate.
 - v1.x topology migration. CR-013 owns migration tooling.
 - Certificate lifecycle completion. CR-015 owns automatic cert rotation.
 
