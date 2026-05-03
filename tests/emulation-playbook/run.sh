@@ -22,7 +22,7 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/awg-mesh-emulation.XXXXXX")"
 REPORT_DIR="${REPORT_DIR:-${REPO_ROOT}/.agent/reports}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_FILE="${REPORT_DIR}/emulation-playbook-run-${TIMESTAMP}.md"
-PLAYBOOK="${REPO_ROOT}/docs/PRODUCTION-TESTING-PLAYBOOK.md"
+PLAYBOOK="${PLAYBOOK:-${REPO_ROOT}/docs/PRODUCTION-TESTING-PLAYBOOK.md}"
 TOPOLOGY="${REPO_ROOT}/pkg/topology/testdata/v2-topology.yml"
 MESH_CTL="${TMP_ROOT}/mesh-ctl"
 NODE_BIN="${TMP_ROOT}/awg-mesh-node"
@@ -167,6 +167,9 @@ s4_backup_and_restore() {
     [[ -s "${ARCHIVE}" ]] || return 1
     [[ -f "${RESTORED_TOPOLOGY}" ]] || return 1
     [[ -f "${RESTORED_CONFIG}/nodes/master-01/token" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/master-01/mesh.token" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/master-01/node.crt" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/master-01/node.key" ]] || return 1
     [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/token" ]] || return 1
     [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/mesh.token" ]] || return 1
     [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/node.crt" ]] || return 1
@@ -252,8 +255,19 @@ write_report() {
 }
 
 echo "=== Preflight Playbook surface is v2.0 and runnable ==="
-preflight_playbook_surface
-echo "PASS - Preflight Playbook surface is v2.0 and runnable"
+if preflight_playbook_surface; then
+    echo "PASS - Preflight Playbook surface is v2.0 and runnable"
+else
+    fail=$((fail + 1))
+    record_row "PRE" "Playbook surface is v2.0 and runnable" "FAIL" "See command output above"
+    breakages+=("PRE Playbook surface is v2.0 and runnable")
+    write_report
+    echo "Scenario summary: ${pass} PASS, ${fail} FAIL"
+    echo "Report: ${REPORT_FILE}"
+    echo "Overall verdict: BROKEN"
+    echo "Gate decision: BLOCK_RELEASE"
+    exit 1
+fi
 
 scenario "S1" "First-run binaries" s1_first_run_binaries
 scenario "S2" "Topology-as-code first look" s2_topology_first_look
