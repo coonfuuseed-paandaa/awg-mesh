@@ -1,6 +1,7 @@
 package clientd
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -31,6 +32,18 @@ func TestParseCommandConfigRequiredFlagsAndProtocol(t *testing.T) {
 	}
 	if len(cfg.Roles) != 1 || cfg.Roles[0] != role.RoleClient {
 		t.Fatalf("default roles = %#v, want client", cfg.Roles)
+	}
+	if cfg.KeyPath != filepath.Join(".", "node.key") {
+		t.Fatalf("default key path = %q, want ./node.key", cfg.KeyPath)
+	}
+
+	args = append(validCommandArgs(t), "--key", "custom.key")
+	cfg, err = ParseCommandConfig(args, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("config with explicit key path rejected: %v", err)
+	}
+	if cfg.KeyPath != "custom.key" {
+		t.Fatalf("explicit key path = %q, want custom.key", cfg.KeyPath)
 	}
 }
 

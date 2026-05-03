@@ -24,6 +24,8 @@ type Config struct {
 	OverlayIP     string
 	Region        string
 	NodeCertPEM   []byte
+	CertPath      string
+	KeyPath       string
 	Version       string
 	InterfaceName string
 	Protocol      wg.Protocol
@@ -95,6 +97,9 @@ func NewAgent(cfg Config, client pb.ControlPlaneClient, configurator Configurato
 	if cfg.Protocol != wg.ProtocolVanilla && cfg.Protocol != wg.ProtocolAmneziaWG {
 		return nil, fmt.Errorf("unsupported protocol %q", cfg.Protocol)
 	}
+	if (strings.TrimSpace(cfg.CertPath) == "") != (strings.TrimSpace(cfg.KeyPath) == "") {
+		return nil, errors.New("cert update requires both cert and key paths")
+	}
 	if client == nil {
 		return nil, errors.New("control-plane client is required")
 	}
@@ -135,10 +140,20 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open ownership stream: %w", err)
 	}
+	var certStream pb.ControlPlane_StreamCertUpdateClient
+	if strings.TrimSpace(a.cfg.CertPath) != "" {
+		certStream, err = a.client.StreamCertUpdate(runCtx, &pb.StreamCertRequest{NodeName: a.cfg.NodeName})
+		if err != nil {
+			return fmt.Errorf("open cert-update stream: %w", err)
+		}
+	}
 
-	updates := make(chan streamUpdate, 2)
+	updates := make(chan streamUpdate, 3)
 	go recvPeerUpdates(runCtx, peerStream, updates)
 	go recvOwnershipUpdates(runCtx, ownershipStream, updates)
+	if certStream != nil {
+		go recvCertUpdates(runCtx, certStream, updates)
+	}
 
 	for {
 		select {
@@ -160,6 +175,12 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 			if update.ownership != nil {
 				state, changed = state.WithOwnership(update.ownership)
+			}
+			if update.cert != nil {
+				if err := ApplyCertUpdate(a.cfg.CertPath, a.cfg.KeyPath, update.cert); err != nil {
+					return err
+				}
+				continue
 			}
 			if !changed {
 				continue
@@ -212,6 +233,7 @@ func (a *Agent) apply(ctx context.Context, state State) error {
 type streamUpdate struct {
 	peers     *pb.PeerListUpdate
 	ownership *pb.OwnershipUpdate
+	cert      *pb.CertUpdate
 	err       error
 }
 
@@ -239,6 +261,27 @@ func recvOwnershipUpdates(ctx context.Context, stream pb.ControlPlane_StreamOwne
 		update := streamUpdate{ownership: msg, err: err}
 		if err != nil {
 			update.err = fmt.Errorf("ownership stream ended: %w", err)
+		}
+		select {
+		case updates <- update:
+		case <-ctx.Done():
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func recvCertUpdates(ctx context.Context, stream pb.ControlPlane_StreamCertUpdateClient, updates chan<- streamUpdate) {
+	for {
+		msg, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		update := streamUpdate{cert: msg, err: err}
+		if err != nil {
+			update.err = fmt.Errorf("cert-update stream ended: %w", err)
 		}
 		select {
 		case updates <- update:

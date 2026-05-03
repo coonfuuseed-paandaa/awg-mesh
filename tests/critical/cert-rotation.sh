@@ -14,8 +14,8 @@ if ! command -v "$GO" >/dev/null 2>&1; then
     exit 1
 fi
 
-"$GO" test -count=1 -run 'TestGenerateCA|TestIssueCert|TestSaveLoadCertKey|TestValidateCert|TestCertInfo|TestRunNodePrepareCommandWritesV2TokenMaterialAndCerts' \
-    ./pkg/tls/... ./cmd/mesh-ctl/cmd >/dev/null
+"$GO" test -count=1 -run 'TestGenerateCA|TestIssueCert|TestSaveLoadCertKey|TestValidateCert|TestCertInfo|TestRunNodePrepareCommandWritesV2TokenMaterialAndCerts|TestServer_StreamCertUpdate|TestNewDaemon_ConfiguresCertLifecycleFromCADir|TestNewDaemon_RejectsIncompleteDefaultCAMaterial|TestAgentAppliesCertUpdateToLocalFiles|TestApplyCertUpdateRemovesNewKeyWhenCertWriteFails' \
+    ./pkg/tls/... ./cmd/mesh-ctl/cmd ./pkg/control_plane ./pkg/clientd >/dev/null
 
 if ! grep -q 'rpc StreamCertUpdate' proto/control_plane.proto; then
     echo "FAIL - StreamCertUpdate RPC missing from proto/control_plane.proto" >&2
@@ -26,4 +26,4 @@ if ! grep -q 'message CertUpdate' proto/control_plane.proto; then
     exit 1
 fi
 
-echo "PASS - cert-rotation.sh: cert issuance, node prepare cert material, and cert-update wire schema verified"
+echo "PASS - cert-rotation.sh: cert issuance, node prepare cert material, cert lifecycle streams, clientd persistence, and cert-update wire schema verified"

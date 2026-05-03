@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **F-009 CR-015 certificate lifecycle** - the control-plane daemon can load mesh CA material, issue due replacement node certificates through `StreamCertUpdate`, allow bounded pending-cert rollover during the overlap window, and clientd can persist replacement `node.crt` / `node.key` files atomically enough for reconnect-based mTLS rollover. The critical cert-rotation gate now verifies server issuance, daemon CA wiring, clientd persistence, and release-readiness coverage.
 - **F-009 CR-014 Mikrotik v2 native WireGuard bridge** - `mesh-ctl node prepare --platform mikrotik` now writes real WireGuard key material and a deterministic RouterOS `.rsc` script for native vanilla-WG clients, while masters can consume the generated client-facing private key via `awg-mesh-node --mode master --client-private-key-file`.
 - **F-009 CR-013 migration tooling** - `mesh-ctl migrate` converts v1.x topology YAML into schema v2 topology output, with file overwrite protection, JSON stdout mode, real critical-suite coverage, and release-readiness blockers reduced to CR-014 and CR-015.
 - **F-009 CR-012 emulation playbook v2** - `docs/PRODUCTION-TESTING-PLAYBOOK.md` is now a v2.0 customer-mode release walkthrough, and `tests/emulation-playbook/run.sh` executes the playbook against real `mesh-ctl` / `awg-mesh-node` binaries, writes a run report under `.agent/reports/`, and prints `PRODUCT_WORKS` only after every scenario passes.

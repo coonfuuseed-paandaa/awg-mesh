@@ -58,6 +58,8 @@ require_no_placeholder "cmd/mesh-ctl/cmd/migrate.go" "CR-013-migration-tooling"
 require_no_placeholder "pkg/topology/migrate_v1_to_v2.go" "CR-013-migration-tooling"
 require_file "pkg/mikrotik/v2/generator.go" "CR-014-mikrotik-v2"
 require_file "pkg/mikrotik/v2/templates.go" "CR-014-mikrotik-v2"
+require_no_placeholder "pkg/control_plane/cert_lifecycle.go" "CR-015-cert-lifecycle"
+require_no_placeholder "pkg/clientd/cert_update.go" "CR-015-cert-lifecycle"
 
 if awk '/func \(s \*Server\) StreamCertUpdate/ { in_func = 1 } in_func { print; if ($0 == "}") exit }' pkg/control_plane/server.go | grep -q 'codes.Unimplemented'; then
     blockers+=("CR-015-cert-lifecycle: StreamCertUpdate still returns Unimplemented")

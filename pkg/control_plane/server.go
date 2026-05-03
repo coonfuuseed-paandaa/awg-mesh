@@ -24,11 +24,8 @@ import (
 //
 // Streaming RPCs that depend on yet-unwritten subsystems return Unimplemented:
 //
-//	RotateAWGParamsMeshWide  → CR-008 mesh-wide rotation orchestrator
-//	SignalExchange           → CR-007 NAT signal relay
-//	StreamServiceRegistry    → CR-006 ingress mode (ServiceRegistry)
-//	StreamCertUpdate         → CR-016 cert lifecycle
-//	QueryAudit               → CR-020 audit query (in-memory log already populated here)
+//	SignalExchange        → CR-007 NAT signal relay
+//	StreamServiceRegistry → CR-006 ingress mode (ServiceRegistry)
 type Server struct {
 	pb.UnimplementedControlPlaneServer
 	registry       *Registry
@@ -37,6 +34,7 @@ type Server struct {
 	peerListBcast  *PeerListBroadcaster
 	ownershipBcast *OwnershipBroadcaster
 	rotation       *meshrotation.Orchestrator
+	certLifecycle  *CertLifecycle
 }
 
 // NewServer wires the provided dependencies into a Server. The ledger
@@ -330,7 +328,7 @@ func (s *Server) RotateAWGParamsMeshWide(stream pb.ControlPlane_RotateAWGParamsM
 	return status.Error(codes.InvalidArgument, execErr.Error())
 }
 
-// --- Stubs for streams handled by later CRs. ---
+// --- Streams handled by later CRs. ---
 
 func (s *Server) SignalExchange(stream pb.ControlPlane_SignalExchangeServer) error {
 	return status.Error(codes.Unimplemented, "NAT signal relay lands in CR-007")
@@ -341,7 +339,45 @@ func (s *Server) StreamServiceRegistry(req *pb.StreamServiceRegistryRequest, str
 }
 
 func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPlane_StreamCertUpdateServer) error {
-	return status.Error(codes.Unimplemented, "cert lifecycle lands in CR-016")
+	name := req.GetNodeName()
+	if name == "" {
+		return status.Error(codes.InvalidArgument, "node_name required")
+	}
+	if s.certLifecycle == nil {
+		return status.Error(codes.FailedPrecondition, "cert lifecycle is not configured")
+	}
+	for {
+		node, ok := s.registry.Lookup(name)
+		if !ok {
+			return status.Errorf(codes.NotFound, "node %q not registered", name)
+		}
+		update, overlapUntil, due, err := s.certLifecycle.NextDueUpdate(node)
+		if err != nil {
+			return status.Error(codes.FailedPrecondition, err.Error())
+		}
+		if due {
+			if err := s.registry.AllowCertRollover(name, update.GetCertPem(), overlapUntil); err != nil {
+				if errors.Is(err, ErrRegistryNotFound) {
+					return status.Errorf(codes.NotFound, "node %q not registered", name)
+				}
+				return status.Error(codes.Internal, err.Error())
+			}
+			s.audit.Append(AuditEvent{
+				EventType: "cert-update-issued",
+				NodeName:  name,
+				Detail:    fmt.Sprintf("valid_until=%d overlap_until=%d", update.GetValidUntilUnix(), overlapUntil.Unix()),
+			})
+			return stream.Send(update)
+		}
+
+		timer := time.NewTimer(s.certLifecycle.DelayUntilDue(node))
+		select {
+		case <-stream.Context().Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
 }
 
 // --- Helpers -----------------------------------------------------------------

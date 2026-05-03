@@ -10,6 +10,7 @@ import (
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -399,6 +400,117 @@ func TestServer_QueryAudit_FiltersAndStreams(t *testing.T) {
 	}
 	if got != 2 {
 		t.Fatalf("got %d audit entries, want 2 heartbeats", got)
+	}
+}
+
+func TestServer_StreamCertUpdateIssuesDueCertAndAllowsReregister(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	oldCert, _, err := pkgtls.IssueCertWithValidity(caCert, caKey, "client-01", []string{"client-01", "172.21.92.130"}, 6*24*time.Hour)
+	if err != nil {
+		t.Fatalf("IssueCertWithValidity old: %v", err)
+	}
+	lifecycle, err := NewCertLifecycle(CAIssuer{CACert: caCert, CAKey: caKey}, CertLifecycleConfig{
+		RotationDays: 90,
+		RenewBefore:  7 * 24 * time.Hour,
+		PollInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewCertLifecycle: %v", err)
+	}
+	srv.certLifecycle = lifecycle
+
+	resp, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "client-01",
+		Roles:       []string{"client"},
+		NodeCertPem: oldCert,
+		OverlayIp:   "172.21.92.130",
+		Region:      "home",
+	})
+	if err != nil {
+		t.Fatalf("RegisterNode old cert: %v", err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("old cert registration rejected: %s", resp.GetRejectReason())
+	}
+
+	stream, err := client.StreamCertUpdate(ctx, &pb.StreamCertRequest{NodeName: "client-01"})
+	if err != nil {
+		t.Fatalf("StreamCertUpdate: %v", err)
+	}
+	update, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("StreamCertUpdate Recv: %v", err)
+	}
+	if len(update.GetCertPem()) == 0 || len(update.GetKeyPem()) == 0 {
+		t.Fatalf("cert update missing cert/key bytes")
+	}
+	if err := pkgtls.ValidateCert(update.GetCertPem(), caCert); err != nil {
+		t.Fatalf("updated cert does not validate against CA: %v", err)
+	}
+	cn, notAfter, err := pkgtls.CertInfo(update.GetCertPem())
+	if err != nil {
+		t.Fatalf("CertInfo updated cert: %v", err)
+	}
+	if cn != "client-01" {
+		t.Fatalf("updated cert CN = %q, want client-01", cn)
+	}
+	if update.GetValidUntilUnix() != notAfter.Unix() || update.GetValidFromUnix() == 0 {
+		t.Fatalf("unexpected validity window: %+v notAfter=%s", update, notAfter)
+	}
+
+	resp, err = client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "client-01",
+		Roles:       []string{"client"},
+		NodeCertPem: update.GetCertPem(),
+		OverlayIp:   "172.21.92.130",
+		Region:      "home",
+	})
+	if err != nil {
+		t.Fatalf("RegisterNode updated cert: %v", err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("updated cert registration rejected: %s", resp.GetRejectReason())
+	}
+
+	events := srv.audit.Query(time.Time{}, time.Time{}, "cert-update-issued", "client-01", 0)
+	if len(events) != 1 {
+		t.Fatalf("cert-update-issued audit events = %d, want 1", len(events))
+	}
+}
+
+func TestServer_StreamCertUpdateRejectsUnknownNode(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	lifecycle, err := NewCertLifecycle(CAIssuer{CACert: caCert, CAKey: caKey}, CertLifecycleConfig{})
+	if err != nil {
+		t.Fatalf("NewCertLifecycle: %v", err)
+	}
+	srv.certLifecycle = lifecycle
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stream, err := client.StreamCertUpdate(ctx, &pb.StreamCertRequest{NodeName: "ghost"})
+	if err != nil {
+		t.Fatalf("StreamCertUpdate: %v", err)
+	}
+	_, err = stream.Recv()
+	if err == nil {
+		t.Fatal("expected NotFound for unknown cert stream node")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.NotFound {
+		t.Fatalf("expected NotFound, got %v", err)
 	}
 }
 

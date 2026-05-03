@@ -27,6 +27,7 @@ type CommandConfig struct {
 	OverlayIP                 string
 	Region                    string
 	CertPath                  string
+	KeyPath                   string
 	StateDir                  string
 	InterfaceName             string
 	Protocol                  wg.Protocol
@@ -59,6 +60,7 @@ func ParseCommandConfig(args []string, output io.Writer) (CommandConfig, error) 
 	fs.StringVar(&cfg.OverlayIP, "overlay-ip", "", "assigned overlay IP")
 	fs.StringVar(&cfg.Region, "region", "", "node region")
 	fs.StringVar(&cfg.CertPath, "cert", "", "node certificate PEM path")
+	fs.StringVar(&cfg.KeyPath, "key", "", "node private key PEM path")
 	fs.StringVar(&cfg.StateDir, "state-dir", "/var/lib/awg-mesh", "clientd state directory")
 	fs.StringVar(&cfg.InterfaceName, "iface", "awg-mesh0", "WireGuard interface name")
 	fs.StringVar(&protocol, "protocol", string(wg.ProtocolAmneziaWG), "transport protocol: vanilla-wg or amneziawg")
@@ -96,6 +98,9 @@ func ValidateCommandConfig(cfg CommandConfig) (CommandConfig, error) {
 	}
 	if len(missing) > 0 {
 		return CommandConfig{}, fmt.Errorf("missing required flags: %s", strings.Join(missing, ", "))
+	}
+	if strings.TrimSpace(cfg.KeyPath) == "" {
+		cfg.KeyPath = filepath.Join(filepath.Dir(cfg.CertPath), "node.key")
 	}
 	if cfg.Protocol != wg.ProtocolVanilla && cfg.Protocol != wg.ProtocolAmneziaWG {
 		return CommandConfig{}, fmt.Errorf("invalid --protocol %q", cfg.Protocol)
@@ -159,6 +164,8 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 		OverlayIP:     cfg.OverlayIP,
 		Region:        cfg.Region,
 		NodeCertPEM:   certPEM,
+		CertPath:      cfg.CertPath,
+		KeyPath:       cfg.KeyPath,
 		Version:       awgmesh.Version,
 		InterfaceName: cfg.InterfaceName,
 		Protocol:      cfg.Protocol,

@@ -19,6 +19,8 @@ type RegisteredNode struct {
 	OverlayIP        string            `json:"overlay_ip"`
 	Region           string            `json:"region,omitempty"`
 	NodeCertPEM      []byte            `json:"node_cert_pem"`
+	PendingCertPEM   []byte            `json:"pending_cert_pem,omitempty"`
+	CertOverlapUntil time.Time         `json:"cert_overlap_until,omitzero"`
 	NodeVersion      string            `json:"node_version,omitempty"`
 	RegisteredAt     time.Time         `json:"registered_at"`
 	LastHeartbeatAt  time.Time         `json:"last_heartbeat_at,omitzero"`
@@ -83,7 +85,13 @@ func (r *Registry) Register(node RegisteredNode) error {
 
 	// Cert pinning on re-registration.
 	if prev, ok := r.byName[node.Name]; ok {
-		if !certBytesEqual(prev.NodeCertPEM, node.NodeCertPEM) {
+		if certBytesEqual(prev.NodeCertPEM, node.NodeCertPEM) {
+			node.PendingCertPEM = append([]byte(nil), prev.PendingCertPEM...)
+			node.CertOverlapUntil = prev.CertOverlapUntil
+		} else if canPromotePendingCert(prev, node.NodeCertPEM, time.Now().UTC()) {
+			node.PendingCertPEM = nil
+			node.CertOverlapUntil = time.Time{}
+		} else {
 			return ErrRegistryNameDup
 		}
 		if prev.OverlayIP != node.OverlayIP {
@@ -98,6 +106,26 @@ func (r *Registry) Register(node RegisteredNode) error {
 	stored := cloneRegisteredNode(node)
 	r.byName[node.Name] = &stored
 	r.byOverlay[node.OverlayIP] = node.Name
+	return nil
+}
+
+// AllowCertRollover pins a just-issued replacement certificate for one node.
+// The next RegisterNode call may promote that cert until overlapUntil.
+func (r *Registry) AllowCertRollover(name string, certPEM []byte, overlapUntil time.Time) error {
+	if name == "" {
+		return ErrRegistryEmptyName
+	}
+	if len(certPEM) == 0 {
+		return ErrRegistryNoCert
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, ok := r.byName[name]
+	if !ok {
+		return ErrRegistryNotFound
+	}
+	node.PendingCertPEM = append([]byte(nil), certPEM...)
+	node.CertOverlapUntil = overlapUntil.UTC()
 	return nil
 }
 
@@ -175,11 +203,22 @@ func cloneRegisteredNode(in RegisteredNode) RegisteredNode {
 	out := in
 	out.Roles = append([]role.Role(nil), in.Roles...)
 	out.NodeCertPEM = append([]byte(nil), in.NodeCertPEM...)
+	out.PendingCertPEM = append([]byte(nil), in.PendingCertPEM...)
 	if in.HealthIndicators != nil {
 		out.HealthIndicators = make(map[string]string, len(in.HealthIndicators))
 		maps.Copy(out.HealthIndicators, in.HealthIndicators)
 	}
 	return out
+}
+
+func canPromotePendingCert(prev *RegisteredNode, certPEM []byte, now time.Time) bool {
+	if len(prev.PendingCertPEM) == 0 || !certBytesEqual(prev.PendingCertPEM, certPEM) {
+		return false
+	}
+	if !prev.CertOverlapUntil.IsZero() && now.After(prev.CertOverlapUntil) {
+		return false
+	}
+	return true
 }
 
 func certBytesEqual(a, b []byte) bool {

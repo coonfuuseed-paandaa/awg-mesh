@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -24,6 +25,55 @@ func TestNewDaemon_RejectsInsecurePublicBind(t *testing.T) {
 	_, err = NewDaemon(Config{ListenAddr: "0.0.0.0:51820", StateDir: t.TempDir(), AllowInsecurePublicBind: true})
 	if err != nil {
 		t.Fatalf("explicit public bind opt-in should be accepted: %v", err)
+	}
+}
+
+func TestNewDaemon_ConfiguresCertLifecycleFromCADir(t *testing.T) {
+	caDir := t.TempDir()
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	if err := pkgtls.SaveCA(caDir, caCert, caKey); err != nil {
+		t.Fatalf("SaveCA: %v", err)
+	}
+
+	d, err := NewDaemon(Config{
+		ListenAddr:       "127.0.0.1:0",
+		StateDir:         t.TempDir(),
+		CADir:            caDir,
+		CertRotationDays: 30,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+	if d.server.certLifecycle == nil {
+		t.Fatal("cert lifecycle was not configured from CA dir")
+	}
+}
+
+func TestNewDaemon_RejectsExplicitBadCADir(t *testing.T) {
+	_, err := NewDaemon(Config{
+		ListenAddr: "127.0.0.1:0",
+		StateDir:   t.TempDir(),
+		CADir:      filepath.Join(t.TempDir(), "missing-ca"),
+	})
+	if err == nil {
+		t.Fatal("expected explicit bad CA dir to fail")
+	}
+}
+
+func TestNewDaemon_RejectsIncompleteDefaultCAMaterial(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stateDir, "ca.crt"), []byte("not-a-complete-ca"), 0o600); err != nil {
+		t.Fatalf("write partial CA material: %v", err)
+	}
+	_, err := NewDaemon(Config{
+		ListenAddr: "127.0.0.1:0",
+		StateDir:   stateDir,
+	})
+	if err == nil {
+		t.Fatal("expected incomplete default CA material to fail")
 	}
 }
 

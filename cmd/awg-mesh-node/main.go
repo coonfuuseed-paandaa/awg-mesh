@@ -106,6 +106,8 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	version := fs.Bool("version", false, "print version and exit")
 	listenAddr := fs.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
 	stateDir := fs.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
+	caDir := fs.String("ca-dir", "", "control-plane: CA material directory containing ca.crt and ca.key")
+	certRotationDays := fs.Int("cert-rotation-days", 0, "control-plane: mTLS cert rotation interval in days (default 90)")
 	auditCap := fs.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
 	allowInsecurePublicBind := fs.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
 	controlPlaneAddr := fs.String("control-plane", "", "clientd: control-plane gRPC addr")
@@ -113,6 +115,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	overlayIP := fs.String("overlay-ip", "", "assigned overlay IP")
 	clientdRegion := fs.String("region", "", "clientd: node region")
 	clientdCert := fs.String("cert", "", "clientd: node certificate PEM path")
+	clientdKey := fs.String("key", "", "clientd: node private key PEM path")
 	clientdIface := fs.String("iface", "awg-mesh0", "clientd: WireGuard interface name")
 	clientdProtocol := fs.String("protocol", string(wg.ProtocolAmneziaWG), "clientd: transport protocol: vanilla-wg or amneziawg")
 	allowInsecureControlPlane := fs.Bool("allow-insecure-control-plane", false, "clientd: allow insecure control-plane gRPC to non-loopback targets")
@@ -179,7 +182,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 
 	switch *mode {
 	case "control-plane":
-		return runControlPlane(*listenAddr, *stateDir, *auditCap, *allowInsecurePublicBind, stdout, stderr)
+		return runControlPlane(*listenAddr, *stateDir, *caDir, *certRotationDays, *auditCap, *allowInsecurePublicBind, stdout, stderr)
 	case "master":
 		clientPrivateKey, err := loadOptionalWGPrivateKey(*masterClientPrivateKeyFile)
 		if err != nil {
@@ -204,6 +207,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			OverlayIP:                 *overlayIP,
 			Region:                    *clientdRegion,
 			CertPath:                  *clientdCert,
+			KeyPath:                   *clientdKey,
 			StateDir:                  *stateDir,
 			InterfaceName:             *clientdIface,
 			Protocol:                  wg.Protocol(*clientdProtocol),
@@ -243,6 +247,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		if *allowInsecureControlPlane {
 			clientdArgs = append(clientdArgs, "--allow-insecure-control-plane")
 		}
+		if *clientdKey != "" {
+			clientdArgs = append(clientdArgs, "--key", *clientdKey)
+		}
 		return clientd.RunCommand(context.Background(), clientdArgs, stdout, stderr)
 	default:
 		writef(stdout, "awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
@@ -271,12 +278,14 @@ func loadOptionalWGPrivateKey(path string) (*wg.Key, error) {
 	return &key, nil
 }
 
-func runControlPlane(listenAddr, stateDir string, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {
+func runControlPlane(listenAddr, stateDir, caDir string, certRotationDays, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {
 	writef(stdout, "awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
 		versionString(), listenAddr, stateDir)
 	d, err := control_plane.NewDaemon(control_plane.Config{
 		ListenAddr:              listenAddr,
 		StateDir:                stateDir,
+		CADir:                   caDir,
+		CertRotationDays:        certRotationDays,
 		AuditCap:                auditCap,
 		AllowInsecurePublicBind: allowInsecurePublicBind,
 	})
