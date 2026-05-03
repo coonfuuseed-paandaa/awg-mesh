@@ -369,6 +369,9 @@ func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPl
 				if errors.Is(err, ErrRegistryNotFound) {
 					return status.Errorf(codes.NotFound, "node %q not registered", name)
 				}
+				if errors.Is(err, ErrRegistryPendingCert) {
+					return status.Error(codes.Aborted, err.Error())
+				}
 				return status.Error(codes.Internal, err.Error())
 			}
 			s.audit.Append(AuditEvent{

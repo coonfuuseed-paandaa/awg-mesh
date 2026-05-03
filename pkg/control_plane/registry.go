@@ -36,6 +36,7 @@ var (
 	ErrRegistryOverlayDup  = errors.New("registry: overlay_ip already registered to another node")
 	ErrRegistryNameDup     = errors.New("registry: node name already registered with different cert")
 	ErrRegistryOverlayMove = errors.New("registry: overlay_ip change on re-register is not supported")
+	ErrRegistryPendingCert = errors.New("registry: different pending cert rollover is still active")
 )
 
 // Registry holds the authoritative list of nodes that have called RegisterNode.
@@ -123,6 +124,9 @@ func (r *Registry) AllowCertRollover(name string, certPEM []byte, overlapUntil t
 	node, ok := r.byName[name]
 	if !ok {
 		return ErrRegistryNotFound
+	}
+	if hasActivePendingCert(*node, time.Now().UTC()) && !certBytesEqual(node.PendingCertPEM, certPEM) {
+		return ErrRegistryPendingCert
 	}
 	node.PendingCertPEM = append([]byte(nil), certPEM...)
 	node.CertOverlapUntil = overlapUntil.UTC()

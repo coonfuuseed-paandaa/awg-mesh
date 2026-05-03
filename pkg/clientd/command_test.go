@@ -1,12 +1,15 @@
 package clientd
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
@@ -96,9 +99,66 @@ func TestValidateCommandConfigInsecureControlPlaneGate(t *testing.T) {
 		t.Fatalf("expected non-loopback rejection, got %v", err)
 	}
 
+	cfg.CACertPath = "mesh-ca.crt"
+	if _, err := ValidateCommandConfig(cfg); err != nil {
+		t.Fatalf("mTLS-protected non-loopback target should be allowed: %v", err)
+	}
+	cfg.CACertPath = ""
+
 	cfg.AllowInsecureControlPlane = true
 	if _, err := ValidateCommandConfig(cfg); err != nil {
 		t.Fatalf("override should allow non-loopback target: %v", err)
+	}
+}
+
+func TestLoadClientCertificateFromFilesReadsCurrentFiles(t *testing.T) {
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	certA, keyA, err := pkgtls.IssueCert(caCert, caKey, "client-a", []string{"client-a"})
+	if err != nil {
+		t.Fatalf("IssueCert client-a: %v", err)
+	}
+	certB, keyB, err := pkgtls.IssueCert(caCert, caKey, "client-b", []string{"client-b"})
+	if err != nil {
+		t.Fatalf("IssueCert client-b: %v", err)
+	}
+
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.crt")
+	certPath := filepath.Join(dir, "node.crt")
+	keyPath := filepath.Join(dir, "node.key")
+	if err := os.WriteFile(caPath, pkgtls.EncodeCertPEM(caCert), 0o644); err != nil {
+		t.Fatalf("write ca.crt: %v", err)
+	}
+	if err := os.WriteFile(certPath, certA, 0o644); err != nil {
+		t.Fatalf("write initial cert: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyA, 0o600); err != nil {
+		t.Fatalf("write initial key: %v", err)
+	}
+
+	loader := loadClientCertificateFromFiles(certPath, keyPath)
+	first, err := loader(nil)
+	if err != nil {
+		t.Fatalf("load initial client cert: %v", err)
+	}
+	if got := clientCertCommonName(t, first); got != "client-a" {
+		t.Fatalf("initial client CN = %q, want client-a", got)
+	}
+	if err := os.WriteFile(certPath, certB, 0o644); err != nil {
+		t.Fatalf("write rotated cert: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyB, 0o600); err != nil {
+		t.Fatalf("write rotated key: %v", err)
+	}
+	second, err := loader(nil)
+	if err != nil {
+		t.Fatalf("load rotated client cert: %v", err)
+	}
+	if got := clientCertCommonName(t, second); got != "client-b" {
+		t.Fatalf("rotated client CN = %q, want client-b", got)
 	}
 }
 
@@ -148,4 +208,16 @@ func validCommandConfig(t *testing.T) CommandConfig {
 		t.Fatalf("valid command args rejected: %v", err)
 	}
 	return cfg
+}
+
+func clientCertCommonName(t *testing.T, cert *tls.Certificate) string {
+	t.Helper()
+	if cert == nil || len(cert.Certificate) == 0 {
+		t.Fatal("client certificate chain is empty")
+	}
+	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse client cert: %v", err)
+	}
+	return parsed.Subject.CommonName
 }

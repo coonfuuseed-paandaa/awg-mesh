@@ -124,7 +124,7 @@ func ValidateCommandConfig(cfg CommandConfig) (CommandConfig, error) {
 	if err := wg.ValidateInterfaceName(cfg.InterfaceName); err != nil {
 		return CommandConfig{}, fmt.Errorf("invalid --iface: %w", err)
 	}
-	if !cfg.AllowInsecureControlPlane && !isLoopbackControlPlaneTarget(cfg.ControlPlane) {
+	if strings.TrimSpace(cfg.CACertPath) == "" && !cfg.AllowInsecureControlPlane && !isLoopbackControlPlaneTarget(cfg.ControlPlane) {
 		return CommandConfig{}, fmt.Errorf("insecure control-plane target %q must be loopback or require --allow-insecure-control-plane", cfg.ControlPlane)
 	}
 	return cfg, nil
@@ -200,16 +200,26 @@ func controlPlaneTransportCredentials(cfg CommandConfig) (credentials.TransportC
 	if err != nil {
 		return nil, fmt.Errorf("load control-plane CA cert: %w", err)
 	}
-	cert, err := tls.LoadX509KeyPair(cfg.CertPath, cfg.KeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("load client cert/key: %w", err)
+	clientCertLoader := loadClientCertificateFromFiles(cfg.CertPath, cfg.KeyPath)
+	if _, err := clientCertLoader(nil); err != nil {
+		return nil, err
 	}
 	return credentials.NewTLS(&tls.Config{
-		RootCAs:      rootCAs,
-		Certificates: []tls.Certificate{cert},
-		ServerName:   controlPlaneServerName(cfg.ControlPlane),
-		MinVersion:   tls.VersionTLS13,
+		RootCAs:              rootCAs,
+		ServerName:           controlPlaneServerName(cfg.ControlPlane),
+		MinVersion:           tls.VersionTLS13,
+		GetClientCertificate: clientCertLoader,
 	}), nil
+}
+
+func loadClientCertificateFromFiles(certPath, keyPath string) func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	return func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert/key: %w", err)
+		}
+		return &cert, nil
+	}
 }
 
 func controlPlaneServerName(target string) string {

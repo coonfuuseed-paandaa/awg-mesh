@@ -3,6 +3,7 @@ package control_plane
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 )
@@ -71,6 +72,50 @@ func TestRegistry_NameWithDifferentCertRejected(t *testing.T) {
 	err := r.Register(RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCertOther})
 	if !errors.Is(err, ErrRegistryNameDup) {
 		t.Fatalf("expected ErrRegistryNameDup, got %v", err)
+	}
+}
+
+func TestRegistry_AllowCertRolloverRejectsDifferentActivePendingCert(t *testing.T) {
+	r := NewRegistry()
+	mustRegister(t, r, RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})
+
+	firstPending := []byte("pending-cert-1")
+	if err := r.AllowCertRollover("n1", firstPending, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("AllowCertRollover first pending: %v", err)
+	}
+	if err := r.AllowCertRollover("n1", firstPending, time.Now().Add(2*time.Hour)); err != nil {
+		t.Fatalf("same pending cert should be idempotent: %v", err)
+	}
+	err := r.AllowCertRollover("n1", []byte("pending-cert-2"), time.Now().Add(time.Hour))
+	if !errors.Is(err, ErrRegistryPendingCert) {
+		t.Fatalf("expected ErrRegistryPendingCert for competing pending cert, got %v", err)
+	}
+	got, ok := r.Lookup("n1")
+	if !ok {
+		t.Fatal("n1 missing after rejected pending cert")
+	}
+	if string(got.PendingCertPEM) != string(firstPending) {
+		t.Fatalf("pending cert overwritten after rejection: %q", got.PendingCertPEM)
+	}
+}
+
+func TestRegistry_AllowCertRolloverAllowsDifferentCertAfterOverlap(t *testing.T) {
+	r := NewRegistry()
+	mustRegister(t, r, RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})
+
+	if err := r.AllowCertRollover("n1", []byte("expired-pending"), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("AllowCertRollover expired pending: %v", err)
+	}
+	nextPending := []byte("next-pending")
+	if err := r.AllowCertRollover("n1", nextPending, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("different pending cert after overlap should be allowed: %v", err)
+	}
+	got, ok := r.Lookup("n1")
+	if !ok {
+		t.Fatal("n1 missing after pending cert replacement")
+	}
+	if string(got.PendingCertPEM) != string(nextPending) {
+		t.Fatalf("pending cert = %q, want %q", got.PendingCertPEM, nextPending)
 	}
 }
 
