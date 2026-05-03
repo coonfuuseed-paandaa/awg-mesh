@@ -2,11 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 )
 
 func TestRunNodeListCommandOutputsHuman(t *testing.T) {
@@ -87,4 +92,89 @@ nodes:
 	if len(got.Nodes) != 1 || got.Nodes[0].Platform != "mikrotik" {
 		t.Fatalf("platform not preserved: %+v", got)
 	}
+}
+
+func TestRunNodeRemoveCommandSendsRequestAndOutputsJSON(t *testing.T) {
+	server := &capturingDecommissionServer{
+		response: &controlpb.DecommissionResponse{Success: true, ReassignedOverlayCount: 3},
+	}
+	addr, teardown := startAuditLogTestServer(t, server)
+	defer teardown()
+
+	var out bytes.Buffer
+	err := runNodeRemoveCommand(nodeRemoveOptions{
+		nodeName:     "master-01",
+		controlPlane: addr,
+		drain:        15 * time.Second,
+		output:       "json",
+		timeout:      2 * time.Second,
+		stdout:       &out,
+	})
+	if err != nil {
+		t.Fatalf("runNodeRemoveCommand: %v", err)
+	}
+
+	req := server.capturedRequest(t)
+	if req.GetNodeName() != "master-01" || req.GetDrainSeconds() != 15 {
+		t.Fatalf("unexpected DecommissionNode request: %+v", req)
+	}
+
+	var got nodeRemoveJSONOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, out.String())
+	}
+	if got.NodeName != "master-01" || !got.Success || got.ReassignedOverlayCount != 3 {
+		t.Fatalf("unexpected node remove JSON: %+v", got)
+	}
+}
+
+func TestRunNodeRemoveCommandReportsServerFailure(t *testing.T) {
+	server := &capturingDecommissionServer{
+		response: &controlpb.DecommissionResponse{Success: false, Error: "node not in registry"},
+	}
+	addr, teardown := startAuditLogTestServer(t, server)
+	defer teardown()
+
+	var out bytes.Buffer
+	err := runNodeRemoveCommand(nodeRemoveOptions{
+		nodeName:     "missing-node",
+		controlPlane: addr,
+		output:       "human",
+		timeout:      2 * time.Second,
+		stdout:       &out,
+	})
+	if err == nil {
+		t.Fatal("expected server failure")
+	}
+	if !strings.Contains(err.Error(), "missing-node") || !strings.Contains(err.Error(), "node not in registry") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+type capturingDecommissionServer struct {
+	controlpb.UnimplementedControlPlaneServer
+	mu       sync.Mutex
+	request  *controlpb.DecommissionRequest
+	response *controlpb.DecommissionResponse
+}
+
+func (s *capturingDecommissionServer) DecommissionNode(_ context.Context, req *controlpb.DecommissionRequest) (*controlpb.DecommissionResponse, error) {
+	cp := *req
+	s.mu.Lock()
+	s.request = &cp
+	s.mu.Unlock()
+	if s.response == nil {
+		return &controlpb.DecommissionResponse{Success: true}, nil
+	}
+	return s.response, nil
+}
+
+func (s *capturingDecommissionServer) capturedRequest(t *testing.T) *controlpb.DecommissionRequest {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.request == nil {
+		t.Fatal("DecommissionNode was not called")
+	}
+	return s.request
 }
