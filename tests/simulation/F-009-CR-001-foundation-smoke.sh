@@ -163,9 +163,10 @@ else
 fi
 
 # R5: awg-mesh-node --version
+expected_node_version="${EXPECTED_NODE_VERSION:-v2.0.0}"
 if run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --version 2>&1" >/tmp/F009-r5.log 2>&1; then
-    if grep -q "awg-mesh-node v2.0.0-alpha.1" /tmp/F009-r5.log; then
-        ok "R5 — awg-mesh-node --version reports v2.0.0-alpha.1"
+    if grep -q "awg-mesh-node ${expected_node_version}" /tmp/F009-r5.log; then
+        ok "R5 — awg-mesh-node --version reports ${expected_node_version}"
     else
         bad "R5" "version output mismatch: $(cat /tmp/F009-r5.log)"
     fi

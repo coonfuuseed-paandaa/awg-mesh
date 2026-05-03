@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-05-03 — flat mesh architecture
+
 ### Added
 - **F-009 CR-015 certificate lifecycle** - the control-plane daemon can load mesh CA material, issue due replacement node certificates through `StreamCertUpdate`, allow bounded pending-cert rollover during the overlap window, and clientd can persist replacement `node.crt` / `node.key` files atomically enough for reconnect-based mTLS rollover. The critical cert-rotation gate now verifies server issuance, daemon CA wiring, clientd persistence, and release-readiness coverage.
 - **F-009 CR-014 Mikrotik v2 native WireGuard bridge** - `mesh-ctl node prepare --platform mikrotik` now writes real WireGuard key material and a deterministic RouterOS `.rsc` script for native vanilla-WG clients, while masters can consume the generated client-facing private key via `awg-mesh-node --mode master --client-private-key-file`.
@@ -1514,7 +1516,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.7...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.14.1...v2.0.0
 [1.12.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.4...v1.12.0
