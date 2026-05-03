@@ -134,6 +134,102 @@ func TestRunEgressNonDryRunValidatesClientdBeforeNAT(t *testing.T) {
 	}
 }
 
+func TestRunIngressDryRunUsesRouteAndPublicAddress(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "ingress",
+		"--dry-run",
+		"--name", "ingress-01",
+		"--overlay-ip", "172.21.92.30",
+		"--ingress-public-addr", ":8443",
+		"--ingress-route", "media.example.com=172.21.92.10:8096",
+		"--ingress-tenant", "tenant-a",
+		"--ingress-health-interval", "2s",
+		"--ingress-udp-idle-timeout", "9s",
+		"--ingress-metrics", ":9092",
+		"--ingress-acme-cache", "/var/lib/awg-mesh/acme",
+		"--ingress-http3",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"ingress dry-run node=ingress-01",
+		"overlay=172.21.92.30",
+		"public=:8443",
+		"routes=1",
+		"health=2s",
+		"udp_idle=9s",
+		"tls=acme",
+		"http3=true",
+		"metrics=:9092",
+		"route=tenant-a:media.example.com->172.21.92.10:8096/tls_terminate",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestRunIngressDryRunDiffersByRoute(t *testing.T) {
+	t.Parallel()
+
+	var firstOut, firstErr strings.Builder
+	firstCode := runCommand([]string{
+		"--mode", "ingress",
+		"--dry-run",
+		"--name", "ingress-01",
+		"--overlay-ip", "172.21.92.30",
+		"--ingress-public-addr", ":8443",
+		"--ingress-route", "media.example.com=172.21.92.10:8096",
+	}, &firstOut, &firstErr)
+	if firstCode != 0 {
+		t.Fatalf("first dry-run exit %d stderr=%s", firstCode, firstErr.String())
+	}
+
+	var secondOut, secondErr strings.Builder
+	secondCode := runCommand([]string{
+		"--mode", "ingress",
+		"--dry-run",
+		"--name", "ingress-01",
+		"--overlay-ip", "172.21.92.30",
+		"--ingress-public-addr", ":9443",
+		"--ingress-route", "api.example.com=172.21.92.11:8080",
+	}, &secondOut, &secondErr)
+	if secondCode != 0 {
+		t.Fatalf("second dry-run exit %d stderr=%s", secondCode, secondErr.String())
+	}
+	if firstOut.String() == secondOut.String() {
+		t.Fatalf("dry-run output ignored route/public address: %s", firstOut.String())
+	}
+	if !strings.Contains(secondOut.String(), "public=:9443") || !strings.Contains(secondOut.String(), "api.example.com->172.21.92.11:8080") {
+		t.Fatalf("second dry-run missing changed fields: %s", secondOut.String())
+	}
+}
+
+func TestRunIngressRejectsInvalidRoute(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "ingress",
+		"--dry-run",
+		"--name", "ingress-01",
+		"--overlay-ip", "172.21.92.30",
+		"--ingress-public-addr", ":8443",
+		"--ingress-route", "media.example.com",
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "must use hostname=overlay_ip:port") {
+		t.Fatalf("expected route validation error, got %s", stderr.String())
+	}
+}
+
 func TestCompatibilityAliasesPreserved(t *testing.T) {
 	t.Parallel()
 

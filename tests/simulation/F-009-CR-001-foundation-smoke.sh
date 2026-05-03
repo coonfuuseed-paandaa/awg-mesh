@@ -175,7 +175,7 @@ fi
 
 # R6: control-plane starts, implemented role dry-runs validate, remaining
 # skeleton roles exit 0, and real client/clientd reports usage.
-roles=(ingress balancer)
+roles=(balancer)
 r6_failed=0
 set +e
 run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode control-plane --listen 127.0.0.1:0 --state-dir /tmp/awg-mesh-cp" 8 >/tmp/F009-r6-control-plane.log 2>&1
@@ -220,6 +220,14 @@ elif ! grep -q 'warning: --mode endpoint is deprecated' /tmp/F009-r6-endpoint.lo
     r6_failed=1
     bad "R6 (--mode endpoint --dry-run)" "endpoint alias plan/warning missing: $(cat /tmp/F009-r6-endpoint.log)"
 fi
+if ! run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --mode ingress --dry-run --name ingress-01 --overlay-ip 172.21.92.30 --ingress-public-addr :8443 --ingress-route media.example.com=172.21.92.10:8096 2>&1" \
+    >/tmp/F009-r6-ingress.log 2>&1; then
+    r6_failed=1
+    bad "R6 (--mode ingress --dry-run)" "exited non-zero: $(tail -3 /tmp/F009-r6-ingress.log)"
+elif ! grep -q 'ingress dry-run node=ingress-01' /tmp/F009-r6-ingress.log || ! grep -q 'media.example.com->172.21.92.10:8096' /tmp/F009-r6-ingress.log; then
+    r6_failed=1
+    bad "R6 (--mode ingress --dry-run)" "ingress plan missing: $(cat /tmp/F009-r6-ingress.log)"
+fi
 clientd_out=$(run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node 2>/dev/null; set +e; /tmp/awg-mesh-node --mode clientd; echo \"EXIT=\$?\"" 2>&1 || true)
 if ! echo "${clientd_out}" | grep -q "EXIT=2"; then
     r6_failed=1
@@ -237,7 +245,7 @@ elif ! echo "${client_out}" | grep -q "missing required flags"; then
     bad "R6 (--mode client)" "expected missing required flags usage text, got: ${client_out}"
 fi
 if [ "${r6_failed}" -eq 0 ]; then
-    ok "R6 — control-plane starts; master/egress dry-runs validate; skeleton roles exit 0; client/clientd reports required flags"
+    ok "R6 — control-plane starts; master/egress/ingress dry-runs validate; skeleton roles exit 0; client/clientd reports required flags"
 fi
 
 # R7: no --mode → exit 2

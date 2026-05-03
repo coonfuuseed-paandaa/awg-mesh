@@ -6,10 +6,10 @@
 //	master        → CR-004 (vanilla-WG + AmneziaWG dual listener)
 //	clientd       → CR-003 (self-config agent on every non-Mikrotik node)
 //	egress        → CR-005 (clientd + MASQUERADE on internet-bound iface)
+//	ingress       → CR-006 (SNI passthrough + TLS terminate + ACME + HTTP/3 + UDP)
 //
 // Remaining role implementations still print placeholders until their CRs land:
 //
-//	ingress       → CR-006 (SNI passthrough + TLS terminate + ACME + HTTP/3 + UDP)
 //	balancer      → CR-007 (policy engine: dumb / labeled / smart-future)
 package main
 
@@ -21,13 +21,16 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/ingress"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/rs/zerolog"
 )
 
 // supportedModes is the set of valid --mode values + the implementing CR.
@@ -119,6 +122,18 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
 	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
 	egressInternetIface := fs.String("internet-iface", "", "egress: internet-bound interface for MASQUERADE")
+	ingressPublicAddr := fs.String("ingress-public-addr", "", "ingress: public HTTP/TLS bind address")
+	ingressTenant := fs.String("ingress-tenant", ingress.DefaultTenant, "ingress: tenant for routes declared with --ingress-route")
+	ingressTLSMode := fs.String("ingress-tls-mode", string(ingress.TLSModeTLSTerminate), "ingress: route TLS mode: sni_passthrough | tls_terminate | tcp_forward | udp_forward")
+	ingressProtocol := fs.String("ingress-protocol", string(ingress.ProtocolHTTP), "ingress: route protocol: http | websocket | tcp | udp")
+	ingressHealthInterval := fs.Duration("ingress-health-interval", ingress.DefaultHealthProbeInterval, "ingress: health probe interval")
+	ingressUDPIdleTimeout := fs.Duration("ingress-udp-idle-timeout", ingress.DefaultUDPIdleTimeout, "ingress: UDP flow idle timeout")
+	ingressMetricsAddr := fs.String("ingress-metrics", "", "ingress: Prometheus metrics bind address")
+	ingressACMECache := fs.String("ingress-acme-cache", "", "ingress: ACME certificate cache directory")
+	ingressACMEEmail := fs.String("ingress-acme-email", "", "ingress: ACME account email")
+	ingressHTTP3 := fs.Bool("ingress-http3", false, "ingress: enable HTTP/3 when TLS is configured")
+	var ingressRoutes routeFlags
+	fs.Var(&ingressRoutes, "ingress-route", "ingress: hostname=overlay_ip:port route; repeatable")
 	dryRun := fs.Bool("dry-run", false, "validate selected mode and print runtime plan without opening network resources")
 
 	if err := fs.Parse(args); err != nil {
@@ -184,6 +199,13 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			OverlayIP:         *overlayIP,
 			InternetInterface: *egressInternetIface,
 		}, clientdCfg, *dryRun, stdout, stderr)
+	case "ingress":
+		cfg, err := buildIngressConfig(*nodeName, *overlayIP, *ingressPublicAddr, *ingressTenant, *ingressTLSMode, *ingressProtocol, *ingressHealthInterval, *ingressUDPIdleTimeout, *ingressMetricsAddr, *ingressACMECache, *ingressACMEEmail, *ingressHTTP3, ingressRoutes)
+		if err != nil {
+			writef(stderr, "ingress: %v\n", err)
+			return 2
+		}
+		return runIngress(context.Background(), cfg, *dryRun, stdout, stderr)
 	case "client", "clientd":
 		clientdArgs := []string{
 			"--control-plane", *controlPlaneAddr,
@@ -305,6 +327,93 @@ func runEgress(ctx context.Context, cfg node.EgressConfig, clientCfg clientd.Com
 		return 1
 	}
 	return 0
+}
+
+func runIngress(ctx context.Context, cfg ingress.Config, dryRun bool, stdout, stderr io.Writer) int {
+	runtime, err := ingress.NewRuntime(cfg, zerolog.New(stderr).With().Timestamp().Str("component", "ingress").Logger())
+	if err != nil {
+		writef(stderr, "ingress: %v\n", err)
+		return 2
+	}
+	plan := runtime.Plan()
+	if dryRun {
+		writef(stdout, "ingress dry-run node=%s overlay=%s public=%s routes=%d health=%s udp_idle=%s tls=%s http3=%t",
+			plan.Name,
+			plan.OverlayIP,
+			plan.PublicAddress,
+			plan.RouteCount,
+			plan.HealthProbeInterval,
+			plan.UDPIdleTimeout,
+			tlsPlan(plan),
+			plan.HTTP3Enabled,
+		)
+		if plan.MetricsAddress != "" {
+			writef(stdout, " metrics=%s", plan.MetricsAddress)
+		}
+		for _, route := range plan.Routes {
+			writef(stdout, " route=%s:%s->%s/%s", route.Tenant, route.Hostname, route.Target, route.Mode)
+		}
+		writeLine(stdout, "")
+		return 0
+	}
+	writef(stdout, "awg-mesh-node %s — mode=ingress — node=%s overlay=%s public=%s routes=%d\n",
+		versionString(), plan.Name, plan.OverlayIP, plan.PublicAddress, plan.RouteCount)
+	if err := runtime.Run(ctx); err != nil {
+		writef(stderr, "ingress: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func buildIngressConfig(name, overlayIP, publicAddr, tenant, tlsMode, protocol string, healthInterval, udpIdle time.Duration, metricsAddr, acmeCache, acmeEmail string, enableHTTP3 bool, routeValues routeFlags) (ingress.Config, error) {
+	routes := make([]ingress.Route, 0, len(routeValues))
+	for _, value := range routeValues {
+		hostname, target, ok := strings.Cut(value, "=")
+		if !ok {
+			return ingress.Config{}, fmt.Errorf("--ingress-route %q must use hostname=overlay_ip:port", value)
+		}
+		routes = append(routes, ingress.Route{
+			Tenant:   tenant,
+			Hostname: hostname,
+			Target:   target,
+			Mode:     ingress.TLSMode(tlsMode),
+			Protocol: ingress.Protocol(protocol),
+			HTTP3:    enableHTTP3,
+		})
+	}
+	return ingress.Config{
+		Name:                name,
+		OverlayIP:           overlayIP,
+		PublicAddress:       publicAddr,
+		Routes:              routes,
+		HealthProbeInterval: healthInterval,
+		UDPIdleTimeout:      udpIdle,
+		MetricsAddress:      metricsAddr,
+		ACMECacheDir:        acmeCache,
+		ACMEEmail:           acmeEmail,
+		EnableHTTP3:         enableHTTP3,
+	}, nil
+}
+
+func tlsPlan(plan ingress.Plan) string {
+	if plan.ACMEEnabled {
+		return "acme"
+	}
+	return "plain"
+}
+
+type routeFlags []string
+
+func (f *routeFlags) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(*f, ",")
+}
+
+func (f *routeFlags) Set(value string) error {
+	*f = append(*f, value)
+	return nil
 }
 
 // sortedKeys returns the keys of a map[string]string in lexicographic order.
