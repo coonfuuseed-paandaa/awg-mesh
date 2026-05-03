@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -401,6 +402,114 @@ func TestServer_QueryAudit_FiltersAndStreams(t *testing.T) {
 	}
 }
 
+func TestServer_RotateAWGParamsMeshWide_StreamsMeshInternalResults(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	registerRotationNode(t, client, ctx, "client-01", role.RoleClient, "172.21.92.130")
+	registerRotationNode(t, client, ctx, "master-01", role.RoleMaster, "172.21.92.2")
+	registerRotationNode(t, client, ctx, "egress-01", role.RoleEgress, "172.21.92.34")
+
+	stream := sendRotateRequest(t, client, ctx, &pb.RotateRequest{
+		Tier:              "1",
+		NewParams:         testControlPlaneAWGParams(),
+		ApplyAtUnixMicros: time.Now().Add(time.Minute).UnixMicro(),
+		RotationId:        "rot-success",
+	})
+	results, err := recvRotateResponses(stream)
+	if err != nil {
+		t.Fatalf("RotateAWGParamsMeshWide: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2 mesh-internal targets", len(results))
+	}
+	if results[0].GetNodeName() != "egress-01" || results[1].GetNodeName() != "master-01" {
+		t.Fatalf("unexpected stable target order: %+v", results)
+	}
+	for _, result := range results {
+		if !result.GetAck() || result.GetError() != "" || result.GetRotationId() != "rot-success" {
+			t.Fatalf("unexpected rotate result: %+v", result)
+		}
+	}
+	events := srv.audit.Query(time.Time{}, time.Time{}, "rotate-result", "", 0)
+	if len(events) != 1 {
+		t.Fatalf("rotate-result audit events = %d, want 1", len(events))
+	}
+}
+
+func TestServer_RotateAWGParamsMeshWide_RejectsInvalidRequest(t *testing.T) {
+	client, _, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	stream := sendRotateRequest(t, client, ctx, &pb.RotateRequest{Tier: "1"})
+	_, err := recvRotateResponses(stream)
+	if err == nil {
+		t.Fatal("expected InvalidArgument for missing params")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+}
+
+func TestServer_RotateAWGParamsMeshWide_RejectsEmptyMeshInternalTargets(t *testing.T) {
+	client, _, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	registerRotationNode(t, client, ctx, "client-01", role.RoleClient, "172.21.92.130")
+
+	stream := sendRotateRequest(t, client, ctx, &pb.RotateRequest{
+		Tier:      "tier1",
+		NewParams: testControlPlaneAWGParams(),
+	})
+	_, err := recvRotateResponses(stream)
+	if err == nil {
+		t.Fatal("expected FailedPrecondition for client-only registry")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %v", err)
+	}
+}
+
+func TestServer_RotateAWGParamsMeshWide_ReportsPartialApply(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	applier := meshrotation.NewMemoryApplier()
+	applier.SetFailure("egress-01", errors.New("apply failed"))
+	srv.rotation = meshrotation.NewOrchestrator(applier, meshrotation.OrchestratorConfig{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	registerRotationNode(t, client, ctx, "master-01", role.RoleMaster, "172.21.92.2")
+	registerRotationNode(t, client, ctx, "egress-01", role.RoleEgress, "172.21.92.34")
+
+	stream := sendRotateRequest(t, client, ctx, &pb.RotateRequest{
+		Tier:       "tier3",
+		NewParams:  testControlPlaneAWGParams(),
+		RotationId: "rot-partial",
+	})
+	results, err := recvRotateResponses(stream)
+	if err == nil {
+		t.Fatal("expected Aborted after partial apply responses")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.Aborted {
+		t.Fatalf("expected Aborted, got %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+	if results[0].GetNodeName() != "egress-01" || results[0].GetAck() || results[0].GetError() == "" {
+		t.Fatalf("expected egress failure result first, got %+v", results)
+	}
+	if results[1].GetNodeName() != "master-01" || !results[1].GetAck() {
+		t.Fatalf("expected master success result second, got %+v", results)
+	}
+}
+
 func TestServer_StubsReturnUnimplemented(t *testing.T) {
 	client, _, teardown := startTestServer(t)
 	defer teardown()
@@ -418,5 +527,63 @@ func TestServer_StubsReturnUnimplemented(t *testing.T) {
 	}
 	if st, ok := status.FromError(err); !ok || st.Code() != codes.Unimplemented {
 		t.Fatalf("StreamServiceRegistry expected Unimplemented, got %v", err)
+	}
+}
+
+func registerRotationNode(t *testing.T, client pb.ControlPlaneClient, ctx context.Context, name string, nodeRole role.Role, overlayIP string) {
+	t.Helper()
+	resp, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    name,
+		Roles:       []string{string(nodeRole)},
+		NodeCertPem: fakeCert,
+		OverlayIp:   overlayIP,
+	})
+	if err != nil {
+		t.Fatalf("RegisterNode %s: %v", name, err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("RegisterNode %s rejected: %s", name, resp.GetRejectReason())
+	}
+}
+
+func sendRotateRequest(t *testing.T, client pb.ControlPlaneClient, ctx context.Context, req *pb.RotateRequest) pb.ControlPlane_RotateAWGParamsMeshWideClient {
+	t.Helper()
+	stream, err := client.RotateAWGParamsMeshWide(ctx)
+	if err != nil {
+		t.Fatalf("RotateAWGParamsMeshWide: %v", err)
+	}
+	if err := stream.Send(req); err != nil {
+		t.Fatalf("RotateAWGParamsMeshWide Send: %v", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatalf("RotateAWGParamsMeshWide CloseSend: %v", err)
+	}
+	return stream
+}
+
+func recvRotateResponses(stream pb.ControlPlane_RotateAWGParamsMeshWideClient) ([]*pb.RotateResponse, error) {
+	results := make([]*pb.RotateResponse, 0)
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return results, nil
+		}
+		if err != nil {
+			return results, err
+		}
+		results = append(results, resp)
+	}
+}
+
+func testControlPlaneAWGParams() *pb.AWGParamsV2 {
+	return &pb.AWGParamsV2{
+		Jc: 1, Jmin: 2, Jmax: 3,
+		S1: 4, S2: 5,
+		H1: 6, H2: 7, H3: 8, H4: 9,
+		I1: []byte("i1"),
+		I2: []byte("i2"),
+		I3: []byte("i3"),
+		I4: []byte("i4"),
+		I5: []byte("i5"),
 	}
 }

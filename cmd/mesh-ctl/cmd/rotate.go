@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
@@ -20,7 +22,10 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -30,20 +35,25 @@ const (
 )
 
 type rotateOptions struct {
-	tier       int
-	endpoint   string
-	preset     string
-	familyName string
+	tier         int
+	endpoint     string
+	preset       string
+	familyName   string
+	meshWide     bool
+	controlPlane string
+	applyDelay   time.Duration
+	stdout       io.Writer
 }
 
 func newRotateCommand() *cobra.Command {
 	options := rotateOptions{
-		preset: defaultRotatePreset,
+		preset:     defaultRotatePreset,
+		applyDelay: rotation.DefaultApplyLeadTime,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "rotate",
-		Short: "Rotate AWG parameters for an endpoint across masters",
+		Short: "Rotate AWG parameters for an endpoint or the mesh",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRotateCommand(options)
 		},
@@ -53,6 +63,9 @@ func newRotateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&options.endpoint, "endpoint", "", "Endpoint name in topology")
 	cmd.Flags().StringVar(&options.preset, "preset", defaultRotatePreset, "AWG preset name")
 	cmd.Flags().StringVar(&options.familyName, "family", "", "Optional protocol family name")
+	cmd.Flags().BoolVar(&options.meshWide, "mesh-wide", false, "Rotate every mesh-internal node through the control plane")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane gRPC address for --mesh-wide")
+	cmd.Flags().DurationVar(&options.applyDelay, "apply-delay", rotation.DefaultApplyLeadTime, "Mesh-wide apply delay")
 
 	return cmd
 }
@@ -61,6 +74,13 @@ func runRotateCommand(options rotateOptions) error {
 	validatedOptions, err := validateRotateOptions(options)
 	if err != nil {
 		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), rotateCommandTimeout(validatedOptions))
+	defer cancel()
+
+	if validatedOptions.meshWide {
+		return executeMeshWideRotation(ctx, validatedOptions)
 	}
 
 	topo, err := topology.LoadTopology(topologyPath)
@@ -72,9 +92,6 @@ func runRotateCommand(options rotateOptions) error {
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), rotateTimeout)
-	defer cancel()
 
 	switch validatedOptions.tier {
 	case 1:
@@ -98,26 +115,51 @@ func runRotateCommand(options rotateOptions) error {
 
 func validateRotateOptions(options rotateOptions) (rotateOptions, error) {
 	trimmedEndpoint := strings.TrimSpace(options.endpoint)
-	if trimmedEndpoint == "" {
-		return rotateOptions{}, fmt.Errorf("--endpoint is required")
-	}
-
 	trimmedPreset := strings.TrimSpace(options.preset)
 	if trimmedPreset == "" {
 		return rotateOptions{}, fmt.Errorf("--preset must not be empty")
 	}
-
 	trimmedFamily := strings.TrimSpace(options.familyName)
+	trimmedControlPlane := strings.TrimSpace(options.controlPlane)
 	if options.tier < 1 || options.tier > 3 {
 		return rotateOptions{}, fmt.Errorf("--tier must be one of 1, 2, or 3")
 	}
+	if options.meshWide {
+		if trimmedEndpoint != "" {
+			return rotateOptions{}, fmt.Errorf("--endpoint cannot be used with --mesh-wide")
+		}
+		if trimmedControlPlane == "" {
+			return rotateOptions{}, fmt.Errorf("--control-plane is required with --mesh-wide")
+		}
+		if options.applyDelay <= 0 {
+			return rotateOptions{}, fmt.Errorf("--apply-delay must be greater than zero")
+		}
+	} else {
+		if trimmedEndpoint == "" {
+			return rotateOptions{}, fmt.Errorf("--endpoint is required")
+		}
+		if trimmedControlPlane != "" {
+			return rotateOptions{}, fmt.Errorf("--control-plane requires --mesh-wide")
+		}
+	}
 
 	return rotateOptions{
-		tier:       options.tier,
-		endpoint:   trimmedEndpoint,
-		preset:     trimmedPreset,
-		familyName: trimmedFamily,
+		tier:         options.tier,
+		endpoint:     trimmedEndpoint,
+		preset:       trimmedPreset,
+		familyName:   trimmedFamily,
+		meshWide:     options.meshWide,
+		controlPlane: trimmedControlPlane,
+		applyDelay:   options.applyDelay,
+		stdout:       options.stdout,
 	}, nil
+}
+
+func rotateCommandTimeout(options rotateOptions) time.Duration {
+	if options.meshWide {
+		return rotateTimeout + options.applyDelay
+	}
+	return rotateTimeout
 }
 
 func resolveRotationMasters(topo *topology.Topology, endpointName string) (*topology.EndpointNode, []topology.MasterNode, error) {
@@ -167,6 +209,108 @@ func buildRotationParams(presetName, familyName string) (*awggen.Params, error) 
 	}
 
 	return params, nil
+}
+
+func executeMeshWideRotation(ctx context.Context, options rotateOptions) error {
+	params, err := buildRotationParams(options.preset, options.familyName)
+	if err != nil {
+		return err
+	}
+	tier, err := rotation.NormalizeTier(strconv.Itoa(options.tier))
+	if err != nil {
+		return err
+	}
+	conn, err := grpc.NewClient(options.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("connect control-plane %q: %w", options.controlPlane, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	stream, err := controlpb.NewControlPlaneClient(conn).RotateAWGParamsMeshWide(ctx)
+	if err != nil {
+		return fmt.Errorf("open mesh-wide rotation stream: %w", err)
+	}
+	if err := stream.Send(&controlpb.RotateRequest{
+		Tier:              tier,
+		NewParams:         controlPlaneParamsFromAWG(params),
+		ApplyAtUnixMicros: time.Now().UTC().Add(options.applyDelay).UnixMicro(),
+	}); err != nil {
+		return fmt.Errorf("send mesh-wide rotation request: %w", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		return fmt.Errorf("close mesh-wide rotation request stream: %w", err)
+	}
+
+	results, recvErr := collectMeshWideRotationResponses(stream)
+	if len(results) > 0 {
+		if err := printMeshWideRotationRows(rotateOutput(options), results); err != nil {
+			return err
+		}
+	}
+	if recvErr != nil {
+		return fmt.Errorf("mesh-wide rotation failed: %w", recvErr)
+	}
+	return nil
+}
+
+func controlPlaneParamsFromAWG(params *awggen.Params) *controlpb.AWGParamsV2 {
+	if params == nil {
+		return nil
+	}
+	return &controlpb.AWGParamsV2{
+		Jc:   int32(params.Jc),
+		Jmin: int32(params.Jmin),
+		Jmax: int32(params.Jmax),
+		S1:   int32(params.S1),
+		S2:   int32(params.S2),
+		H1:   uint32(params.H1),
+		H2:   uint32(params.H2),
+		H3:   uint32(params.H3),
+		H4:   uint32(params.H4),
+		I1:   []byte(params.I1),
+		I2:   []byte(params.I2),
+		I3:   []byte(params.I3),
+		I4:   []byte(params.I4),
+		I5:   []byte(params.I5),
+	}
+}
+
+func collectMeshWideRotationResponses(stream controlpb.ControlPlane_RotateAWGParamsMeshWideClient) ([]*controlpb.RotateResponse, error) {
+	results := make([]*controlpb.RotateResponse, 0)
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return results, nil
+		}
+		if err != nil {
+			return results, err
+		}
+		results = append(results, resp)
+	}
+}
+
+func printMeshWideRotationRows(out io.Writer, results []*controlpb.RotateResponse) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "NODE\tACK\tERROR"); err != nil {
+		return err
+	}
+	for _, result := range results {
+		detail := result.GetError()
+		if detail == "" {
+			detail = "-"
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%t\t%s\n", result.GetNodeName(), result.GetAck(), detail); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
+}
+
+func rotateOutput(options rotateOptions) io.Writer {
+	if options.stdout != nil {
+		return options.stdout
+	}
+	return os.Stdout
 }
 
 func executeTier1Rotation(ctx context.Context, endpoint *topology.EndpointNode, masters []topology.MasterNode, params *awggen.Params) error {
