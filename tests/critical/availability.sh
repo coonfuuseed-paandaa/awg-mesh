@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
+source "${REPO_ROOT}/tests/critical/lib.bash"
 
 GO=${GO_BIN:-/usr/local/go/bin/go}
 if ! command -v "$GO" >/dev/null 2>&1; then
@@ -14,7 +15,16 @@ if ! command -v "$GO" >/dev/null 2>&1; then
     exit 1
 fi
 
-"$GO" test -count=1 -run 'TestLedger_OwnedByAndDrain|TestServer_StreamOwnership_LiveUpdate|TestServer_DecommissionNode|TestHealthTrackerProbeOnceUpdatesTargets|TestRuntimeStartsAndStops' \
-    ./pkg/control_plane/... ./pkg/ingress/... >/dev/null
+test_output="$(mktemp)"
+trap 'rm -f "$test_output"' EXIT
+
+critical_run_go_tests_required "$test_output" \
+    'TestLedger_OwnedByAndDrain|TestServer_StreamOwnership_LiveUpdate|TestServer_DecommissionNode|TestHealthTrackerProbeOnceUpdatesTargets|TestRuntimeStartsAndStops' \
+    ./pkg/control_plane/... ./pkg/ingress/... -- \
+    TestLedger_OwnedByAndDrain \
+    TestServer_StreamOwnership_LiveUpdate \
+    TestServer_DecommissionNode \
+    TestHealthTrackerProbeOnceUpdatesTargets \
+    TestRuntimeStartsAndStops
 
 echo "PASS - availability.sh: ownership failover stream, decommission recovery, health tracking, and ingress runtime verified"

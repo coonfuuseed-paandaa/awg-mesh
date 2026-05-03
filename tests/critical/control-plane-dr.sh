@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
+source "${REPO_ROOT}/tests/critical/lib.bash"
 
 GO=${GO_BIN:-/usr/local/go/bin/go}
 if ! command -v "$GO" >/dev/null 2>&1; then
@@ -14,7 +15,15 @@ if ! command -v "$GO" >/dev/null 2>&1; then
     exit 1
 fi
 
-"$GO" test -count=1 -run 'TestRunBackupCommandCapturesLocalTopologyAndControlPlaneState|TestRunRestoreCommandRestoresConfirmedArchive|TestRunRestoreCommandValidatesManifestBeforeOverwrite|TestDaemon_LifecycleAndAcceptsRegister' \
-    ./cmd/mesh-ctl/cmd ./pkg/control_plane/... >/dev/null
+test_output="$(mktemp)"
+trap 'rm -f "$test_output"' EXIT
+
+critical_run_go_tests_required "$test_output" \
+    'TestRunBackupCommandCapturesLocalTopologyAndControlPlaneState|TestRunRestoreCommandRestoresConfirmedArchive|TestRunRestoreCommandValidatesManifestBeforeOverwrite|TestDaemon_LifecycleAndAcceptsRegister' \
+    ./cmd/mesh-ctl/cmd ./pkg/control_plane/... -- \
+    TestRunBackupCommandCapturesLocalTopologyAndControlPlaneState \
+    TestRunRestoreCommandRestoresConfirmedArchive \
+    TestRunRestoreCommandValidatesManifestBeforeOverwrite \
+    TestDaemon_LifecycleAndAcceptsRegister
 
 echo "PASS - control-plane-dr.sh: backup archive, restore validation, and daemon restart lifecycle verified"

@@ -7,6 +7,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
+source "${REPO_ROOT}/tests/critical/lib.bash"
 
 GO=${GO_BIN:-/usr/local/go/bin/go}
 if ! command -v "$GO" >/dev/null 2>&1; then
@@ -18,8 +19,15 @@ if ! command -v "$GO" >/dev/null 2>&1; then
 fi
 
 start_seconds=${SECONDS}
-"$GO" test -count=1 -timeout 30s -run 'TestDaemon_LifecycleAndAcceptsRegister|TestMasterRunStartsAndClosesOnCancel|TestRuntimeStartsAndStops|TestRuntimeStartsMetricsAndStopsWithContext' \
-    ./pkg/control_plane/... ./pkg/node/... ./pkg/ingress/... ./pkg/balancer/... >/dev/null
+test_output="$(mktemp)"
+trap 'rm -f "$test_output"' EXIT
+critical_run_go_tests_required "$test_output" \
+    'TestDaemon_LifecycleAndAcceptsRegister|TestMasterRunStartsAndClosesOnCancel|TestRuntimeStartsAndStops|TestRuntimeStartsMetricsAndStopsWithContext' \
+    ./pkg/control_plane/... ./pkg/node/... ./pkg/ingress/... ./pkg/balancer/... -- \
+    TestDaemon_LifecycleAndAcceptsRegister \
+    TestMasterRunStartsAndClosesOnCancel \
+    TestRuntimeStartsAndStops \
+    TestRuntimeStartsMetricsAndStopsWithContext
 elapsed=$((SECONDS - start_seconds))
 
 if [[ "${elapsed}" -gt 30 ]]; then
