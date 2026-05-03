@@ -2,15 +2,21 @@ package cmd
 
 import (
 	"context"
+	"crypto"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"github.com/spf13/cobra"
@@ -20,9 +26,28 @@ import (
 
 const (
 	nodeStatusDeclared       = "declared"
+	defaultNodeInitTimeout   = 10 * time.Second
 	defaultNodeRemoveTimeout = 10 * time.Second
 	maxNodeDrainSeconds      = 1<<31 - 1
 )
+
+type nodePrepareOptions struct {
+	nodeName     string
+	topologyPath string
+	configDir    string
+	output       string
+	stdout       io.Writer
+}
+
+type nodeInitOptions struct {
+	nodeName     string
+	topologyPath string
+	configDir    string
+	controlPlane string
+	output       string
+	timeout      time.Duration
+	stdout       io.Writer
+}
 
 type nodeListOptions struct {
 	topologyPath string
@@ -37,6 +62,22 @@ type nodeRemoveOptions struct {
 	output       string
 	timeout      time.Duration
 	stdout       io.Writer
+}
+
+type nodePrepareJSONOutput struct {
+	NodeName      string `json:"node_name"`
+	NodeDir       string `json:"node_dir"`
+	TokenPath     string `json:"token_path"`
+	TokenHashPath string `json:"token_hash_path"`
+	CertPath      string `json:"cert_path"`
+	KeyPath       string `json:"key_path"`
+}
+
+type nodeInitJSONOutput struct {
+	NodeName         string `json:"node_name"`
+	Accepted         bool   `json:"accepted"`
+	RegisteredAtUnix int64  `json:"registered_at_unix,omitempty"`
+	RejectReason     string `json:"reject_reason,omitempty"`
 }
 
 type nodeListJSONOutput struct {
@@ -66,8 +107,55 @@ func newNodeCommand() *cobra.Command {
 		Short: "Manage v2 mesh nodes",
 	}
 
+	cmd.AddCommand(newNodePrepareCommand())
+	cmd.AddCommand(newNodeInitCommand())
 	cmd.AddCommand(newNodeListCommand())
 	cmd.AddCommand(newNodeRemoveCommand())
+	return cmd
+}
+
+func newNodePrepareCommand() *cobra.Command {
+	options := nodePrepareOptions{output: topologyOutputHuman}
+
+	cmd := &cobra.Command{
+		Use:   "prepare <name>",
+		Short: "Prepare v2 node token and certificate material",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			options.nodeName = args[0]
+			options.topologyPath = topologyPath
+			options.configDir = configDir
+			options.stdout = cmd.OutOrStdout()
+			return runNodePrepareCommand(options)
+		},
+	}
+
+	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
+	return cmd
+}
+
+func newNodeInitCommand() *cobra.Command {
+	options := nodeInitOptions{
+		output:  topologyOutputHuman,
+		timeout: defaultNodeInitTimeout,
+	}
+
+	cmd := &cobra.Command{
+		Use:   "init <name>",
+		Short: "Register a prepared v2 node with the control plane",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			options.nodeName = args[0]
+			options.topologyPath = topologyPath
+			options.configDir = configDir
+			options.stdout = cmd.OutOrStdout()
+			return runNodeInitCommand(options)
+		},
+	}
+
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane gRPC address")
+	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
+	cmd.Flags().DurationVar(&options.timeout, "timeout", defaultNodeInitTimeout, "Init timeout")
 	return cmd
 }
 
@@ -111,6 +199,127 @@ func newNodeRemoveCommand() *cobra.Command {
 	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
 	cmd.Flags().DurationVar(&options.timeout, "timeout", defaultNodeRemoveTimeout, "Remove timeout")
 	return cmd
+}
+
+func runNodePrepareCommand(options nodePrepareOptions) error {
+	output, err := normalizeTopologyOutput(options.output)
+	if err != nil {
+		return err
+	}
+	topo, err := loadTopologyV2(options.topologyPath)
+	if err != nil {
+		return err
+	}
+	node, err := findTopologyNode(topo, options.nodeName)
+	if err != nil {
+		return err
+	}
+	nd, err := safeNodeConfigDir(options.configDir, node.Name)
+	if err != nil {
+		return err
+	}
+
+	caCert, caKey, err := loadOrCreateMeshCA(options.configDir, topo.Mesh.Name)
+	if err != nil {
+		return fmt.Errorf("prepare mesh CA: %w", err)
+	}
+	certPEM, keyPEM, err := pkgtls.IssueCert(caCert, caKey, node.Name, nodeCertificateHosts(node))
+	if err != nil {
+		return fmt.Errorf("issue node certificate for %q: %w", node.Name, err)
+	}
+	if err := pkgtls.SaveCertKey(nd, certPEM, keyPEM); err != nil {
+		return fmt.Errorf("save node certificate for %q: %w", node.Name, err)
+	}
+
+	token, err := pkgtls.GenerateToken()
+	if err != nil {
+		return fmt.Errorf("generate token for %q: %w", node.Name, err)
+	}
+	tokenHash, err := pkgtls.HashToken(token)
+	if err != nil {
+		return fmt.Errorf("hash token for %q: %w", node.Name, err)
+	}
+	if err := saveToken(nd, token); err != nil {
+		return fmt.Errorf("save raw token for %q: %w", node.Name, err)
+	}
+	if err := pkgtls.SaveTokenHash(nd, tokenHash); err != nil {
+		return fmt.Errorf("save token hash for %q: %w", node.Name, err)
+	}
+
+	result := nodePrepareJSONOutput{
+		NodeName:      node.Name,
+		NodeDir:       nd,
+		TokenPath:     filepath.Join(nd, "token"),
+		TokenHashPath: filepath.Join(nd, "mesh.token"),
+		CertPath:      filepath.Join(nd, "node.crt"),
+		KeyPath:       filepath.Join(nd, "node.key"),
+	}
+	return writeNodePrepareResult(commandOutput(options.stdout), output, result)
+}
+
+func runNodeInitCommand(options nodeInitOptions) error {
+	validated, err := validateNodeInitOptions(options)
+	if err != nil {
+		return err
+	}
+	topo, err := loadTopologyV2(validated.topologyPath)
+	if err != nil {
+		return err
+	}
+	node, err := findTopologyNode(topo, validated.nodeName)
+	if err != nil {
+		return err
+	}
+	nd, err := safeNodeConfigDir(validated.configDir, node.Name)
+	if err != nil {
+		return err
+	}
+	if _, err := pkgtls.LoadCertKey(nd); err != nil {
+		return fmt.Errorf("load prepared node cert/key for %q: %w", node.Name, err)
+	}
+	certPEM, err := os.ReadFile(filepath.Join(nd, "node.crt"))
+	if err != nil {
+		return fmt.Errorf("read prepared node certificate for %q: %w", node.Name, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), validated.timeout)
+	defer cancel()
+
+	conn, err := grpc.NewClient(validated.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	resp, err := controlpb.NewControlPlaneClient(conn).RegisterNode(ctx, &controlpb.RegisterNodeRequest{
+		NodeName:    node.Name,
+		Roles:       roleStrings(node.Roles),
+		NodeCertPem: append([]byte(nil), certPEM...),
+		NodeVersion: awgmesh.Version,
+		OverlayIp:   node.OverlayIP,
+		Region:      node.Region,
+	})
+	if err != nil {
+		return fmt.Errorf("register node %q: %w", node.Name, err)
+	}
+	if resp == nil {
+		return fmt.Errorf("register node %q: control plane returned nil response", node.Name)
+	}
+
+	result := nodeInitJSONOutput{
+		NodeName:         node.Name,
+		Accepted:         resp.GetAccepted(),
+		RegisteredAtUnix: resp.GetRegisteredAtUnix(),
+		RejectReason:     resp.GetRejectReason(),
+	}
+	if !resp.GetAccepted() {
+		detail := strings.TrimSpace(resp.GetRejectReason())
+		if detail == "" {
+			detail = "control plane rejected registration"
+		}
+		return fmt.Errorf("register node %q rejected: %s", node.Name, detail)
+	}
+	return writeNodeInitResult(commandOutput(validated.stdout), validated.output, result)
 }
 
 func runNodeListCommand(options nodeListOptions) error {
@@ -175,6 +384,34 @@ func runNodeRemoveCommand(options nodeRemoveOptions) error {
 	return writeNodeRemoveResult(commandOutput(validated.stdout), validated.output, result)
 }
 
+func validateNodeInitOptions(options nodeInitOptions) (nodeInitOptions, error) {
+	nodeName := strings.TrimSpace(options.nodeName)
+	if nodeName == "" {
+		return nodeInitOptions{}, fmt.Errorf("node name is required")
+	}
+	controlPlane := strings.TrimSpace(options.controlPlane)
+	if controlPlane == "" {
+		return nodeInitOptions{}, fmt.Errorf("--control-plane is required")
+	}
+	output, err := normalizeTopologyOutput(options.output)
+	if err != nil {
+		return nodeInitOptions{}, err
+	}
+	timeout := options.timeout
+	if timeout <= 0 {
+		timeout = defaultNodeInitTimeout
+	}
+	return nodeInitOptions{
+		nodeName:     nodeName,
+		topologyPath: options.topologyPath,
+		configDir:    options.configDir,
+		controlPlane: controlPlane,
+		output:       output,
+		timeout:      timeout,
+		stdout:       options.stdout,
+	}, nil
+}
+
 func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, error) {
 	nodeName := strings.TrimSpace(options.nodeName)
 	if nodeName == "" {
@@ -209,6 +446,35 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 	}, nil
 }
 
+func writeNodePrepareResult(out io.Writer, output string, result nodePrepareJSONOutput) error {
+	switch output {
+	case topologyOutputHuman:
+		_, err := fmt.Fprintf(out, "node %q prepared: node_dir=%s token=%s token_hash=%s cert=%s key=%s\n",
+			result.NodeName, result.NodeDir, result.TokenPath, result.TokenHashPath, result.CertPath, result.KeyPath)
+		return err
+	case topologyOutputJSON:
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	default:
+		return fmt.Errorf("unsupported node prepare output %q", output)
+	}
+}
+
+func writeNodeInitResult(out io.Writer, output string, result nodeInitJSONOutput) error {
+	switch output {
+	case topologyOutputHuman:
+		_, err := fmt.Fprintf(out, "node %q registered: registered_at_unix=%d\n", result.NodeName, result.RegisteredAtUnix)
+		return err
+	case topologyOutputJSON:
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	default:
+		return fmt.Errorf("unsupported node init output %q", output)
+	}
+}
+
 func writeNodeRemoveResult(out io.Writer, output string, result nodeRemoveJSONOutput) error {
 	switch output {
 	case topologyOutputHuman:
@@ -221,6 +487,88 @@ func writeNodeRemoveResult(out io.Writer, output string, result nodeRemoveJSONOu
 	default:
 		return fmt.Errorf("unsupported node remove output %q", output)
 	}
+}
+
+func findTopologyNode(topo *topology.TopologyV2, name string) (topology.NodeV2, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return topology.NodeV2{}, fmt.Errorf("node name is required")
+	}
+	if topo == nil {
+		return topology.NodeV2{}, fmt.Errorf("topology is required")
+	}
+	for _, node := range topo.Nodes {
+		if node.Name == trimmed {
+			return node, nil
+		}
+	}
+	return topology.NodeV2{}, fmt.Errorf("node %q is not declared in schema v2 topology", trimmed)
+}
+
+func safeNodeConfigDir(configDir, name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", fmt.Errorf("node name is required")
+	}
+	if trimmed == "." || trimmed == ".." || strings.ContainsAny(trimmed, `/\`) {
+		return "", fmt.Errorf("node name %q must be a single path segment; legacy role-specific output paths are not supported", name)
+	}
+
+	root := filepath.Clean(filepath.Join(configDir, "nodes"))
+	dir := filepath.Clean(filepath.Join(root, trimmed))
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("node name %q resolves outside nodes directory", name)
+	}
+	return dir, nil
+}
+
+func loadOrCreateMeshCA(configDir, meshName string) (*x509.Certificate, crypto.PrivateKey, error) {
+	certPath := filepath.Join(configDir, "ca.crt")
+	keyPath := filepath.Join(configDir, "ca.key")
+	certMissing := fileMissing(certPath)
+	keyMissing := fileMissing(keyPath)
+	if certMissing && keyMissing {
+		commonName := strings.TrimSpace(meshName)
+		if commonName == "" {
+			commonName = "awg-mesh"
+		}
+		cert, key, err := pkgtls.GenerateCA(commonName + " CA")
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := pkgtls.SaveCA(configDir, cert, key); err != nil {
+			return nil, nil, err
+		}
+		return cert, key, nil
+	}
+	if certMissing != keyMissing {
+		return nil, nil, fmt.Errorf("mesh CA is incomplete: both ca.crt and ca.key are required")
+	}
+	return pkgtls.LoadCA(configDir)
+}
+
+func fileMissing(path string) bool {
+	_, err := os.Stat(path)
+	return os.IsNotExist(err)
+}
+
+func nodeCertificateHosts(node topology.NodeV2) []string {
+	candidates := []string{node.Name, node.OverlayIP, node.BridgeIP, node.PublicIP}
+	hosts := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		hosts = append(hosts, trimmed)
+	}
+	return hosts
 }
 
 func buildNodeListEntries(topo *topology.TopologyV2) []nodeListEntry {

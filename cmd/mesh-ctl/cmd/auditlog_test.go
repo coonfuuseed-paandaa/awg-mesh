@@ -13,6 +13,7 @@ import (
 
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestRunAuditLogQueryCommandSendsFiltersAndOutputsJSON(t *testing.T) {
@@ -137,9 +138,9 @@ type capturingAuditServer struct {
 }
 
 func (s *capturingAuditServer) QueryAudit(req *controlpb.QueryAuditRequest, stream controlpb.ControlPlane_QueryAuditServer) error {
-	cp := *req
+	cp := proto.Clone(req).(*controlpb.QueryAuditRequest)
 	s.mu.Lock()
-	s.request = &cp
+	s.request = cp
 	s.mu.Unlock()
 	for _, entry := range s.entries {
 		if err := stream.Send(entry); err != nil {
