@@ -26,6 +26,10 @@ PLAYBOOK="${REPO_ROOT}/docs/PRODUCTION-TESTING-PLAYBOOK.md"
 TOPOLOGY="${REPO_ROOT}/pkg/topology/testdata/v2-topology.yml"
 MESH_CTL="${TMP_ROOT}/mesh-ctl"
 NODE_BIN="${TMP_ROOT}/awg-mesh-node"
+CONFIG_DIR="${TMP_ROOT}/config"
+RESTORED_CONFIG="${TMP_ROOT}/restored-config"
+RESTORED_TOPOLOGY="${TMP_ROOT}/restored-topology.yml"
+ARCHIVE="${TMP_ROOT}/backup.zip"
 
 pass=0
 fail=0
@@ -95,7 +99,7 @@ scenario() {
     return 0
 }
 
-s1_playbook_surface() {
+preflight_playbook_surface() {
     [[ -f "${PLAYBOOK}" ]] || return 1
     require_contains "${PLAYBOOK}" "Production Testing Playbook - awg-mesh v2.0" || return 1
     require_contains "${PLAYBOOK}" "S1 - First-run binaries" || return 1
@@ -104,7 +108,7 @@ s1_playbook_surface() {
     require_not_contains "${PLAYBOOK}" "master prepare --name" || return 1
 }
 
-s2_first_run_binaries() {
+s1_first_run_binaries() {
     run_capture build_mesh_ctl "${GO}" build -o "${MESH_CTL}" ./cmd/mesh-ctl >/dev/null || return 1
     run_capture build_node "${GO}" build -o "${NODE_BIN}" ./cmd/awg-mesh-node >/dev/null || return 1
 
@@ -122,7 +126,7 @@ s2_first_run_binaries() {
     require_contains "${mesh_help}" "upgrade" || return 1
 }
 
-s3_topology_first_look() {
+s2_topology_first_look() {
     local validate_human validate_json node_json
     validate_human="$(run_capture topology_validate_human "${MESH_CTL}" --topology "${TOPOLOGY}" topology validate)" || return 1
     validate_json="$(run_capture topology_validate_json "${MESH_CTL}" --topology "${TOPOLOGY}" topology validate --output json)" || return 1
@@ -138,33 +142,35 @@ s3_topology_first_look() {
     require_contains "${node_json}" '"home-server-01"' || return 1
 }
 
-s4_prepare_backup_restore() {
-    local config_dir="${TMP_ROOT}/config"
-    local restored_config="${TMP_ROOT}/restored-config"
-    local restored_topology="${TMP_ROOT}/restored-topology.yml"
-    local archive="${TMP_ROOT}/backup.zip"
+s3_admin_prepare_artifacts() {
+    run_capture prepare_master "${MESH_CTL}" --topology "${TOPOLOGY}" --config-dir "${CONFIG_DIR}" node prepare master-01 >/dev/null || return 1
+    run_capture prepare_client "${MESH_CTL}" --topology "${TOPOLOGY}" --config-dir "${CONFIG_DIR}" node prepare home-server-01 >/dev/null || return 1
 
-    run_capture prepare_master "${MESH_CTL}" --topology "${TOPOLOGY}" --config-dir "${config_dir}" node prepare master-01 >/dev/null || return 1
-    run_capture prepare_client "${MESH_CTL}" --topology "${TOPOLOGY}" --config-dir "${config_dir}" node prepare home-server-01 >/dev/null || return 1
+    [[ -f "${CONFIG_DIR}/ca.crt" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/master-01/token" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/master-01/mesh.token" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/master-01/node.crt" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/master-01/node.key" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/home-server-01/token" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/home-server-01/mesh.token" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/home-server-01/node.crt" ]] || return 1
+    [[ -f "${CONFIG_DIR}/nodes/home-server-01/node.key" ]] || return 1
+}
 
-    [[ -f "${config_dir}/ca.crt" ]] || return 1
-    [[ -f "${config_dir}/nodes/master-01/token" ]] || return 1
-    [[ -f "${config_dir}/nodes/master-01/mesh.token" ]] || return 1
-    [[ -f "${config_dir}/nodes/master-01/node.crt" ]] || return 1
-    [[ -f "${config_dir}/nodes/master-01/node.key" ]] || return 1
-    [[ -f "${config_dir}/nodes/home-server-01/token" ]] || return 1
-    [[ -f "${config_dir}/nodes/home-server-01/node.crt" ]] || return 1
-
+s4_backup_and_restore() {
     local backup_out restore_out
-    backup_out="$(run_capture backup "${MESH_CTL}" --topology "${TOPOLOGY}" --config-dir "${config_dir}" backup "${archive}")" || return 1
-    restore_out="$(run_capture restore "${MESH_CTL}" --topology "${restored_topology}" --config-dir "${restored_config}" restore "${archive}" --confirm)" || return 1
+    backup_out="$(run_capture backup "${MESH_CTL}" --topology "${TOPOLOGY}" --config-dir "${CONFIG_DIR}" backup "${ARCHIVE}")" || return 1
+    restore_out="$(run_capture restore "${MESH_CTL}" --topology "${RESTORED_TOPOLOGY}" --config-dir "${RESTORED_CONFIG}" restore "${ARCHIVE}" --confirm)" || return 1
 
     require_contains "${backup_out}" "backup written" || return 1
     require_contains "${restore_out}" "backup restored" || return 1
-    [[ -s "${archive}" ]] || return 1
-    [[ -f "${restored_topology}" ]] || return 1
-    [[ -f "${restored_config}/nodes/master-01/token" ]] || return 1
-    [[ -f "${restored_config}/nodes/home-server-01/node.crt" ]] || return 1
+    [[ -s "${ARCHIVE}" ]] || return 1
+    [[ -f "${RESTORED_TOPOLOGY}" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/master-01/token" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/token" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/mesh.token" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/node.crt" ]] || return 1
+    [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/node.key" ]] || return 1
 }
 
 s5_upgrade_and_control_plane() {
@@ -245,10 +251,14 @@ write_report() {
     } >"${REPORT_FILE}"
 }
 
-scenario "S1" "Playbook surface is v2.0 and runnable" s1_playbook_surface
-scenario "S2" "First-run binaries" s2_first_run_binaries
-scenario "S3" "Topology-as-code first look" s3_topology_first_look
-scenario "S4" "Admin prepare, backup, and restore" s4_prepare_backup_restore
+echo "=== Preflight Playbook surface is v2.0 and runnable ==="
+preflight_playbook_surface
+echo "PASS - Preflight Playbook surface is v2.0 and runnable"
+
+scenario "S1" "First-run binaries" s1_first_run_binaries
+scenario "S2" "Topology-as-code first look" s2_topology_first_look
+scenario "S3" "Admin prepare artifacts" s3_admin_prepare_artifacts
+scenario "S4" "Backup and restore" s4_backup_and_restore
 scenario "S5" "Upgrade plan and control-plane startup" s5_upgrade_and_control_plane
 scenario "S6" "Critical-suite handoff" s6_critical_suite_handoff
 
