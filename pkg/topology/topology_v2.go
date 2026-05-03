@@ -65,6 +65,7 @@ type NodeV2 struct {
 	BridgeIP        string      `yaml:"bridge_ip,omitempty"`
 	PublicIP        string      `yaml:"public_ip,omitempty"` // ingress only
 	Region          string      `yaml:"region,omitempty"`
+	Platform        string      `yaml:"platform,omitempty"`         // "linux" | "mikrotik" | etc.
 	PreferredMaster string      `yaml:"preferred_master,omitempty"` // clients (HA-2 metric hint)
 	InternetIface   string      `yaml:"internet_iface,omitempty"`   // egress only
 	ClientProtocol  string      `yaml:"client_protocol,omitempty"`  // "vanilla-wg" | "amneziawg"
