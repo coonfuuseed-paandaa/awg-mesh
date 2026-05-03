@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **F-009 CR-012 emulation playbook v2** - `docs/PRODUCTION-TESTING-PLAYBOOK.md` is now a v2.0 customer-mode release walkthrough, and `tests/emulation-playbook/run.sh` executes the playbook against real `mesh-ctl` / `awg-mesh-node` binaries, writes a run report under `.agent/reports/`, and prints `PRODUCT_WORKS` only after every scenario passes.
 - **F-009 CR-011 critical-suite v2 gates** — `tests/critical/run-all.sh` now supports strict release mode (`--strict` or `CRITICAL_STRICT=1`) that fails on skipped critical scripts. CR-011 replaces the CR-owned stubs for latency, throughput, memory, and release-readiness; adds decommission, cert-rotation, observability, control-plane DR, availability, logging, upgrade, audit-log-query, and synthetic capacity gates. `release-readiness.sh` now reports explicit blockers for CR-012 emulation playbook, CR-013 migration tooling, CR-014 Mikrotik v2, and CR-015 certificate lifecycle.
 - **F-004 extended data-plane test coverage** — new harness `tests/simulation/data-plane-extended.sh` orchestrates 6 FR modules under `tests/simulation/modules/` covering data-plane behaviour beyond the route-presence + base-reachability gates of `issue-92-rotation.sh`:
   - **FR-1** flow-distribution (fr1-flow-distribution.sh) — 200 unique-5-tuple UDP flows, per-master tcpdump count, asserts [40%, 60%] balance per NFR-2.
