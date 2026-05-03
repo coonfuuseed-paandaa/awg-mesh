@@ -27,5 +27,15 @@ critical_run_go_tests_required() {
             cat "$output_file" >&2
             return 1
         fi
+        if grep -Eq "^--- SKIP:[[:space:]]+${test_name}([[:space:]]|/|$)" "$output_file"; then
+            echo "FAIL - required test was skipped: ${test_name}" >&2
+            cat "$output_file" >&2
+            return 1
+        fi
+        if ! grep -Eq "^--- PASS:[[:space:]]+${test_name}([[:space:]]|/|$)" "$output_file"; then
+            echo "FAIL - required test did not pass: ${test_name}" >&2
+            cat "$output_file" >&2
+            return 1
+        fi
     done
 }
