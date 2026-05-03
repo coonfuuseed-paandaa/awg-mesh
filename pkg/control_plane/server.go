@@ -12,6 +12,8 @@ import (
 	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -24,11 +26,8 @@ import (
 //
 // Streaming RPCs that depend on yet-unwritten subsystems return Unimplemented:
 //
-//	RotateAWGParamsMeshWide  → CR-008 mesh-wide rotation orchestrator
-//	SignalExchange           → CR-007 NAT signal relay
-//	StreamServiceRegistry    → CR-006 ingress mode (ServiceRegistry)
-//	StreamCertUpdate         → CR-016 cert lifecycle
-//	QueryAudit               → CR-020 audit query (in-memory log already populated here)
+//	SignalExchange        → CR-007 NAT signal relay
+//	StreamServiceRegistry → CR-006 ingress mode (ServiceRegistry)
 type Server struct {
 	pb.UnimplementedControlPlaneServer
 	registry       *Registry
@@ -37,6 +36,7 @@ type Server struct {
 	peerListBcast  *PeerListBroadcaster
 	ownershipBcast *OwnershipBroadcaster
 	rotation       *meshrotation.Orchestrator
+	certLifecycle  *CertLifecycle
 }
 
 // NewServer wires the provided dependencies into a Server. The ledger
@@ -330,7 +330,7 @@ func (s *Server) RotateAWGParamsMeshWide(stream pb.ControlPlane_RotateAWGParamsM
 	return status.Error(codes.InvalidArgument, execErr.Error())
 }
 
-// --- Stubs for streams handled by later CRs. ---
+// --- Streams handled by later CRs. ---
 
 func (s *Server) SignalExchange(stream pb.ControlPlane_SignalExchangeServer) error {
 	return status.Error(codes.Unimplemented, "NAT signal relay lands in CR-007")
@@ -341,7 +341,86 @@ func (s *Server) StreamServiceRegistry(req *pb.StreamServiceRegistryRequest, str
 }
 
 func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPlane_StreamCertUpdateServer) error {
-	return status.Error(codes.Unimplemented, "cert lifecycle lands in CR-016")
+	name := req.GetNodeName()
+	if name == "" {
+		return status.Error(codes.InvalidArgument, "node_name required")
+	}
+	authenticatedName, err := authenticatedStreamNodeName(stream.Context())
+	if err != nil {
+		return status.Error(codes.Unauthenticated, err.Error())
+	}
+	if authenticatedName != name {
+		return status.Errorf(codes.Unauthenticated, "authenticated node %q cannot request cert update for %q", authenticatedName, name)
+	}
+	if s.certLifecycle == nil {
+		return status.Error(codes.FailedPrecondition, "cert lifecycle is not configured")
+	}
+	for {
+		node, ok := s.registry.Lookup(name)
+		if !ok {
+			return status.Errorf(codes.NotFound, "node %q not registered", name)
+		}
+		update, overlapUntil, due, err := s.certLifecycle.NextDueUpdate(node)
+		if err != nil {
+			return status.Error(codes.FailedPrecondition, err.Error())
+		}
+		if due {
+			if err := s.registry.AllowCertRollover(name, update.GetCertPem(), overlapUntil); err != nil {
+				if errors.Is(err, ErrRegistryNotFound) {
+					return status.Errorf(codes.NotFound, "node %q not registered", name)
+				}
+				if errors.Is(err, ErrRegistryPendingCert) {
+					return status.Error(codes.Aborted, err.Error())
+				}
+				return status.Error(codes.Internal, err.Error())
+			}
+			s.audit.Append(AuditEvent{
+				EventType: "cert-update-issued",
+				NodeName:  name,
+				Detail:    fmt.Sprintf("valid_until=%d overlap_until=%d", update.GetValidUntilUnix(), overlapUntil.Unix()),
+			})
+			if err := stream.Send(update); err != nil {
+				if rollbackErr := s.registry.ClearCertRollover(name, update.GetCertPem()); rollbackErr != nil && !errors.Is(rollbackErr, ErrRegistryNotFound) {
+					return status.Errorf(codes.Internal, "rollback pending cert after send failure: %v", rollbackErr)
+				}
+				if stream.Context().Err() != nil {
+					return nil
+				}
+				return err
+			}
+			continue
+		}
+
+		timer := time.NewTimer(s.certLifecycle.DelayUntilDue(node))
+		select {
+		case <-stream.Context().Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+}
+
+func authenticatedStreamNodeName(ctx context.Context) (string, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", errors.New("mTLS peer identity required")
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return "", errors.New("mTLS peer identity required")
+	}
+	if len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.PeerCertificates) == 0 {
+		return "", errors.New("verified client certificate required")
+	}
+	cert := tlsInfo.State.PeerCertificates[0]
+	if cert.Subject.CommonName != "" {
+		return cert.Subject.CommonName, nil
+	}
+	if len(cert.DNSNames) > 0 {
+		return cert.DNSNames[0], nil
+	}
+	return "", errors.New("client certificate identity is empty")
 }
 
 // --- Helpers -----------------------------------------------------------------

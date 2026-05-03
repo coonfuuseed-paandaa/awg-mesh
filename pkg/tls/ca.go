@@ -59,6 +59,14 @@ func GenerateCA(commonName string) (*x509.Certificate, crypto.PrivateKey, error)
 // IssueCert issues a node certificate signed by the given CA.
 // hosts may contain IP addresses or DNS names; both are added as SANs.
 func IssueCert(caCert *x509.Certificate, caKey crypto.PrivateKey, commonName string, hosts []string) (certPEM, keyPEM []byte, err error) {
+	return IssueCertWithValidity(caCert, caKey, commonName, hosts, 365*24*time.Hour)
+}
+
+// IssueCertWithValidity issues a node certificate with a caller-selected lifetime.
+func IssueCertWithValidity(caCert *x509.Certificate, caKey crypto.PrivateKey, commonName string, hosts []string, validFor time.Duration) (certPEM, keyPEM []byte, err error) {
+	if validFor <= 0 {
+		return nil, nil, fmt.Errorf("certificate validity must be positive")
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate node key: %w", err)
@@ -76,7 +84,7 @@ func IssueCert(caCert *x509.Certificate, caKey crypto.PrivateKey, commonName str
 			CommonName: commonName,
 		},
 		NotBefore: now.Add(-certificateValidityBackdate),
-		NotAfter:  now.Add(365 * 24 * time.Hour),
+		NotAfter:  now.Add(validFor),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageClientAuth,

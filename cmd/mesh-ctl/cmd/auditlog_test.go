@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,6 +14,8 @@ import (
 
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -170,6 +173,8 @@ func startAuditLogTestServer(t *testing.T, server controlpb.ControlPlaneServer) 
 	controlpb.RegisterControlPlaneServer(gs, server)
 	serveErrCh := make(chan error, 1)
 	go func() { serveErrCh <- gs.Serve(lis) }()
+	addr := lis.Addr().String()
+	waitForAuditLogTestServer(t, addr)
 
 	teardown := func() {
 		gs.Stop()
@@ -182,5 +187,22 @@ func startAuditLogTestServer(t *testing.T, server controlpb.ControlPlaneServer) 
 			t.Errorf("grpc Serve did not stop")
 		}
 	}
-	return lis.Addr().String(), teardown
+	return addr, teardown
+}
+
+func waitForAuditLogTestServer(t *testing.T, addr string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new readiness client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	conn.Connect()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		if !conn.WaitForStateChange(ctx, state) {
+			t.Fatalf("audit log test server did not become ready: state=%s err=%v", state, ctx.Err())
+		}
+	}
 }

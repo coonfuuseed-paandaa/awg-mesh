@@ -16,6 +16,8 @@ This playbook validates these user-facing surfaces:
 - `awg-mesh-node` first-run version output and control-plane startup behavior.
 - v2.0 topology-as-code using `pkg/topology/testdata/v2-topology.yml`.
 - Admin-side prepare -> backup -> restore lifecycle.
+- Control-plane/clientd certificate lifecycle coverage through the critical
+  suite handoff.
 - The handoff from customer-mode walkthrough to the automated critical suite.
 
 This playbook deliberately does not validate:
@@ -25,7 +27,6 @@ This playbook deliberately does not validate:
 - RouterOS CHR behavior. The CR-014 static RouterOS script gate runs in the
   critical suite; real CHR import remains in the release gate.
 - v1.x topology migration. CR-013 owns migration tooling.
-- Certificate lifecycle completion. CR-015 owns automatic cert rotation.
 
 ## Prerequisites
 
@@ -206,6 +207,7 @@ The script writes a customer-mode run report to:
 |---|---|---|
 | F-009 FR-1..FR-14 | v2 mesh operator surface and release readiness | S1, S2, S6 |
 | F-009 FR-15 | Decommission lifecycle evidence through critical suite handoff | S6 |
+| F-009 FR-16 | Automatic node certificate lifecycle evidence through critical suite handoff | S6 |
 | F-009 FR-18 | Backup/restore and control-plane DR | S4, S5, S6 |
 | F-009 FR-19 | Upgrade planning flow | S5 |
 | F-009 FR-20 | Audit log query coverage through critical suite handoff | S6 |

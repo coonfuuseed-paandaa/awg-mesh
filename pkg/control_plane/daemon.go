@@ -2,6 +2,9 @@ package control_plane
 
 import (
 	"context"
+	"crypto"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -13,17 +16,18 @@ import (
 	"syscall"
 	"time"
 
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
-// Config drives the control-plane daemon. CR-002 keeps it minimal — TLS bootstrap,
-// state persistence, and a listen address. mTLS material lands in CR-016 (cert
-// lifecycle); for CR-002 the listener uses insecure transport (intra-mesh
-// only — never bind to a public interface).
+// Config drives the control-plane daemon.
 type Config struct {
 	ListenAddr              string        // e.g. "127.0.0.1:51820" — control-plane gRPC port
 	StateDir                string        // dir for audit log + persisted ledger
+	CADir                   string        // dir containing ca.crt + ca.key for cert lifecycle; defaults to StateDir when present
+	CertRotationDays        int           // FR-16 rotation interval; defaults to 90
 	AuditCap                int           // ring-buffer capacity (default 8192)
 	StartupGrace            time.Duration // delay before declaring readiness (test hook)
 	AllowInsecurePublicBind bool          // explicit opt-in for binding insecure gRPC outside loopback
@@ -62,7 +66,11 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 	ledger := NewLedger()
 	audit := NewAuditLog(cfg.AuditCap)
 	server := NewServer(registry, ledger, audit)
-	gs := grpc.NewServer()
+	serverOptions, err := configureDaemonCertLifecycle(cfg, server)
+	if err != nil {
+		return nil, err
+	}
+	gs := grpc.NewServer(serverOptions...)
 	pb.RegisterControlPlaneServer(gs, server)
 	return &Daemon{
 		cfg:      cfg,
@@ -72,6 +80,96 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 		server:   server,
 		grpc:     gs,
 	}, nil
+}
+
+func configureDaemonCertLifecycle(cfg Config, server *Server) ([]grpc.ServerOption, error) {
+	caDir := cfg.CADir
+	if caDir == "" {
+		caDir = cfg.StateDir
+		hasAnyCA, hasCompleteCA, err := caMaterialState(caDir)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: inspect CA material for cert lifecycle: %w", err)
+		}
+		if !hasAnyCA {
+			return nil, nil
+		}
+		if !hasCompleteCA {
+			return nil, fmt.Errorf("daemon: incomplete CA material for cert lifecycle in %s: ca.crt and ca.key are required", caDir)
+		}
+	}
+	caCert, caKey, err := pkgtls.LoadCA(caDir)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: load CA for cert lifecycle: %w", err)
+	}
+	lifecycle, err := NewCertLifecycle(CAIssuer{CACert: caCert, CAKey: caKey}, CertLifecycleConfig{
+		RotationDays: cfg.CertRotationDays,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("daemon: configure cert lifecycle: %w", err)
+	}
+	server.certLifecycle = lifecycle
+	tlsConfig, err := controlPlaneTLSConfig(cfg, caCert, caKey)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: configure mTLS for cert lifecycle: %w", err)
+	}
+	return []grpc.ServerOption{grpc.Creds(credentials.NewTLS(tlsConfig))}, nil
+}
+
+func controlPlaneTLSConfig(cfg Config, caCert *x509.Certificate, caKey crypto.PrivateKey) (*tls.Config, error) {
+	certPEM, keyPEM, err := pkgtls.IssueCertWithValidity(caCert, caKey, "awg-mesh-control-plane", serverCertHosts(cfg.ListenAddr), time.Duration(defaultCertRotationDays)*24*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	clientCAs := x509.NewCertPool()
+	clientCAs.AddCert(caCert)
+	return &tls.Config{
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCAs,
+		Certificates: []tls.Certificate{serverCert},
+		MinVersion:   tls.VersionTLS13,
+	}, nil
+}
+
+func serverCertHosts(listenAddr string) []string {
+	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil || host == "" {
+		return hosts
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return hosts
+	}
+	return append(hosts, host)
+}
+
+func caMaterialState(dir string) (bool, bool, error) {
+	certExists, err := regularFileExists(filepath.Join(dir, "ca.crt"))
+	if err != nil {
+		return false, false, err
+	}
+	keyExists, err := regularFileExists(filepath.Join(dir, "ca.key"))
+	if err != nil {
+		return false, false, err
+	}
+	return certExists || keyExists, certExists && keyExists, nil
+}
+
+func regularFileExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err == nil {
+		if info.IsDir() {
+			return false, fmt.Errorf("%s is a directory", path)
+		}
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func validateListenAddr(listenAddr string, allowInsecurePublicBind bool) error {

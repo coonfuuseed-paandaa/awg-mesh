@@ -13,7 +13,7 @@
 // RegisterNode + Heartbeat + DecommissionNode + StreamPeerList + StreamOwnership.
 // Streaming RotateAWGParamsMeshWide, SignalExchange, StreamServiceRegistry,
 // QueryAudit, StreamCertUpdate land alongside the consuming features in
-// CR-008, CR-006, CR-020 (audit), CR-016 (cert).
+// CR-008, CR-006, CR-020 (audit), CR-015 (cert).
 package control_plane
 
 import (

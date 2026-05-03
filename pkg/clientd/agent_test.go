@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -130,6 +132,121 @@ func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
 		if len(call.Peers) == 1 && call.Peers[0].PeerName == "stale" {
 			t.Fatalf("stale peer-list version was applied: %#v", calls)
 		}
+	}
+}
+
+func TestAgentAppliesCertUpdateToLocalFiles(t *testing.T) {
+	const streamTestTimeout = 10 * time.Second
+
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	certPEM, keyPEM, err := pkgtls.IssueCert(caCert, caKey, "client-a", []string{"client-a", "10.10.0.10"})
+	if err != nil {
+		t.Fatalf("IssueCert: %v", err)
+	}
+
+	server := &streamingTestServer{
+		registered: make(chan *pb.RegisterNodeRequest, 1),
+		certUpdates: []*pb.CertUpdate{{
+			CertPem:        certPEM,
+			KeyPem:         keyPEM,
+			ValidFromUnix:  time.Now().Add(-time.Minute).Unix(),
+			ValidUntilUnix: time.Now().Add(90 * 24 * time.Hour).Unix(),
+		}},
+	}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "node.crt")
+	keyPath := filepath.Join(dir, "node.key")
+	agent, err := NewAgent(Config{
+		NodeName:      "client-a",
+		Roles:         []role.Role{role.RoleClient},
+		OverlayIP:     "10.10.0.10",
+		Region:        "eu-test",
+		NodeCertPEM:   []byte("cert-bytes"),
+		Version:       "test-version",
+		InterfaceName: "awg-test0",
+		Protocol:      wg.ProtocolAmneziaWG,
+		StatePath:     filepath.Join(dir, "clientd-state.json"),
+		CertPath:      certPath,
+		KeyPath:       keyPath,
+	}, pb.NewControlPlaneClient(conn), &recordingConfigurator{})
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(ctx) }()
+	defer cancel()
+
+	select {
+	case <-server.registered:
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for registration")
+	}
+
+	deadline := time.Now().Add(streamTestTimeout)
+	for time.Now().Before(deadline) {
+		gotCert, certErr := os.ReadFile(certPath)
+		gotKey, keyErr := os.ReadFile(keyPath)
+		if certErr == nil && keyErr == nil && string(gotCert) == string(certPEM) && string(gotKey) == string(keyPEM) {
+			select {
+			case got := <-server.registered:
+				if string(got.GetNodeCertPem()) != string(certPEM) {
+					t.Fatalf("cert update re-registration used old cert bytes: %q", string(got.GetNodeCertPem()))
+				}
+			case <-time.After(streamTestTimeout):
+				t.Fatalf("timed out waiting for cert update re-registration")
+			}
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("agent returned error after cancel: %v", err)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for cert update files")
+}
+
+func TestApplyCertUpdateRemovesNewKeyWhenCertWriteFails(t *testing.T) {
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	certPEM, keyPEM, err := pkgtls.IssueCert(caCert, caKey, "client-a", []string{"client-a", "10.10.0.10"})
+	if err != nil {
+		t.Fatalf("IssueCert: %v", err)
+	}
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "node.crt")
+	keyPath := filepath.Join(dir, "node.key")
+	if err := os.Mkdir(certPath, 0o755); err != nil {
+		t.Fatalf("mkdir certPath: %v", err)
+	}
+
+	err = ApplyCertUpdate(certPath, keyPath, &pb.CertUpdate{
+		CertPem:        certPEM,
+		KeyPem:         keyPEM,
+		ValidUntilUnix: time.Now().Add(90 * 24 * time.Hour).Unix(),
+	})
+	if err == nil {
+		t.Fatalf("expected cert write failure")
+	}
+	if _, statErr := os.Stat(keyPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("new key was not removed after cert write failure: %v", statErr)
 	}
 }
 
@@ -475,8 +592,10 @@ type streamingTestServer struct {
 	registered                 chan *pb.RegisterNodeRequest
 	peerUpdates                []*pb.PeerListUpdate
 	ownershipUpdates           []*pb.OwnershipUpdate
+	certUpdates                []*pb.CertUpdate
 	closePeerAfterUpdates      bool
 	closeOwnershipAfterUpdates bool
+	closeCertAfterUpdates      bool
 }
 
 func (s *streamingTestServer) RegisterNode(_ context.Context, req *pb.RegisterNodeRequest) (*pb.RegisterNodeResponse, error) {
@@ -510,6 +629,19 @@ func (s *streamingTestServer) StreamOwnership(_ *pb.StreamOwnershipRequest, stre
 	return nil
 }
 
+func (s *streamingTestServer) StreamCertUpdate(_ *pb.StreamCertRequest, stream grpc.ServerStreamingServer[pb.CertUpdate]) error {
+	for _, update := range s.certUpdates {
+		if err := stream.Send(update); err != nil {
+			return err
+		}
+	}
+	if s.closeCertAfterUpdates {
+		return nil
+	}
+	<-stream.Context().Done()
+	return nil
+}
+
 func startTestControlPlane(t *testing.T, server pb.ControlPlaneServer) (string, func()) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -519,9 +651,28 @@ func startTestControlPlane(t *testing.T, server pb.ControlPlaneServer) (string, 
 	grpcServer := grpc.NewServer()
 	pb.RegisterControlPlaneServer(grpcServer, server)
 	go func() { _ = grpcServer.Serve(lis) }()
-	return lis.Addr().String(), func() {
+	addr := lis.Addr().String()
+	waitForTestControlPlane(t, addr)
+	return addr, func() {
 		grpcServer.Stop()
 		_ = lis.Close()
+	}
+}
+
+func waitForTestControlPlane(t *testing.T, addr string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new readiness client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	conn.Connect()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		if !conn.WaitForStateChange(ctx, state) {
+			t.Fatalf("test control-plane did not become ready: state=%s err=%v", state, ctx.Err())
+		}
 	}
 }
 

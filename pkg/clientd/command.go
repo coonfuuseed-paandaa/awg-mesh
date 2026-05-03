@@ -2,6 +2,7 @@ package clientd
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,9 +15,11 @@ import (
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -27,6 +30,8 @@ type CommandConfig struct {
 	OverlayIP                 string
 	Region                    string
 	CertPath                  string
+	KeyPath                   string
+	CACertPath                string
 	StateDir                  string
 	InterfaceName             string
 	Protocol                  wg.Protocol
@@ -59,6 +64,8 @@ func ParseCommandConfig(args []string, output io.Writer) (CommandConfig, error) 
 	fs.StringVar(&cfg.OverlayIP, "overlay-ip", "", "assigned overlay IP")
 	fs.StringVar(&cfg.Region, "region", "", "node region")
 	fs.StringVar(&cfg.CertPath, "cert", "", "node certificate PEM path")
+	fs.StringVar(&cfg.KeyPath, "key", "", "node private key PEM path")
+	fs.StringVar(&cfg.CACertPath, "ca-cert", "", "mesh CA certificate PEM path for mTLS control-plane connections")
 	fs.StringVar(&cfg.StateDir, "state-dir", "/var/lib/awg-mesh", "clientd state directory")
 	fs.StringVar(&cfg.InterfaceName, "iface", "awg-mesh0", "WireGuard interface name")
 	fs.StringVar(&protocol, "protocol", string(wg.ProtocolAmneziaWG), "transport protocol: vanilla-wg or amneziawg")
@@ -97,6 +104,14 @@ func ValidateCommandConfig(cfg CommandConfig) (CommandConfig, error) {
 	if len(missing) > 0 {
 		return CommandConfig{}, fmt.Errorf("missing required flags: %s", strings.Join(missing, ", "))
 	}
+	if strings.TrimSpace(cfg.KeyPath) == "" {
+		cfg.KeyPath = filepath.Join(filepath.Dir(cfg.CertPath), "node.key")
+	}
+	if strings.TrimSpace(cfg.CACertPath) == "" {
+		if candidate := defaultCACertPath(cfg.CertPath); candidate != "" && regularFile(candidate) {
+			cfg.CACertPath = candidate
+		}
+	}
 	if cfg.Protocol != wg.ProtocolVanilla && cfg.Protocol != wg.ProtocolAmneziaWG {
 		return CommandConfig{}, fmt.Errorf("invalid --protocol %q", cfg.Protocol)
 	}
@@ -109,7 +124,7 @@ func ValidateCommandConfig(cfg CommandConfig) (CommandConfig, error) {
 	if err := wg.ValidateInterfaceName(cfg.InterfaceName); err != nil {
 		return CommandConfig{}, fmt.Errorf("invalid --iface: %w", err)
 	}
-	if !cfg.AllowInsecureControlPlane && !isLoopbackControlPlaneTarget(cfg.ControlPlane) {
+	if strings.TrimSpace(cfg.CACertPath) == "" && !cfg.AllowInsecureControlPlane && !isLoopbackControlPlaneTarget(cfg.ControlPlane) {
 		return CommandConfig{}, fmt.Errorf("insecure control-plane target %q must be loopback or require --allow-insecure-control-plane", cfg.ControlPlane)
 	}
 	return cfg, nil
@@ -141,7 +156,11 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 	if err != nil {
 		return fmt.Errorf("read cert: %w", err)
 	}
-	conn, err := grpc.NewClient(cfg.ControlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	transportCredentials, err := controlPlaneTransportCredentials(cfg)
+	if err != nil {
+		return err
+	}
+	conn, err := grpc.NewClient(cfg.ControlPlane, grpc.WithTransportCredentials(transportCredentials))
 	if err != nil {
 		return fmt.Errorf("create control-plane client: %w", err)
 	}
@@ -159,6 +178,8 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 		OverlayIP:     cfg.OverlayIP,
 		Region:        cfg.Region,
 		NodeCertPEM:   certPEM,
+		CertPath:      cfg.CertPath,
+		KeyPath:       cfg.KeyPath,
 		Version:       awgmesh.Version,
 		InterfaceName: cfg.InterfaceName,
 		Protocol:      cfg.Protocol,
@@ -169,6 +190,61 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 	}
 	_, _ = fmt.Fprintf(stdout, "clientd node=%s control-plane=%s iface=%s protocol=%s\n", cfg.Name, cfg.ControlPlane, cfg.InterfaceName, cfg.Protocol)
 	return agent.Run(ctx)
+}
+
+func controlPlaneTransportCredentials(cfg CommandConfig) (credentials.TransportCredentials, error) {
+	if strings.TrimSpace(cfg.CACertPath) == "" {
+		return insecure.NewCredentials(), nil
+	}
+	rootCAs, err := pkgtls.LoadCACert(cfg.CACertPath)
+	if err != nil {
+		return nil, fmt.Errorf("load control-plane CA cert: %w", err)
+	}
+	clientCertLoader := loadClientCertificateFromFiles(cfg.CertPath, cfg.KeyPath)
+	if _, err := clientCertLoader(nil); err != nil {
+		return nil, err
+	}
+	return credentials.NewTLS(&tls.Config{
+		RootCAs:              rootCAs,
+		ServerName:           controlPlaneServerName(cfg.ControlPlane),
+		MinVersion:           tls.VersionTLS13,
+		GetClientCertificate: clientCertLoader,
+	}), nil
+}
+
+func loadClientCertificateFromFiles(certPath, keyPath string) func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	return func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert/key: %w", err)
+		}
+		return &cert, nil
+	}
+}
+
+func controlPlaneServerName(target string) string {
+	host, _, err := net.SplitHostPort(target)
+	if err != nil || host == "" {
+		return "localhost"
+	}
+	return strings.Trim(host, "[]")
+}
+
+func defaultCACertPath(certPath string) string {
+	cleanCertPath := filepath.Clean(certPath)
+	if filepath.Base(cleanCertPath) != "node.crt" {
+		return ""
+	}
+	certDir := filepath.Dir(cleanCertPath)
+	if filepath.Base(certDir) == "." || filepath.Base(filepath.Dir(certDir)) != "nodes" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(filepath.Dir(certDir)), "ca.crt")
+}
+
+func regularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func newTransport(protocol wg.Protocol, name string) (wg.Transport, error) {
