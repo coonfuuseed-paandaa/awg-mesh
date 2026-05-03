@@ -7,9 +7,6 @@
 //	clientd       → CR-003 (self-config agent on every non-Mikrotik node)
 //	egress        → CR-005 (clientd + MASQUERADE on internet-bound iface)
 //	ingress       → CR-006 (SNI passthrough + TLS terminate + ACME + HTTP/3 + UDP)
-//
-// Remaining role implementations still print placeholders until their CRs land:
-//
 //	balancer      → CR-007 (policy engine: dumb / labeled / smart-future)
 package main
 
@@ -20,10 +17,12 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/balancer"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/ingress"
@@ -134,6 +133,16 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	ingressHTTP3 := fs.Bool("ingress-http3", false, "ingress: enable HTTP/3 when TLS is configured")
 	var ingressRoutes routeFlags
 	fs.Var(&ingressRoutes, "ingress-route", "ingress: hostname=overlay_ip:port route; repeatable")
+	balancerMode := fs.String("balancer-mode", string(balancer.ModeDumb), "balancer: policy mode: dumb | labeled")
+	balancerHealthInterval := fs.Duration("balancer-health-interval", balancer.DefaultHealthProbeInterval, "balancer: health probe interval")
+	balancerFlowIdleTimeout := fs.Duration("balancer-flow-idle-timeout", balancer.DefaultFlowIdleTimeout, "balancer: sticky flow idle timeout")
+	balancerMetricsAddr := fs.String("balancer-metrics", "", "balancer: Prometheus metrics bind address")
+	var balancerEgresses routeFlags
+	var balancerDSCP routeFlags
+	var balancerFWMark routeFlags
+	fs.Var(&balancerEgresses, "balancer-egress", "balancer: id=overlay_ip:port[,weight=N] egress target; repeatable")
+	fs.Var(&balancerDSCP, "balancer-dscp", "balancer: dscp=egress-id mapping, for example 10=egress-ru; repeatable")
+	fs.Var(&balancerFWMark, "balancer-fwmark", "balancer: fwmark=egress-id mapping, for example 100=egress-eu; repeatable")
 	dryRun := fs.Bool("dry-run", false, "validate selected mode and print runtime plan without opening network resources")
 
 	if err := fs.Parse(args); err != nil {
@@ -206,6 +215,13 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		return runIngress(context.Background(), cfg, *dryRun, stdout, stderr)
+	case "balancer":
+		cfg, err := buildBalancerConfig(*nodeName, *overlayIP, *balancerMode, *balancerHealthInterval, *balancerFlowIdleTimeout, *balancerMetricsAddr, balancerEgresses, balancerDSCP, balancerFWMark)
+		if err != nil {
+			writef(stderr, "balancer: %v\n", err)
+			return 2
+		}
+		return runBalancer(context.Background(), cfg, *dryRun, stdout, stderr)
 	case "client", "clientd":
 		clientdArgs := []string{
 			"--control-plane", *controlPlaneAddr,
@@ -365,6 +381,43 @@ func runIngress(ctx context.Context, cfg ingress.Config, dryRun bool, stdout, st
 	return 0
 }
 
+func runBalancer(ctx context.Context, cfg balancer.Config, dryRun bool, stdout, stderr io.Writer) int {
+	runtime, err := balancer.NewRuntime(cfg, zerolog.New(stderr).With().Timestamp().Str("component", "balancer").Logger())
+	if err != nil {
+		writef(stderr, "balancer: %v\n", err)
+		return 2
+	}
+	plan := runtime.Plan()
+	if dryRun {
+		writef(stdout, "balancer dry-run node=%s overlay=%s mode=%s egresses=%d health=%s flow_idle=%s",
+			plan.Name,
+			plan.OverlayIP,
+			plan.Mode,
+			plan.EgressCount,
+			plan.HealthProbeInterval,
+			plan.FlowIdleTimeout,
+		)
+		if plan.MetricsAddress != "" {
+			writef(stdout, " metrics=%s", plan.MetricsAddress)
+		}
+		for _, egress := range plan.Egresses {
+			writef(stdout, " egress=%s->%s/weight=%d", egress.ID, egress.Target, egress.Weight)
+		}
+		for _, label := range plan.Labels {
+			writef(stdout, " %s=%d->%s", label.Type, label.Value, label.EgressID)
+		}
+		writeLine(stdout, "")
+		return 0
+	}
+	writef(stdout, "awg-mesh-node %s — mode=balancer — node=%s overlay=%s policy=%s egresses=%d\n",
+		versionString(), plan.Name, plan.OverlayIP, plan.Mode, plan.EgressCount)
+	if err := runtime.Run(ctx); err != nil {
+		writef(stderr, "balancer: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func buildIngressConfig(name, overlayIP, publicAddr, tenant, tlsMode, protocol string, healthInterval, udpIdle time.Duration, metricsAddr, acmeCache, acmeEmail string, enableHTTP3 bool, routeValues routeFlags) (ingress.Config, error) {
 	routes := make([]ingress.Route, 0, len(routeValues))
 	for _, value := range routeValues {
@@ -400,6 +453,83 @@ func tlsPlan(plan ingress.Plan) string {
 		return "acme"
 	}
 	return "plain"
+}
+
+func buildBalancerConfig(name, overlayIP, mode string, healthInterval, flowIdle time.Duration, metricsAddr string, egressValues, dscpValues, fwmarkValues routeFlags) (balancer.Config, error) {
+	egresses := make([]balancer.EgressTarget, 0, len(egressValues))
+	for _, value := range egressValues {
+		egress, err := parseBalancerEgress(value)
+		if err != nil {
+			return balancer.Config{}, err
+		}
+		egresses = append(egresses, egress)
+	}
+	labels := make([]balancer.LabelMapping, 0, len(dscpValues)+len(fwmarkValues))
+	for _, value := range dscpValues {
+		label, err := parseBalancerLabel(balancer.LabelDSCP, value)
+		if err != nil {
+			return balancer.Config{}, err
+		}
+		labels = append(labels, label)
+	}
+	for _, value := range fwmarkValues {
+		label, err := parseBalancerLabel(balancer.LabelFWMark, value)
+		if err != nil {
+			return balancer.Config{}, err
+		}
+		labels = append(labels, label)
+	}
+	return balancer.Config{
+		Name:                name,
+		OverlayIP:           overlayIP,
+		Mode:                balancer.Mode(mode),
+		Egresses:            egresses,
+		Labels:              labels,
+		HealthProbeInterval: healthInterval,
+		FlowIdleTimeout:     flowIdle,
+		MetricsAddress:      metricsAddr,
+	}, nil
+}
+
+func parseBalancerEgress(value string) (balancer.EgressTarget, error) {
+	id, rest, ok := strings.Cut(value, "=")
+	if !ok {
+		return balancer.EgressTarget{}, fmt.Errorf("--balancer-egress %q must use id=overlay_ip:port[,weight=N]", value)
+	}
+	parts := strings.Split(rest, ",")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return balancer.EgressTarget{}, fmt.Errorf("--balancer-egress %q is missing target endpoint", value)
+	}
+	egress := balancer.EgressTarget{ID: id, Target: strings.TrimSpace(parts[0]), Weight: 1}
+	for _, raw := range parts[1:] {
+		key, val, found := strings.Cut(strings.TrimSpace(raw), "=")
+		if !found {
+			return balancer.EgressTarget{}, fmt.Errorf("--balancer-egress %q has invalid option %q", value, raw)
+		}
+		switch key {
+		case "weight":
+			weight, err := strconv.Atoi(val)
+			if err != nil {
+				return balancer.EgressTarget{}, fmt.Errorf("--balancer-egress %q has invalid weight %q", value, val)
+			}
+			egress.Weight = weight
+		default:
+			return balancer.EgressTarget{}, fmt.Errorf("--balancer-egress %q has unsupported option %q", value, key)
+		}
+	}
+	return egress, nil
+}
+
+func parseBalancerLabel(labelType balancer.LabelType, value string) (balancer.LabelMapping, error) {
+	rawNumber, egressID, ok := strings.Cut(value, "=")
+	if !ok {
+		return balancer.LabelMapping{}, fmt.Errorf("--balancer-%s %q must use value=egress-id", labelType, value)
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(rawNumber))
+	if err != nil {
+		return balancer.LabelMapping{}, fmt.Errorf("--balancer-%s %q has invalid numeric value %q", labelType, value, rawNumber)
+	}
+	return balancer.LabelMapping{Type: labelType, Value: parsed, EgressID: strings.TrimSpace(egressID)}, nil
 }
 
 type routeFlags []string
