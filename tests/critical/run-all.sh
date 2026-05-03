@@ -4,11 +4,8 @@
 # Per AGENTS.md release gate (rule #10): every release MUST pass the critical
 # test suite on a real or staged dev stand before tag + publish. This runner
 # iterates every *.sh in tests/critical/ except itself, collects PASS/SKIP/FAIL
-# counts, and exits non-zero if any FAIL occurs.
-#
-# CR-001 ships skeleton stubs that all SKIP. Subsequent CRs (CR-002..CR-014)
-# implement individual tests; the runner gates v2.0.0 release readiness once
-# all 18 tests are green.
+# counts, and exits non-zero if any FAIL occurs. In strict release mode it also
+# exits non-zero if any test reports SKIP.
 #
 # Exit codes:
 #   0  — no FAILs (all PASS, or PASS+SKIP mix)
@@ -20,6 +17,28 @@ readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly TESTS_DIR="${REPO_ROOT}/tests/critical"
 readonly RUNNER_SELF="$(basename "${BASH_SOURCE[0]}")"
 
+strict=0
+for arg in "$@"; do
+    case "${arg}" in
+        --strict)
+            strict=1
+            ;;
+        *)
+            echo "[run-all] unknown argument: ${arg}" >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ "${CRITICAL_STRICT:-0}" == "1" ]]; then
+    strict=1
+fi
+
+runner_mode="developer"
+if [[ "${strict}" -eq 1 ]]; then
+    runner_mode="release"
+fi
+
 if [[ ! -d "${TESTS_DIR}" ]]; then
     echo "[run-all] tests directory missing: ${TESTS_DIR}" >&2
     exit 2
@@ -29,6 +48,7 @@ pass=0
 skip=0
 fail=0
 fail_names=()
+skip_names=()
 
 for test_path in "${TESTS_DIR}"/*.sh; do
     [[ -f "${test_path}" ]] || continue
@@ -36,13 +56,14 @@ for test_path in "${TESTS_DIR}"/*.sh; do
     [[ "${test_name}" == "${RUNNER_SELF}" ]] && continue
 
     set +e
-    output="$(bash "${test_path}" 2>&1)"
+    output="$(CRITICAL_RUNNER_MODE="${runner_mode}" bash "${test_path}" 2>&1)"
     exit_code=$?
     set -e
 
     if [[ ${exit_code} -eq 0 ]]; then
         if printf '%s' "${output}" | grep -q '^SKIP'; then
             ((++skip))
+            skip_names+=("${test_name}")
             printf '[SKIP] %-40s — %s\n' "${test_name}" "$(printf '%s' "${output}" | head -1)"
         else
             ((++pass))
@@ -53,6 +74,7 @@ for test_path in "${TESTS_DIR}"/*.sh; do
         fail_names+=("${test_name}")
         printf '[FAIL] %-40s (exit %d)\n' "${test_name}" "${exit_code}"
         printf '%s' "${output}" | sed 's/^/         /'
+        printf '\n'
     fi
 done
 
@@ -60,6 +82,10 @@ echo ""
 echo "Critical-suite summary: ${pass} PASS, ${skip} SKIP, ${fail} FAIL"
 if [[ ${fail} -gt 0 ]]; then
     echo "Failed tests: ${fail_names[*]}"
+    exit 1
+fi
+if [[ "${strict}" -eq 1 && ${skip} -gt 0 ]]; then
+    echo "Strict mode rejects skipped tests: ${skip_names[*]}"
     exit 1
 fi
 exit 0
