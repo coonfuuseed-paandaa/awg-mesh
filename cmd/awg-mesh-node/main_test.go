@@ -1,8 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 )
 
 func TestRunMasterDryRunUsesDefaultDualListener(t *testing.T) {
@@ -57,6 +61,50 @@ func TestRunMasterDryRunUsesCustomPorts(t *testing.T) {
 	}
 }
 
+func TestRunMasterDryRunAcceptsClientPrivateKeyFile(t *testing.T) {
+	t.Parallel()
+
+	keyPath := writeTestWGKey(t)
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--client-private-key-file", keyPath,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), readFileTrimmed(t, keyPath)) {
+		t.Fatalf("dry-run output leaked private key: %s", stdout.String())
+	}
+}
+
+func TestRunMasterDryRunRejectsInvalidClientPrivateKeyFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "bad.key")
+	if err := os.WriteFile(keyPath, []byte("not-a-key\n"), 0o600); err != nil {
+		t.Fatalf("write key fixture: %v", err)
+	}
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--client-private-key-file", keyPath,
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "parse client private key file") {
+		t.Fatalf("expected parse error, got %s", stderr.String())
+	}
+}
+
 func TestRunMasterDryRunRequiresIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -68,6 +116,29 @@ func TestRunMasterDryRunRequiresIdentity(t *testing.T) {
 	if !strings.Contains(stderr.String(), "master name is required") {
 		t.Fatalf("expected validation error, got %s", stderr.String())
 	}
+}
+
+func writeTestWGKey(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	key, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	path := filepath.Join(dir, "client-wg-private.key")
+	if err := os.WriteFile(path, []byte(key.String()+"\n"), 0o600); err != nil {
+		t.Fatalf("write key fixture: %v", err)
+	}
+	return path
+}
+
+func readFileTrimmed(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func TestRunEgressDryRunUsesInternetInterface(t *testing.T) {

@@ -50,12 +50,14 @@ require_no_placeholder "tests/critical/upgrade.sh" "CR-011-upgrade"
 require_no_placeholder "tests/critical/audit-log-query.sh" "CR-011-audit-log-query"
 require_no_placeholder "tests/critical/capacity.sh" "CR-011-capacity"
 require_no_placeholder "tests/critical/migration.sh" "CR-013-migration-tooling"
+require_no_placeholder "tests/critical/mikrotik-v2.sh" "CR-014-mikrotik-v2"
 
 require_file "docs/PRODUCTION-TESTING-PLAYBOOK.md" "CR-012-emulation-playbook"
 require_no_placeholder "tests/emulation-playbook/run.sh" "CR-012-emulation-playbook"
 require_no_placeholder "cmd/mesh-ctl/cmd/migrate.go" "CR-013-migration-tooling"
 require_no_placeholder "pkg/topology/migrate_v1_to_v2.go" "CR-013-migration-tooling"
 require_file "pkg/mikrotik/v2/generator.go" "CR-014-mikrotik-v2"
+require_file "pkg/mikrotik/v2/templates.go" "CR-014-mikrotik-v2"
 
 if awk '/func \(s \*Server\) StreamCertUpdate/ { in_func = 1 } in_func { print; if ($0 == "}") exit }' pkg/control_plane/server.go | grep -q 'codes.Unimplemented'; then
     blockers+=("CR-015-cert-lifecycle: StreamCertUpdate still returns Unimplemented")

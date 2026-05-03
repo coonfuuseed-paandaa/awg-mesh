@@ -162,6 +162,83 @@ func TestRunNodePrepareCommandWritesV2TokenMaterialAndCerts(t *testing.T) {
 	}
 }
 
+func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+	configDir := filepath.Join(dir, "config")
+
+	var out bytes.Buffer
+	err := runNodePrepareCommand(nodePrepareOptions{
+		nodeName:     "router-01",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		platform:     "mikrotik",
+		output:       "json",
+		stdout:       &out,
+	})
+	if err != nil {
+		t.Fatalf("runNodePrepareCommand: %v", err)
+	}
+
+	var got nodePrepareJSONOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode prepare JSON: %v\n%s", err, out.String())
+	}
+	nodeDir := filepath.Join(configDir, "nodes", "router-01")
+	if got.RouterOSScriptPath != filepath.Join(nodeDir, routerOSScriptFilename) {
+		t.Fatalf("routeros_script_path = %q, want %q", got.RouterOSScriptPath, filepath.Join(nodeDir, routerOSScriptFilename))
+	}
+	if got.WireGuardPrivateKeyPath != filepath.Join(nodeDir, mikrotikWGPrivateKeyFile) {
+		t.Fatalf("wireguard_private_key_path = %q", got.WireGuardPrivateKeyPath)
+	}
+	if got.WireGuardPublicKeyPath != filepath.Join(nodeDir, mikrotikWGPublicKeyFile) {
+		t.Fatalf("wireguard_public_key_path = %q", got.WireGuardPublicKeyPath)
+	}
+
+	scriptBytes, err := os.ReadFile(got.RouterOSScriptPath)
+	if err != nil {
+		t.Fatalf("read RouterOS script: %v", err)
+	}
+	script := string(scriptBytes)
+	masterAKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-a", masterClientWGPublicKeyFile))
+	masterBKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-b", masterClientWGPublicKeyFile))
+	for _, want := range []string{
+		"/interface/wireguard",
+		"private-key=\"",
+		"add address=172.21.92.130/32 interface=awg-mesh",
+		"public-key=\"" + masterAKey + "\" endpoint-address=203.0.113.10 endpoint-port=51820",
+		"public-key=\"" + masterBKey + "\" endpoint-address=198.51.100.11 endpoint-port=51820",
+		"allowed-address=172.21.92.2/32,172.21.92.34/32",
+		"allowed-address=172.21.92.20/32,172.21.92.3/32",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("RouterOS script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(strings.ToLower(script), "amnezia") {
+		t.Fatalf("native RouterOS script must not contain AmneziaWG settings:\n%s", script)
+	}
+
+	var secondOut bytes.Buffer
+	if err := runNodePrepareCommand(nodePrepareOptions{
+		nodeName:     "router-01",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		platform:     "mikrotik",
+		output:       "json",
+		stdout:       &secondOut,
+	}); err != nil {
+		t.Fatalf("runNodePrepareCommand second run: %v", err)
+	}
+	secondScript, err := os.ReadFile(got.RouterOSScriptPath)
+	if err != nil {
+		t.Fatalf("read second RouterOS script: %v", err)
+	}
+	if script != string(secondScript) {
+		t.Fatalf("RouterOS script changed after key reuse\nfirst:\n%s\nsecond:\n%s", script, string(secondScript))
+	}
+}
+
 func TestRunNodePrepareCommandRejectsLegacyRoleSpecificNodePath(t *testing.T) {
 	dir := t.TempDir()
 	topologyPath := writeNodeLifecycleTopology(t, dir, "masters/master-01")
@@ -485,4 +562,48 @@ nodes:
 		t.Fatalf("write topology fixture: %v", err)
 	}
 	return path
+}
+
+func writeMikrotikPrepareTopology(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "mikrotik-topology.yml")
+	data := `
+schema_version: 2
+mesh:
+  name: mikrotik-test
+  overlay_supernet: 172.21.92.0/24
+nodes:
+  - name: router-01
+    roles: [client]
+    platform: mikrotik
+    overlay_ip: 172.21.92.130
+  - name: ingress-de
+    roles: [ingress]
+    overlay_ip: 172.21.92.20
+  - name: master-b
+    roles: [master, balancer]
+    overlay_ip: 172.21.92.3
+    bridge_ip: 198.51.100.11
+  - name: egress-us
+    roles: [egress]
+    overlay_ip: 172.21.92.34
+  - name: master-a
+    roles: [master, balancer]
+    overlay_ip: 172.21.92.2
+    public_ip: 203.0.113.10
+    client_protocol: vanilla-wg
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write mikrotik topology fixture: %v", err)
+	}
+	return path
+}
+
+func readTrimmedFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return strings.TrimSpace(string(data))
 }

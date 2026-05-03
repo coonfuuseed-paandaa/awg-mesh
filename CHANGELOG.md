@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **F-009 CR-014 Mikrotik v2 native WireGuard bridge** - `mesh-ctl node prepare --platform mikrotik` now writes real WireGuard key material and a deterministic RouterOS `.rsc` script for native vanilla-WG clients, while masters can consume the generated client-facing private key via `awg-mesh-node --mode master --client-private-key-file`.
 - **F-009 CR-013 migration tooling** - `mesh-ctl migrate` converts v1.x topology YAML into schema v2 topology output, with file overwrite protection, JSON stdout mode, real critical-suite coverage, and release-readiness blockers reduced to CR-014 and CR-015.
 - **F-009 CR-012 emulation playbook v2** - `docs/PRODUCTION-TESTING-PLAYBOOK.md` is now a v2.0 customer-mode release walkthrough, and `tests/emulation-playbook/run.sh` executes the playbook against real `mesh-ctl` / `awg-mesh-node` binaries, writes a run report under `.agent/reports/`, and prints `PRODUCT_WORKS` only after every scenario passes.
 - **F-009 CR-011 critical-suite v2 gates** — `tests/critical/run-all.sh` now supports strict release mode (`--strict` or `CRITICAL_STRICT=1`) that fails on skipped critical scripts. CR-011 replaces the CR-owned stubs for latency, throughput, memory, and release-readiness; adds decommission, cert-rotation, observability, control-plane DR, availability, logging, upgrade, audit-log-query, and synthetic capacity gates. `release-readiness.sh` reports explicit remaining blockers as later CRs land.
