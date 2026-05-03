@@ -18,6 +18,7 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -650,9 +651,28 @@ func startTestControlPlane(t *testing.T, server pb.ControlPlaneServer) (string, 
 	grpcServer := grpc.NewServer()
 	pb.RegisterControlPlaneServer(grpcServer, server)
 	go func() { _ = grpcServer.Serve(lis) }()
-	return lis.Addr().String(), func() {
+	addr := lis.Addr().String()
+	waitForTestControlPlane(t, addr)
+	return addr, func() {
 		grpcServer.Stop()
 		_ = lis.Close()
+	}
+}
+
+func waitForTestControlPlane(t *testing.T, addr string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new readiness client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	conn.Connect()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		if !conn.WaitForStateChange(ctx, state) {
+			t.Fatalf("test control-plane did not become ready: state=%s err=%v", state, ctx.Err())
+		}
 	}
 }
 

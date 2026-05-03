@@ -244,6 +244,9 @@ type streamUpdate struct {
 func recvPeerUpdates(ctx context.Context, stream pb.ControlPlane_StreamPeerListClient, updates chan<- streamUpdate) {
 	for {
 		msg, err := stream.Recv()
+		if err != nil && ctx.Err() != nil {
+			return
+		}
 		update := streamUpdate{peers: msg, err: err}
 		if err != nil {
 			update.err = fmt.Errorf("peer-list stream ended: %w", err)
@@ -262,6 +265,9 @@ func recvPeerUpdates(ctx context.Context, stream pb.ControlPlane_StreamPeerListC
 func recvOwnershipUpdates(ctx context.Context, stream pb.ControlPlane_StreamOwnershipClient, updates chan<- streamUpdate) {
 	for {
 		msg, err := stream.Recv()
+		if err != nil && ctx.Err() != nil {
+			return
+		}
 		update := streamUpdate{ownership: msg, err: err}
 		if err != nil {
 			update.err = fmt.Errorf("ownership stream ended: %w", err)
@@ -280,6 +286,9 @@ func recvOwnershipUpdates(ctx context.Context, stream pb.ControlPlane_StreamOwne
 func recvCertUpdates(ctx context.Context, stream pb.ControlPlane_StreamCertUpdateClient, updates chan<- streamUpdate) {
 	for {
 		msg, err := stream.Recv()
+		if err != nil && ctx.Err() != nil {
+			return
+		}
 		if errors.Is(err, io.EOF) {
 			return
 		}
