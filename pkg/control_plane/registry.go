@@ -37,6 +37,7 @@ var (
 	ErrRegistryNameDup     = errors.New("registry: node name already registered with different cert")
 	ErrRegistryOverlayMove = errors.New("registry: overlay_ip change on re-register is not supported")
 	ErrRegistryPendingCert = errors.New("registry: different pending cert rollover is still active")
+	ErrRegistryOverlap     = errors.New("registry: cert overlap window must be in the future")
 )
 
 // Registry holds the authoritative list of nodes that have called RegisterNode.
@@ -121,17 +122,22 @@ func (r *Registry) AllowCertRollover(name string, certPEM []byte, overlapUntil t
 	if len(certPEM) == 0 {
 		return ErrRegistryNoCert
 	}
+	now := time.Now().UTC()
+	overlapUntil = overlapUntil.UTC()
+	if overlapUntil.IsZero() || !overlapUntil.After(now) {
+		return ErrRegistryOverlap
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	node, ok := r.byName[name]
 	if !ok {
 		return ErrRegistryNotFound
 	}
-	if hasActivePendingCert(*node, time.Now().UTC()) && !certBytesEqual(node.PendingCertPEM, certPEM) {
+	if hasActivePendingCert(*node, now) && !certBytesEqual(node.PendingCertPEM, certPEM) {
 		return ErrRegistryPendingCert
 	}
 	node.PendingCertPEM = append([]byte(nil), certPEM...)
-	node.CertOverlapUntil = overlapUntil.UTC()
+	node.CertOverlapUntil = overlapUntil
 	return nil
 }
 
@@ -240,7 +246,7 @@ func canPromotePendingCert(prev *RegisteredNode, certPEM []byte, now time.Time) 
 	if len(prev.PendingCertPEM) == 0 || !certBytesEqual(prev.PendingCertPEM, certPEM) {
 		return false
 	}
-	if !prev.CertOverlapUntil.IsZero() && now.After(prev.CertOverlapUntil) {
+	if prev.CertOverlapUntil.IsZero() || !prev.CertOverlapUntil.After(now.UTC()) {
 		return false
 	}
 	return true

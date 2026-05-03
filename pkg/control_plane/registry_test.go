@@ -103,9 +103,10 @@ func TestRegistry_AllowCertRolloverAllowsDifferentCertAfterOverlap(t *testing.T)
 	r := NewRegistry()
 	mustRegister(t, r, RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})
 
-	if err := r.AllowCertRollover("n1", []byte("expired-pending"), time.Now().Add(-time.Minute)); err != nil {
-		t.Fatalf("AllowCertRollover expired pending: %v", err)
-	}
+	mustAllowCertRollover(t, r, "n1", []byte("expired-pending"), time.Now().Add(time.Hour))
+	r.mu.Lock()
+	r.byName["n1"].CertOverlapUntil = time.Now().Add(-time.Minute)
+	r.mu.Unlock()
 	nextPending := []byte("next-pending")
 	if err := r.AllowCertRollover("n1", nextPending, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("different pending cert after overlap should be allowed: %v", err)
@@ -116,6 +117,25 @@ func TestRegistry_AllowCertRolloverAllowsDifferentCertAfterOverlap(t *testing.T)
 	}
 	if string(got.PendingCertPEM) != string(nextPending) {
 		t.Fatalf("pending cert = %q, want %q", got.PendingCertPEM, nextPending)
+	}
+}
+
+func TestRegistry_AllowCertRolloverRejectsInvalidOverlap(t *testing.T) {
+	r := NewRegistry()
+	mustRegister(t, r, RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})
+
+	for _, overlapUntil := range []time.Time{time.Time{}, time.Now().Add(-time.Minute)} {
+		err := r.AllowCertRollover("n1", []byte("pending-cert"), overlapUntil)
+		if !errors.Is(err, ErrRegistryOverlap) {
+			t.Fatalf("expected ErrRegistryOverlap for %s, got %v", overlapUntil, err)
+		}
+	}
+	got, ok := r.Lookup("n1")
+	if !ok {
+		t.Fatal("n1 missing after rejected rollover")
+	}
+	if len(got.PendingCertPEM) != 0 || !got.CertOverlapUntil.IsZero() {
+		t.Fatalf("invalid overlap mutated pending state: %+v", got)
 	}
 }
 
@@ -264,5 +284,12 @@ func mustRegister(t *testing.T, r *Registry, node RegisteredNode) {
 	t.Helper()
 	if err := r.Register(node); err != nil {
 		t.Fatalf("Register(%s): %v", node.Name, err)
+	}
+}
+
+func mustAllowCertRollover(t *testing.T, r *Registry, name string, certPEM []byte, overlapUntil time.Time) {
+	t.Helper()
+	if err := r.AllowCertRollover(name, certPEM, overlapUntil); err != nil {
+		t.Fatalf("AllowCertRollover(%s): %v", name, err)
 	}
 }

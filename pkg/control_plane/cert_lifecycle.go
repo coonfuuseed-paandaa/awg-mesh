@@ -145,7 +145,7 @@ func hasActivePendingCert(node RegisteredNode, now time.Time) bool {
 	if len(node.PendingCertPEM) == 0 {
 		return false
 	}
-	return node.CertOverlapUntil.IsZero() || !now.After(node.CertOverlapUntil)
+	return !node.CertOverlapUntil.IsZero() && node.CertOverlapUntil.After(now.UTC())
 }
 
 func certHostsForNode(node RegisteredNode, current *x509.Certificate) []string {
