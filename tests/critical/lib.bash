@@ -14,6 +14,10 @@ critical_run_go_tests_required() {
         return 2
     fi
     shift
+    if [[ "$#" -eq 0 ]]; then
+        echo "FAIL - critical_run_go_tests_required missing required test names after --" >&2
+        return 2
+    fi
 
     if ! "$GO" test -count=1 -run "$run_re" -v "${packages[@]}" >"$output_file" 2>&1; then
         cat "$output_file" >&2
