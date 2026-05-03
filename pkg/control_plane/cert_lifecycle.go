@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	defaultCertRotationDays = 90
-	defaultCertRenewBefore  = 7 * 24 * time.Hour
-	defaultCertPollInterval = time.Hour
+	defaultCertRotationDays   = 90
+	defaultCertRenewBefore    = 7 * 24 * time.Hour
+	defaultCertPollInterval   = time.Hour
+	defaultCertPromotionGrace = time.Hour
 )
 
 // CertIssuer creates replacement node credentials for certificate lifecycle updates.
@@ -105,6 +106,10 @@ func (c *CertLifecycle) NextDueUpdate(node RegisteredNode) (*pb.CertUpdate, time
 	if now.Add(c.renewBefore).Before(current.NotAfter) {
 		return nil, current.NotAfter, false, nil
 	}
+	promotionDeadline := current.NotAfter
+	if minDeadline := now.Add(defaultCertPromotionGrace); promotionDeadline.Before(minDeadline) {
+		promotionDeadline = minDeadline
+	}
 	certPEM, keyPEM, cert, err := c.issuer.IssueNodeCert(node, certHostsForNode(node, current), c.validFor)
 	if err != nil {
 		return nil, time.Time{}, false, fmt.Errorf("issue replacement node certificate for %q: %w", node.Name, err)
@@ -114,7 +119,7 @@ func (c *CertLifecycle) NextDueUpdate(node RegisteredNode) (*pb.CertUpdate, time
 		KeyPem:         keyPEM,
 		ValidFromUnix:  cert.NotBefore.Unix(),
 		ValidUntilUnix: cert.NotAfter.Unix(),
-	}, current.NotAfter, true, nil
+	}, promotionDeadline, true, nil
 }
 
 func (c *CertLifecycle) DelayUntilDue(node RegisteredNode) time.Duration {

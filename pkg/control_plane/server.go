@@ -12,6 +12,8 @@ import (
 	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -343,6 +345,13 @@ func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPl
 	if name == "" {
 		return status.Error(codes.InvalidArgument, "node_name required")
 	}
+	authenticatedName, err := authenticatedStreamNodeName(stream.Context())
+	if err != nil {
+		return status.Error(codes.Unauthenticated, err.Error())
+	}
+	if authenticatedName != name {
+		return status.Errorf(codes.Unauthenticated, "authenticated node %q cannot request cert update for %q", authenticatedName, name)
+	}
 	if s.certLifecycle == nil {
 		return status.Error(codes.FailedPrecondition, "cert lifecycle is not configured")
 	}
@@ -368,6 +377,9 @@ func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPl
 				Detail:    fmt.Sprintf("valid_until=%d overlap_until=%d", update.GetValidUntilUnix(), overlapUntil.Unix()),
 			})
 			if err := stream.Send(update); err != nil {
+				if rollbackErr := s.registry.ClearCertRollover(name, update.GetCertPem()); rollbackErr != nil && !errors.Is(rollbackErr, ErrRegistryNotFound) {
+					return status.Errorf(codes.Internal, "rollback pending cert after send failure: %v", rollbackErr)
+				}
 				if stream.Context().Err() != nil {
 					return nil
 				}
@@ -384,6 +396,28 @@ func (s *Server) StreamCertUpdate(req *pb.StreamCertRequest, stream pb.ControlPl
 		case <-timer.C:
 		}
 	}
+}
+
+func authenticatedStreamNodeName(ctx context.Context) (string, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", errors.New("mTLS peer identity required")
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return "", errors.New("mTLS peer identity required")
+	}
+	if len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.PeerCertificates) == 0 {
+		return "", errors.New("verified client certificate required")
+	}
+	cert := tlsInfo.State.PeerCertificates[0]
+	if cert.Subject.CommonName != "" {
+		return cert.Subject.CommonName, nil
+	}
+	if len(cert.DNSNames) > 0 {
+		return cert.DNSNames[0], nil
+	}
+	return "", errors.New("client certificate identity is empty")
 }
 
 // --- Helpers -----------------------------------------------------------------

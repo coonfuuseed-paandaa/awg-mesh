@@ -129,6 +129,25 @@ func (r *Registry) AllowCertRollover(name string, certPEM []byte, overlapUntil t
 	return nil
 }
 
+// ClearCertRollover removes the pending rollover if it still matches certPEM.
+func (r *Registry) ClearCertRollover(name string, certPEM []byte) error {
+	if name == "" {
+		return ErrRegistryEmptyName
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, ok := r.byName[name]
+	if !ok {
+		return ErrRegistryNotFound
+	}
+	if len(certPEM) > 0 && !certBytesEqual(node.PendingCertPEM, certPEM) {
+		return nil
+	}
+	node.PendingCertPEM = nil
+	node.CertOverlapUntil = time.Time{}
+	return nil
+}
+
 // Heartbeat updates last-seen and health indicators for a node.
 func (r *Registry) Heartbeat(name string, health map[string]string) error {
 	r.mu.Lock()

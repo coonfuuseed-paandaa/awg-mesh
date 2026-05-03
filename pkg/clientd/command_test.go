@@ -1,6 +1,7 @@
 package clientd
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,6 +45,37 @@ func TestParseCommandConfigRequiredFlagsAndProtocol(t *testing.T) {
 	}
 	if cfg.KeyPath != "custom.key" {
 		t.Fatalf("explicit key path = %q, want custom.key", cfg.KeyPath)
+	}
+
+	args = append(validCommandArgs(t), "--ca-cert", "mesh-ca.crt")
+	cfg, err = ParseCommandConfig(args, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("config with explicit CA path rejected: %v", err)
+	}
+	if cfg.CACertPath != "mesh-ca.crt" {
+		t.Fatalf("explicit CA path = %q, want mesh-ca.crt", cfg.CACertPath)
+	}
+}
+
+func TestValidateCommandConfigDefaultsCACertFromPreparedNodeLayout(t *testing.T) {
+	configDir := t.TempDir()
+	certPath := filepath.Join(configDir, "nodes", "client-a", "node.crt")
+	if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
+		t.Fatalf("mkdir node dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "ca.crt"), []byte("ca"), 0o644); err != nil {
+		t.Fatalf("write ca.crt: %v", err)
+	}
+	cfg := validCommandConfig(t)
+	cfg.CertPath = certPath
+	cfg.KeyPath = ""
+	cfg.CACertPath = ""
+	validated, err := ValidateCommandConfig(cfg)
+	if err != nil {
+		t.Fatalf("prepared layout config rejected: %v", err)
+	}
+	if validated.CACertPath != filepath.Join(configDir, "ca.crt") {
+		t.Fatalf("default CA path = %q, want %q", validated.CACertPath, filepath.Join(configDir, "ca.crt"))
 	}
 }
 

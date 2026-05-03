@@ -2,6 +2,9 @@ package control_plane
 
 import (
 	"context"
+	"crypto"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -16,6 +19,7 @@ import (
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 // Config drives the control-plane daemon.
@@ -62,10 +66,11 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 	ledger := NewLedger()
 	audit := NewAuditLog(cfg.AuditCap)
 	server := NewServer(registry, ledger, audit)
-	if err := configureDaemonCertLifecycle(cfg, server); err != nil {
+	serverOptions, err := configureDaemonCertLifecycle(cfg, server)
+	if err != nil {
 		return nil, err
 	}
-	gs := grpc.NewServer()
+	gs := grpc.NewServer(serverOptions...)
 	pb.RegisterControlPlaneServer(gs, server)
 	return &Daemon{
 		cfg:      cfg,
@@ -77,33 +82,68 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 	}, nil
 }
 
-func configureDaemonCertLifecycle(cfg Config, server *Server) error {
+func configureDaemonCertLifecycle(cfg Config, server *Server) ([]grpc.ServerOption, error) {
 	caDir := cfg.CADir
 	if caDir == "" {
 		caDir = cfg.StateDir
 		hasAnyCA, hasCompleteCA, err := caMaterialState(caDir)
 		if err != nil {
-			return fmt.Errorf("daemon: inspect CA material for cert lifecycle: %w", err)
+			return nil, fmt.Errorf("daemon: inspect CA material for cert lifecycle: %w", err)
 		}
 		if !hasAnyCA {
-			return nil
+			return nil, nil
 		}
 		if !hasCompleteCA {
-			return fmt.Errorf("daemon: incomplete CA material for cert lifecycle in %s: ca.crt and ca.key are required", caDir)
+			return nil, fmt.Errorf("daemon: incomplete CA material for cert lifecycle in %s: ca.crt and ca.key are required", caDir)
 		}
 	}
 	caCert, caKey, err := pkgtls.LoadCA(caDir)
 	if err != nil {
-		return fmt.Errorf("daemon: load CA for cert lifecycle: %w", err)
+		return nil, fmt.Errorf("daemon: load CA for cert lifecycle: %w", err)
 	}
 	lifecycle, err := NewCertLifecycle(CAIssuer{CACert: caCert, CAKey: caKey}, CertLifecycleConfig{
 		RotationDays: cfg.CertRotationDays,
 	})
 	if err != nil {
-		return fmt.Errorf("daemon: configure cert lifecycle: %w", err)
+		return nil, fmt.Errorf("daemon: configure cert lifecycle: %w", err)
 	}
 	server.certLifecycle = lifecycle
-	return nil
+	tlsConfig, err := controlPlaneTLSConfig(cfg, caCert, caKey)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: configure mTLS for cert lifecycle: %w", err)
+	}
+	return []grpc.ServerOption{grpc.Creds(credentials.NewTLS(tlsConfig))}, nil
+}
+
+func controlPlaneTLSConfig(cfg Config, caCert *x509.Certificate, caKey crypto.PrivateKey) (*tls.Config, error) {
+	certPEM, keyPEM, err := pkgtls.IssueCertWithValidity(caCert, caKey, "awg-mesh-control-plane", serverCertHosts(cfg.ListenAddr), time.Duration(defaultCertRotationDays)*24*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	clientCAs := x509.NewCertPool()
+	clientCAs.AddCert(caCert)
+	return &tls.Config{
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCAs,
+		Certificates: []tls.Certificate{serverCert},
+		MinVersion:   tls.VersionTLS13,
+	}, nil
+}
+
+func serverCertHosts(listenAddr string) []string {
+	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil || host == "" {
+		return hosts
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return hosts
+	}
+	return append(hosts, host)
 }
 
 func caMaterialState(dir string) (bool, bool, error) {

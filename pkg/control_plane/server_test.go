@@ -2,6 +2,8 @@ package control_plane
 
 import (
 	"context"
+	"crypto"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -15,6 +17,7 @@ import (
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
@@ -58,6 +61,71 @@ func startTestServer(t *testing.T) (pb.ControlPlaneClient, *Server, func()) {
 		}
 	}
 	return client, srv, teardown
+}
+
+func startTLSControlPlaneServer(t *testing.T, caCert *x509.Certificate, caKey crypto.PrivateKey, clientCertPEM, clientKeyPEM []byte) (pb.ControlPlaneClient, *Server, func()) {
+	t.Helper()
+	registry := NewRegistry()
+	ledger := NewLedger()
+	audit := NewAuditLog(64)
+	srv := NewServer(registry, ledger, audit)
+
+	serverCertPEM, serverKeyPEM, err := pkgtls.IssueCert(caCert, caKey, "awg-mesh-control-plane", []string{"127.0.0.1", "localhost"})
+	if err != nil {
+		t.Fatalf("IssueCert server: %v", err)
+	}
+	serverCert, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair server: %v", err)
+	}
+	clientCAs := x509.NewCertPool()
+	clientCAs.AddCert(caCert)
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCAs,
+		Certificates: []tls.Certificate{serverCert},
+		MinVersion:   tls.VersionTLS13,
+	})))
+	pb.RegisterControlPlaneServer(gs, srv)
+	serveErrCh := make(chan error, 1)
+	go func() { serveErrCh <- gs.Serve(lis) }()
+
+	clientCert, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair client: %v", err)
+	}
+	rootCAs := x509.NewCertPool()
+	rootCAs.AddCert(caCert)
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+		RootCAs:      rootCAs,
+		Certificates: []tls.Certificate{clientCert},
+		ServerName:   "127.0.0.1",
+		MinVersion:   tls.VersionTLS13,
+	})))
+	if err != nil {
+		gs.Stop()
+		t.Fatalf("dial TLS: %v", err)
+	}
+	teardown := func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("conn.Close: %v", err)
+		}
+		gs.Stop()
+		select {
+		case err := <-serveErrCh:
+			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				t.Errorf("grpc Serve: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("grpc Serve did not stop")
+		}
+	}
+	return pb.NewControlPlaneClient(conn), srv, teardown
 }
 
 func TestServer_RegisterNode_Accept(t *testing.T) {
@@ -405,19 +473,19 @@ func TestServer_QueryAudit_FiltersAndStreams(t *testing.T) {
 }
 
 func TestServer_StreamCertUpdateIssuesDueCertAndAllowsReregister(t *testing.T) {
-	client, srv, teardown := startTestServer(t)
-	defer teardown()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
 	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
 	if err != nil {
 		t.Fatalf("GenerateCA: %v", err)
 	}
-	oldCert, _, err := pkgtls.IssueCertWithValidity(caCert, caKey, "client-01", []string{"client-01", "172.21.92.130", "client-01.mesh.example"}, 6*24*time.Hour)
+	oldCert, oldKey, err := pkgtls.IssueCertWithValidity(caCert, caKey, "client-01", []string{"client-01", "172.21.92.130", "client-01.mesh.example"}, 6*24*time.Hour)
 	if err != nil {
 		t.Fatalf("IssueCertWithValidity old: %v", err)
 	}
+	client, srv, teardown := startTLSControlPlaneServer(t, caCert, caKey, oldCert, oldKey)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
 	lifecycle, err := NewCertLifecycle(CAIssuer{CACert: caCert, CAKey: caKey}, CertLifecycleConfig{
 		RotationDays: 90,
 		RenewBefore:  7 * 24 * time.Hour,
@@ -518,12 +586,16 @@ func certHasDNSName(cert *x509.Certificate, want string) bool {
 }
 
 func TestServer_StreamCertUpdateRejectsUnknownNode(t *testing.T) {
-	client, srv, teardown := startTestServer(t)
-	defer teardown()
 	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
 	if err != nil {
 		t.Fatalf("GenerateCA: %v", err)
 	}
+	clientCert, clientKey, err := pkgtls.IssueCert(caCert, caKey, "ghost", []string{"ghost"})
+	if err != nil {
+		t.Fatalf("IssueCert ghost: %v", err)
+	}
+	client, srv, teardown := startTLSControlPlaneServer(t, caCert, caKey, clientCert, clientKey)
+	defer teardown()
 	lifecycle, err := NewCertLifecycle(CAIssuer{CACert: caCert, CAKey: caKey}, CertLifecycleConfig{})
 	if err != nil {
 		t.Fatalf("NewCertLifecycle: %v", err)
@@ -542,6 +614,38 @@ func TestServer_StreamCertUpdateRejectsUnknownNode(t *testing.T) {
 	}
 	if st, ok := status.FromError(err); !ok || st.Code() != codes.NotFound {
 		t.Fatalf("expected NotFound, got %v", err)
+	}
+}
+
+func TestServer_StreamCertUpdateRejectsMismatchedClientIdentity(t *testing.T) {
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	clientCert, clientKey, err := pkgtls.IssueCert(caCert, caKey, "client-01", []string{"client-01"})
+	if err != nil {
+		t.Fatalf("IssueCert client: %v", err)
+	}
+	client, srv, teardown := startTLSControlPlaneServer(t, caCert, caKey, clientCert, clientKey)
+	defer teardown()
+	lifecycle, err := NewCertLifecycle(CAIssuer{CACert: caCert, CAKey: caKey}, CertLifecycleConfig{})
+	if err != nil {
+		t.Fatalf("NewCertLifecycle: %v", err)
+	}
+	srv.certLifecycle = lifecycle
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stream, err := client.StreamCertUpdate(ctx, &pb.StreamCertRequest{NodeName: "client-02"})
+	if err != nil {
+		t.Fatalf("StreamCertUpdate: %v", err)
+	}
+	_, err = stream.Recv()
+	if err == nil {
+		t.Fatal("expected Unauthenticated for mismatched client identity")
+	}
+	if st, ok := status.FromError(err); !ok || st.Code() != codes.Unauthenticated {
+		t.Fatalf("expected Unauthenticated, got %v", err)
 	}
 }
 

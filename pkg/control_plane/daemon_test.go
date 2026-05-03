@@ -2,6 +2,8 @@ package control_plane
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -147,5 +150,102 @@ func TestDaemon_LifecycleAndAcceptsRegister(t *testing.T) {
 	}
 	if info.Size() == 0 {
 		t.Fatalf("audit log empty")
+	}
+}
+
+func TestDaemon_WithCAMaterialRequiresMTLSRegister(t *testing.T) {
+	caDir := t.TempDir()
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	if err := pkgtls.SaveCA(caDir, caCert, caKey); err != nil {
+		t.Fatalf("SaveCA: %v", err)
+	}
+	clientCertPEM, clientKeyPEM, err := pkgtls.IssueCert(caCert, caKey, "n1", []string{"n1"})
+	if err != nil {
+		t.Fatalf("IssueCert client: %v", err)
+	}
+	clientCert, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair client: %v", err)
+	}
+
+	d, err := NewDaemon(Config{
+		ListenAddr: "127.0.0.1:0",
+		StateDir:   t.TempDir(),
+		CADir:      caDir,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-doneCh:
+			if err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("daemon did not shut down within 5s")
+		}
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for d.ListenerAddr() == "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	addr := d.ListenerAddr()
+	if addr == "" {
+		t.Fatal("daemon never bound listener")
+	}
+
+	insecureConn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("insecure dial: %v", err)
+	}
+	insecureClient := pb.NewControlPlaneClient(insecureConn)
+	insecureCtx, insecureCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, err = insecureClient.RegisterNode(insecureCtx, &pb.RegisterNodeRequest{
+		NodeName:    "n1",
+		Roles:       []string{"master"},
+		NodeCertPem: clientCertPEM,
+		OverlayIp:   "10.0.0.1",
+	})
+	insecureCancel()
+	_ = insecureConn.Close()
+	if err == nil {
+		t.Fatal("insecure RegisterNode unexpectedly succeeded against mTLS daemon")
+	}
+
+	rootCAs := x509.NewCertPool()
+	rootCAs.AddCert(caCert)
+	tlsConn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+		RootCAs:      rootCAs,
+		Certificates: []tls.Certificate{clientCert},
+		ServerName:   "127.0.0.1",
+		MinVersion:   tls.VersionTLS13,
+	})))
+	if err != nil {
+		t.Fatalf("TLS dial: %v", err)
+	}
+	defer func() { _ = tlsConn.Close() }()
+	tlsClient := pb.NewControlPlaneClient(tlsConn)
+	regCtx, regCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer regCancel()
+	resp, err := tlsClient.RegisterNode(regCtx, &pb.RegisterNodeRequest{
+		NodeName:    "n1",
+		Roles:       []string{"master"},
+		NodeCertPem: clientCertPEM,
+		OverlayIp:   "10.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("mTLS RegisterNode: %v", err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("mTLS registration rejected: %s", resp.GetRejectReason())
 	}
 }
