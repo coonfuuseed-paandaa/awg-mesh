@@ -14,6 +14,14 @@ if ! command -v "$GO" >/dev/null 2>&1; then
     echo "FAIL - go toolchain not available; run inside Docker" >&2
     exit 1
 fi
+PYTHON=${PYTHON_BIN:-python3}
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    PYTHON=python
+fi
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    echo "FAIL - python JSON parser not available; set PYTHON_BIN" >&2
+    exit 1
+fi
 
 test_output="$(mktemp)"
 tmp_dir="$(mktemp -d)"
@@ -49,7 +57,17 @@ fi
 "$GO" run ./cmd/mesh-ctl migrate \
     --from pkg/topology/testdata/v1x-topology.yml \
     --output json >"$json_out"
-grep -Fq '"schema_version": 2' "$json_out"
-grep -Fq '"nodes"' "$json_out"
+"$PYTHON" - "$json_out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
+
+if data.get("schema_version") != 2:
+    raise SystemExit("unexpected schema_version in migrate JSON output")
+if "nodes" not in data or not isinstance(data["nodes"], list) or len(data["nodes"]) != 3:
+    raise SystemExit("unexpected nodes in migrate JSON output")
+PY
 
 echo "PASS - migration.sh: v1.x topology converts to validated schema v2 YAML and JSON"

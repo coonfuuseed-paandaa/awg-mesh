@@ -26,7 +26,7 @@ func TestRunMigrateCommandWritesFileAndProtectsOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runMigrateCommand: %v", err)
 	}
-	if !strings.Contains(out.String(), "migration written") || !strings.Contains(out.String(), "warnings=3") {
+	if !strings.Contains(out.String(), "migration written") || !strings.Contains(out.String(), "warnings=") || !strings.Contains(out.String(), "warning:") {
 		t.Fatalf("unexpected output: %q", out.String())
 	}
 

@@ -94,9 +94,10 @@ func TestMigrateV1ToV2_ConvertsFixture(t *testing.T) {
 	assertNode(t, topo, "master-01", []string{"master", "balancer"}, "172.21.92.2", "")
 	assertNode(t, topo, "endpoint-us-01", []string{"egress"}, "172.21.92.34", "")
 	assertNode(t, topo, "home-01", []string{"client"}, "172.21.92.130", "master-01")
-	if len(result.Warnings) != 3 {
-		t.Fatalf("warnings = %d, want 3: %#v", len(result.Warnings), result.Warnings)
-	}
+	assertWarningContains(t, result.Warnings, "topology-wide v1-only fields were dropped")
+	assertWarningContains(t, result.Warnings, "master \"master-01\" dropped v1-only fields: host, listen_port, grpc_port, endpoints")
+	assertWarningContains(t, result.Warnings, "endpoint \"endpoint-us-01\" dropped v1-only fields: host, listen_port")
+	assertWarningContains(t, result.Warnings, "client \"home-01\" dropped v1-only fields: host")
 }
 
 func TestMigrateV1ToV2_RejectsAlreadyV2(t *testing.T) {
@@ -153,4 +154,14 @@ func assertNode(t *testing.T, topo *TopologyV2, name string, roles []string, ove
 		return
 	}
 	t.Fatalf("node %q not found in %#v", name, topo.Nodes)
+}
+
+func assertWarningContains(t *testing.T, warnings []string, needle string) {
+	t.Helper()
+	for _, warning := range warnings {
+		if strings.Contains(warning, needle) {
+			return
+		}
+	}
+	t.Fatalf("warning containing %q not found in %#v", needle, warnings)
 }

@@ -55,9 +55,15 @@ func MigrateV1ToV2WithReport(in []byte) (V1ToV2MigrationResult, error) {
 			Rotation: legacy.Rotation,
 		},
 	}
+	if fields := legacyTopologyDroppedFields(legacy); len(fields) > 0 {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("topology-wide v1-only fields were dropped: %s", strings.Join(fields, ", ")))
+	}
 
 	seenNames := make(map[string]struct{}, len(legacy.Masters)+len(legacy.Endpoints)+len(legacy.Clients))
 	for _, master := range legacy.Masters {
+		if fields := legacyMasterDroppedFields(master); len(fields) > 0 {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("master %q dropped v1-only fields: %s", master.Name, strings.Join(fields, ", ")))
+		}
 		roles := []role.Role{role.RoleMaster, role.RoleBalancer}
 		if master.Exit {
 			roles = append(roles, role.RoleEgress)
@@ -77,6 +83,9 @@ func MigrateV1ToV2WithReport(in []byte) (V1ToV2MigrationResult, error) {
 	}
 
 	for _, endpoint := range legacy.Endpoints {
+		if fields := legacyEndpointDroppedFields(endpoint); len(fields) > 0 {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("endpoint %q dropped v1-only fields: %s", endpoint.Name, strings.Join(fields, ", ")))
+		}
 		result.Warnings = append(result.Warnings, fmt.Sprintf("endpoint %q was mapped to role [egress]", endpoint.Name))
 		if err := appendMigratedNode(result.Topology, seenNames, NodeV2{
 			Name:         strings.TrimSpace(endpoint.Name),
@@ -90,6 +99,9 @@ func MigrateV1ToV2WithReport(in []byte) (V1ToV2MigrationResult, error) {
 	}
 
 	for _, client := range legacy.Clients {
+		if fields := legacyClientDroppedFields(client); len(fields) > 0 {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("client %q dropped v1-only fields: %s", client.Name, strings.Join(fields, ", ")))
+		}
 		preferredMaster := ""
 		if len(client.Masters) > 0 {
 			preferredMaster = strings.TrimSpace(client.Masters[0])
@@ -170,6 +182,89 @@ func migratedOverlaySupernet(overlay OverlayConfig) string {
 		return strings.TrimSpace(overlay.Ranges[0].CIDR)
 	}
 	return ""
+}
+
+func legacyTopologyDroppedFields(legacy Topology) []string {
+	fields := make([]string, 0, 4)
+	if strings.TrimSpace(legacy.Defaults.Image.Node) != "" {
+		fields = append(fields, "defaults.image.node")
+	}
+	if strings.TrimSpace(legacy.Defaults.Image.Client) != "" {
+		fields = append(fields, "defaults.image.client")
+	}
+	if legacy.Overlay.PhysicalMTU != 0 {
+		fields = append(fields, "overlay.physical_mtu")
+	}
+	if legacy.Overlay.AWGOverhead != 0 {
+		fields = append(fields, "overlay.awg_overhead")
+	}
+	if len(legacy.Overlay.Ranges) > 0 {
+		fields = append(fields, "overlay.ranges")
+	}
+	return fields
+}
+
+func legacyMasterDroppedFields(master MasterNode) []string {
+	fields := make([]string, 0, 5)
+	if strings.TrimSpace(master.Host) != "" {
+		fields = append(fields, "host")
+	}
+	if strings.TrimSpace(master.PeerHost) != "" {
+		fields = append(fields, "peer_host")
+	}
+	if master.ListenPort != 0 {
+		fields = append(fields, "listen_port")
+	}
+	if master.GRPCPort != 0 {
+		fields = append(fields, "grpc_port")
+	}
+	if len(master.Endpoints) > 0 {
+		fields = append(fields, "endpoints")
+	}
+	return fields
+}
+
+func legacyEndpointDroppedFields(endpoint EndpointNode) []string {
+	fields := make([]string, 0, 4)
+	if strings.TrimSpace(endpoint.Host) != "" {
+		fields = append(fields, "host")
+	}
+	if strings.TrimSpace(endpoint.PeerHost) != "" {
+		fields = append(fields, "peer_host")
+	}
+	if endpoint.ListenPort != 0 {
+		fields = append(fields, "listen_port")
+	}
+	if endpoint.GRPCPort != 0 {
+		fields = append(fields, "grpc_port")
+	}
+	return fields
+}
+
+func legacyClientDroppedFields(client ClientNode) []string {
+	fields := make([]string, 0, 7)
+	if strings.TrimSpace(client.Host) != "" {
+		fields = append(fields, "host")
+	}
+	if client.GRPCPort != 0 {
+		fields = append(fields, "grpc_port")
+	}
+	if client.Veth != nil {
+		fields = append(fields, "veth")
+	}
+	if client.Mikrotik != nil {
+		fields = append(fields, "mikrotik")
+	}
+	if len(client.Masters) > 1 {
+		fields = append(fields, "masters[1:]")
+	}
+	if len(client.RoutingPolicies) > 0 {
+		fields = append(fields, "routing_policies")
+	}
+	if client.DNS != nil {
+		fields = append(fields, "dns")
+	}
+	return fields
 }
 
 func appendMigratedNode(topo *TopologyV2, seenNames map[string]struct{}, node NodeV2) error {
