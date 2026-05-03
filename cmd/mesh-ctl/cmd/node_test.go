@@ -212,11 +212,11 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 		"allowed-address=172.21.92.20/32,172.21.92.3/32",
 	} {
 		if !strings.Contains(script, want) {
-			t.Fatalf("RouterOS script missing %q:\n%s", want, script)
+			t.Fatalf("RouterOS script missing %q:\n%s", want, redactRouterOSScript(script))
 		}
 	}
 	if strings.Contains(strings.ToLower(script), "amnezia") {
-		t.Fatalf("native RouterOS script must not contain AmneziaWG settings:\n%s", script)
+		t.Fatalf("native RouterOS script must not contain AmneziaWG settings:\n%s", redactRouterOSScript(script))
 	}
 
 	var secondOut bytes.Buffer
@@ -235,7 +235,59 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 		t.Fatalf("read second RouterOS script: %v", err)
 	}
 	if script != string(secondScript) {
-		t.Fatalf("RouterOS script changed after key reuse\nfirst:\n%s\nsecond:\n%s", script, string(secondScript))
+		t.Fatalf("RouterOS script changed after key reuse\nfirst:\n%s\nsecond:\n%s", redactRouterOSScript(script), redactRouterOSScript(string(secondScript)))
+	}
+}
+
+func TestLoadOrCreateWireGuardKeyPairConcurrentCreatesConsistentKeys(t *testing.T) {
+	dir := t.TempDir()
+
+	const runs = 16
+	type result struct {
+		private string
+		public  string
+		err     error
+	}
+	results := make(chan result, runs)
+
+	var wait sync.WaitGroup
+	for i := 0; i < runs; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			privateKey, publicKey, _, err := loadOrCreateWireGuardKeyPair(dir, "private.key", "public.key")
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			results <- result{
+				private: privateKey.String(),
+				public:  publicKey.String(),
+			}
+		}()
+	}
+	wait.Wait()
+	close(results)
+
+	var first result
+	for current := range results {
+		if current.err != nil {
+			t.Fatalf("loadOrCreateWireGuardKeyPair: %v", current.err)
+		}
+		if first.private == "" {
+			first = current
+			continue
+		}
+		if current.private != first.private || current.public != first.public {
+			t.Fatalf("concurrent keypair creation returned inconsistent keys")
+		}
+	}
+
+	if got := readTrimmedFile(t, filepath.Join(dir, "private.key")); got != first.private {
+		t.Fatalf("private key file does not match returned key")
+	}
+	if got := readTrimmedFile(t, filepath.Join(dir, "public.key")); got != first.public {
+		t.Fatalf("public key file does not match returned key")
 	}
 }
 
@@ -606,4 +658,40 @@ func readTrimmedFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return strings.TrimSpace(string(data))
+}
+
+func redactRouterOSScript(script string) string {
+	lines := strings.Split(script, "\n")
+	for i, line := range lines {
+		lines[i] = redactRouterOSPrivateKey(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func redactRouterOSPrivateKey(line string) string {
+	const marker = "private-key="
+	start := strings.Index(line, marker)
+	if start < 0 {
+		return line
+	}
+
+	valueStart := start + len(marker)
+	if valueStart >= len(line) {
+		return line
+	}
+
+	if line[valueStart] == '"' {
+		valueStart++
+		valueEnd := strings.IndexByte(line[valueStart:], '"')
+		if valueEnd < 0 {
+			return line[:valueStart] + "<redacted>"
+		}
+		return line[:valueStart] + "<redacted>" + line[valueStart+valueEnd:]
+	}
+
+	valueEnd := strings.IndexAny(line[valueStart:], " \t")
+	if valueEnd < 0 {
+		return line[:valueStart] + "<redacted>"
+	}
+	return line[:valueStart] + "<redacted>" + line[valueStart+valueEnd:]
 }

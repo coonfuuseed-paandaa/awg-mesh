@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,48 +105,107 @@ func loadOrCreateWireGuardKeyPair(dir, privateFilename, publicFilename string) (
 }
 
 func loadOrCreatePrivateWGKey(path string) (wg.Key, error) {
+	key, err := readNonZeroWGKey(path, "private")
+	if err == nil {
+		return key, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return wg.Key{}, err
+	}
+
+	generated, err := wg.GeneratePrivateKey()
+	if err != nil {
+		return wg.Key{}, fmt.Errorf("generate private key: %w", err)
+	}
+
+	if err := writeFileExclusive(path, []byte(generated.String()+"\n"), 0o600); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return readNonZeroWGKey(path, "private")
+		}
+		return wg.Key{}, fmt.Errorf("write private key %s: %w", path, err)
+	}
+
+	stored, err := readNonZeroWGKey(path, "private")
+	if err != nil {
+		return wg.Key{}, err
+	}
+	if stored != generated {
+		return wg.Key{}, fmt.Errorf("private key %s changed during atomic create", path)
+	}
+	return stored, nil
+}
+
+func syncPublicWGKey(path string, expected wg.Key) error {
+	if err := requireStoredPublicWGKey(path, expected); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if err := writeFileExclusive(path, []byte(expected.String()+"\n"), 0o644); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return requireStoredPublicWGKey(path, expected)
+		}
+		return fmt.Errorf("write public key %s: %w", path, err)
+	}
+	return requireStoredPublicWGKey(path, expected)
+}
+
+func requireStoredPublicWGKey(path string, expected wg.Key) error {
+	existing, err := readNonZeroWGKey(path, "public")
+	if err != nil {
+		return err
+	}
+	if existing != expected {
+		return fmt.Errorf("public key %s does not match private key", path)
+	}
+	return nil
+}
+
+func readNonZeroWGKey(path, kind string) (wg.Key, error) {
 	raw, err := os.ReadFile(path)
 	if err == nil {
 		key, parseErr := wg.ParseKey(strings.TrimSpace(string(raw)))
 		if parseErr != nil {
-			return wg.Key{}, fmt.Errorf("parse private key %s: %w", path, parseErr)
+			return wg.Key{}, fmt.Errorf("parse %s key %s: %w", kind, path, parseErr)
 		}
 		if key.IsZero() {
-			return wg.Key{}, fmt.Errorf("private key %s must not be zero", path)
+			return wg.Key{}, fmt.Errorf("%s key %s must not be zero", kind, path)
 		}
 		return key, nil
 	}
-	if !os.IsNotExist(err) {
-		return wg.Key{}, fmt.Errorf("read private key %s: %w", path, err)
-	}
-
-	key, err := wg.GeneratePrivateKey()
-	if err != nil {
-		return wg.Key{}, fmt.Errorf("generate private key: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(key.String()+"\n"), 0o600); err != nil {
-		return wg.Key{}, fmt.Errorf("write private key %s: %w", path, err)
-	}
-	return key, nil
+	return wg.Key{}, fmt.Errorf("read %s key %s: %w", kind, path, err)
 }
 
-func syncPublicWGKey(path string, expected wg.Key) error {
-	raw, err := os.ReadFile(path)
-	if err == nil {
-		existing, parseErr := wg.ParseKey(strings.TrimSpace(string(raw)))
-		if parseErr != nil {
-			return fmt.Errorf("parse public key %s: %w", path, parseErr)
-		}
-		if existing != expected {
-			return fmt.Errorf("public key %s does not match private key", path)
-		}
-		return nil
+func writeFileExclusive(path string, data []byte, mode os.FileMode) error {
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
 	}
-	if !os.IsNotExist(err) {
-		return fmt.Errorf("read public key %s: %w", path, err)
+	tempPath := file.Name()
+
+	defer func() {
+		_ = os.Remove(tempPath)
+	}()
+
+	n, err := file.Write(data)
+	if err != nil {
+		_ = file.Close()
+		return err
 	}
-	if err := os.WriteFile(path, []byte(expected.String()+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write public key %s: %w", path, err)
+	if n != len(data) {
+		_ = file.Close()
+		return io.ErrShortWrite
+	}
+	if err := file.Chmod(mode); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tempPath, path); err != nil {
+		return err
 	}
 	return nil
 }
