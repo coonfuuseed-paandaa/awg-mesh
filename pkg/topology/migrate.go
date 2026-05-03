@@ -66,14 +66,3 @@ func DetectSchemaVersion(in []byte) (SchemaVersion, error) {
 	// Has neither schema_version nor v1.x markers — likely partial / unrecognized.
 	return 0, errors.New("topology: cannot determine schema version (no schema_version key and no v1.x markers)")
 }
-
-// MigrateV1ToV2 converts a v1.x topology document to a v2.0 TopologyV2 struct.
-//
-// CR-001: stub — full implementation lands in CR-013 (migration tooling).
-// At v2.0-alpha.1 the function returns a structured error; operators stay on
-// v1.x until CR-013 ships. The skeleton here exists so `mesh-ctl topology
-// validate` can route v1.x input through DetectSchemaVersion + return
-// SCHEMA-V1-DEPRECATED with a forward pointer to migrate.
-func MigrateV1ToV2(_ []byte) (*TopologyV2, error) {
-	return nil, errors.New("topology: MigrateV1ToV2 not implemented in CR-001 — full impl in CR-013 (migration tooling)")
-}

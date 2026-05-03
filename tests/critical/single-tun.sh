@@ -23,6 +23,6 @@ if ! command -v "$GO" >/dev/null 2>&1; then
     exit 0
 fi
 
-$GO test -count=1 -short -run 'TestValidateV2|TestDetectSchemaVersion|TestMigrateV1ToV2_Stub' ./pkg/topology/... >/dev/null
+$GO test -count=1 -short -run 'TestValidateV2|TestDetectSchemaVersion|TestMigrateV1ToV2' ./pkg/topology/... >/dev/null
 $GO test -count=1 -run 'TestMasterRunStartsAndClosesOnCancel|TestRunMasterDryRunUsesDefaultDualListener' ./pkg/node/... ./cmd/awg-mesh-node/... >/dev/null
 echo "PASS — v1.x topology rejected, v2.0 topology validated, master dual-listener invariant enforced"

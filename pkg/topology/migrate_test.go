@@ -71,13 +71,97 @@ func TestDetectSchemaVersion_UnsupportedSchema(t *testing.T) {
 	}
 }
 
-func TestMigrateV1ToV2_Stub(t *testing.T) {
-	// CR-001: stub returns error pointing to CR-013.
-	_, err := MigrateV1ToV2([]byte("masters: []"))
+func TestMigrateV1ToV2_ConvertsFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "v1x-topology.yml"))
+	if err != nil {
+		t.Fatalf("read v1 fixture: %v", err)
+	}
+	result, err := MigrateV1ToV2WithReport(data)
+	if err != nil {
+		t.Fatalf("MigrateV1ToV2WithReport: %v", err)
+	}
+	topo := result.Topology
+	if topo.SchemaVersion != SchemaV2 {
+		t.Fatalf("schema_version = %d, want 2", topo.SchemaVersion)
+	}
+	if topo.Mesh.OverlaySupernet != "172.21.92.0/24" {
+		t.Fatalf("overlay_supernet = %q", topo.Mesh.OverlaySupernet)
+	}
+	if len(topo.Nodes) != 3 {
+		t.Fatalf("nodes = %d, want 3: %#v", len(topo.Nodes), topo.Nodes)
+	}
+
+	assertNode(t, topo, "master-01", []string{"master", "balancer"}, "172.21.92.2", "")
+	assertNode(t, topo, "endpoint-us-01", []string{"egress"}, "172.21.92.34", "")
+	assertNode(t, topo, "home-01", []string{"client"}, "172.21.92.130", "master-01")
+	assertWarningContains(t, result.Warnings, "topology-wide v1-only fields were dropped")
+	assertWarningContains(t, result.Warnings, "master \"master-01\" dropped v1-only fields: host, listen_port, grpc_port, endpoints")
+	assertWarningContains(t, result.Warnings, "endpoint \"endpoint-us-01\" dropped v1-only fields: host, listen_port")
+	assertWarningContains(t, result.Warnings, "client \"home-01\" dropped v1-only fields: host")
+}
+
+func TestMigrateV1ToV2_RejectsAlreadyV2(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "v2-topology.yml"))
+	if err != nil {
+		t.Fatalf("read v2 fixture: %v", err)
+	}
+	_, err = MigrateV1ToV2(data)
 	if err == nil {
-		t.Fatalf("MigrateV1ToV2 should error in CR-001")
+		t.Fatalf("MigrateV1ToV2 must reject schema v2 input")
 	}
-	if !strings.Contains(err.Error(), "CR-013") {
-		t.Fatalf("expected CR-013 forward reference, got: %v", err)
+	if !strings.Contains(err.Error(), "already schema_version 2") {
+		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestMigrateV1ToV2_MapsMasterExitToMixedRoles(t *testing.T) {
+	topo, err := MigrateV1ToV2([]byte(`
+overlay:
+  space: 172.21.92.0/24
+masters:
+  - name: master-exit
+    overlay_ip: 172.21.92.2
+    exit: true
+endpoints: []
+clients: []
+`))
+	if err != nil {
+		t.Fatalf("MigrateV1ToV2: %v", err)
+	}
+	assertNode(t, topo, "master-exit", []string{"master", "balancer", "egress"}, "172.21.92.2", "")
+}
+
+func assertNode(t *testing.T, topo *TopologyV2, name string, roles []string, overlayIP string, preferredMaster string) {
+	t.Helper()
+	for _, node := range topo.Nodes {
+		if node.Name != name {
+			continue
+		}
+		if node.OverlayIP != overlayIP {
+			t.Fatalf("%s overlay_ip = %q, want %q", name, node.OverlayIP, overlayIP)
+		}
+		if node.PreferredMaster != preferredMaster {
+			t.Fatalf("%s preferred_master = %q, want %q", name, node.PreferredMaster, preferredMaster)
+		}
+		if len(node.Roles) != len(roles) {
+			t.Fatalf("%s roles = %#v, want %#v", name, node.Roles, roles)
+		}
+		for i, want := range roles {
+			if string(node.Roles[i]) != want {
+				t.Fatalf("%s role[%d] = %q, want %q", name, i, node.Roles[i], want)
+			}
+		}
+		return
+	}
+	t.Fatalf("node %q not found in %#v", name, topo.Nodes)
+}
+
+func assertWarningContains(t *testing.T, warnings []string, needle string) {
+	t.Helper()
+	for _, warning := range warnings {
+		if strings.Contains(warning, needle) {
+			return
+		}
+	}
+	t.Fatalf("warning containing %q not found in %#v", needle, warnings)
 }
