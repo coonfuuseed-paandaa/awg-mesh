@@ -14,7 +14,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -44,6 +43,7 @@ type nodeInitOptions struct {
 	topologyPath string
 	configDir    string
 	controlPlane string
+	nodeVersion  string
 	output       string
 	timeout      time.Duration
 	stdout       io.Writer
@@ -101,14 +101,14 @@ type nodeListEntry struct {
 	Status    string   `json:"status"`
 }
 
-func newNodeCommand() *cobra.Command {
+func newNodeCommand(version string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "node",
 		Short: "Manage v2 mesh nodes",
 	}
 
 	cmd.AddCommand(newNodePrepareCommand())
-	cmd.AddCommand(newNodeInitCommand())
+	cmd.AddCommand(newNodeInitCommand(version))
 	cmd.AddCommand(newNodeListCommand())
 	cmd.AddCommand(newNodeRemoveCommand())
 	return cmd
@@ -134,10 +134,11 @@ func newNodePrepareCommand() *cobra.Command {
 	return cmd
 }
 
-func newNodeInitCommand() *cobra.Command {
+func newNodeInitCommand(version string) *cobra.Command {
 	options := nodeInitOptions{
-		output:  topologyOutputHuman,
-		timeout: defaultNodeInitTimeout,
+		nodeVersion: strings.TrimSpace(version),
+		output:      topologyOutputHuman,
+		timeout:     defaultNodeInitTimeout,
 	}
 
 	cmd := &cobra.Command{
@@ -295,7 +296,7 @@ func runNodeInitCommand(options nodeInitOptions) error {
 		NodeName:    node.Name,
 		Roles:       roleStrings(node.Roles),
 		NodeCertPem: append([]byte(nil), certPEM...),
-		NodeVersion: awgmesh.Version,
+		NodeVersion: validated.nodeVersion,
 		OverlayIp:   node.OverlayIP,
 		Region:      node.Region,
 	})
@@ -393,6 +394,10 @@ func validateNodeInitOptions(options nodeInitOptions) (nodeInitOptions, error) {
 	if controlPlane == "" {
 		return nodeInitOptions{}, fmt.Errorf("--control-plane is required")
 	}
+	nodeVersion := strings.TrimSpace(options.nodeVersion)
+	if nodeVersion == "" {
+		nodeVersion = "dev"
+	}
 	output, err := normalizeTopologyOutput(options.output)
 	if err != nil {
 		return nodeInitOptions{}, err
@@ -406,6 +411,7 @@ func validateNodeInitOptions(options nodeInitOptions) (nodeInitOptions, error) {
 		topologyPath: options.topologyPath,
 		configDir:    options.configDir,
 		controlPlane: controlPlane,
+		nodeVersion:  nodeVersion,
 		output:       output,
 		timeout:      timeout,
 		stdout:       options.stdout,
@@ -423,6 +429,9 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 	}
 	if options.drain < 0 {
 		return nodeRemoveOptions{}, fmt.Errorf("--drain must be >= 0")
+	}
+	if options.drain%time.Second != 0 {
+		return nodeRemoveOptions{}, fmt.Errorf("--drain must be specified in whole seconds")
 	}
 	drainSec := int64(options.drain / time.Second)
 	if drainSec > maxNodeDrainSeconds {

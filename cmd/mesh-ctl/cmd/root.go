@@ -41,7 +41,7 @@ func NewRootCommand(version string) *cobra.Command {
 
 	rootCmd.AddCommand(newVersionCommand(version))
 	rootCmd.AddCommand(newTopologyCommand())
-	rootCmd.AddCommand(newNodeCommand())
+	rootCmd.AddCommand(newNodeCommand(version))
 	rootCmd.AddCommand(newAuditLogCommand())
 	rootCmd.AddCommand(newBackupCommand())
 	rootCmd.AddCommand(newRestoreCommand())

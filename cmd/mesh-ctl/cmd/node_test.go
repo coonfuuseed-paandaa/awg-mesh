@@ -227,6 +227,7 @@ func TestRunNodeInitCommandRegistersPreparedNode(t *testing.T) {
 		topologyPath: topologyPath,
 		configDir:    configDir,
 		controlPlane: addr,
+		nodeVersion:  "test-build-version",
 		output:       "json",
 		timeout:      2 * time.Second,
 		stdout:       &out,
@@ -249,8 +250,8 @@ func TestRunNodeInitCommandRegistersPreparedNode(t *testing.T) {
 	if !bytes.Equal(req.GetNodeCertPem(), certPEM) {
 		t.Fatal("RegisterNode did not send the prepared node certificate PEM")
 	}
-	if strings.TrimSpace(req.GetNodeVersion()) == "" {
-		t.Fatal("RegisterNode sent empty node_version")
+	if req.GetNodeVersion() != "test-build-version" {
+		t.Fatalf("RegisterNode node_version = %q, want test-build-version", req.GetNodeVersion())
 	}
 
 	var got nodeInitJSONOutput
@@ -366,6 +367,23 @@ func TestRunNodeRemoveCommandSendsRequestAndOutputsJSON(t *testing.T) {
 	}
 	if got.NodeName != "master-01" || !got.Success || got.ReassignedOverlayCount != 3 {
 		t.Fatalf("unexpected node remove JSON: %+v", got)
+	}
+}
+
+func TestValidateNodeRemoveOptionsRejectsSubSecondDrain(t *testing.T) {
+	_, err := validateNodeRemoveOptions(nodeRemoveOptions{
+		nodeName:     "master-01",
+		controlPlane: "127.0.0.1:51820",
+		drain:        500 * time.Millisecond,
+		output:       "human",
+		timeout:      2 * time.Second,
+		stdout:       &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected sub-second drain to fail")
+	}
+	if !strings.Contains(err.Error(), "whole seconds") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
