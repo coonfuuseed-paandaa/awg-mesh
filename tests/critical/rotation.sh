@@ -28,7 +28,24 @@ if grep -Eq '^# Implementation lands|^echo .*SKIP' "${BASH_SOURCE[0]}"; then
 fi
 
 echo "Running CR-008 mesh-wide rotation contract suite..."
-"$GO" test -count=1 -run 'TestOrchestrator|TestServer_RotateAWGParamsMeshWide|TestRunRotateCommandMeshWide|TestValidateRotateOptionsMeshWide' \
-    ./pkg/rotation/... ./pkg/control_plane/... ./cmd/mesh-ctl/...
+RUN_RE='TestOrchestrator|TestServer_RotateAWGParamsMeshWide|TestRunRotateCommandMeshWide|TestValidateRotateOptionsMeshWide'
+TEST_OUTPUT="$(mktemp)"
+trap 'rm -f "$TEST_OUTPUT"' EXIT
+
+"$GO" test -count=1 -run "$RUN_RE" -v \
+    ./pkg/rotation/... ./pkg/control_plane/... ./cmd/mesh-ctl/... | tee "$TEST_OUTPUT"
+
+required_test_families=(
+    TestOrchestrator
+    TestServer_RotateAWGParamsMeshWide
+    TestRunRotateCommandMeshWide
+    TestValidateRotateOptionsMeshWide
+)
+for test_family in "${required_test_families[@]}"; do
+    if ! grep -Eq "^=== RUN[[:space:]]+${test_family}" "$TEST_OUTPUT"; then
+        echo "FAIL — required contract test family did not run: ${test_family}" >&2
+        exit 1
+    fi
+done
 
 echo "PASS — rotation.sh: CR-008 mesh-wide rotation contract verified"
