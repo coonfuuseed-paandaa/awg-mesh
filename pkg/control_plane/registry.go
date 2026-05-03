@@ -74,6 +74,8 @@ func (r *Registry) Register(node RegisteredNode) error {
 	if node.OverlayIP == "" {
 		return fmt.Errorf("registry: overlay_ip required for node %q", node.Name)
 	}
+	node.PendingCertPEM = nil
+	node.CertOverlapUntil = time.Time{}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

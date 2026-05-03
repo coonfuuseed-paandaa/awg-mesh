@@ -119,6 +119,47 @@ func TestRegistry_AllowCertRolloverAllowsDifferentCertAfterOverlap(t *testing.T)
 	}
 }
 
+func TestRegistry_RegisterIgnoresCallerProvidedPendingRollover(t *testing.T) {
+	r := NewRegistry()
+	mustRegister(t, r, RegisteredNode{
+		Name:             "n1",
+		Roles:            []role.Role{role.RoleMaster},
+		OverlayIP:        "10.0.0.1",
+		NodeCertPEM:      fakeCert,
+		PendingCertPEM:   fakeCertOther,
+		CertOverlapUntil: time.Now().Add(time.Hour),
+	})
+	got, ok := r.Lookup("n1")
+	if !ok {
+		t.Fatal("n1 missing after Register")
+	}
+	if len(got.PendingCertPEM) != 0 || !got.CertOverlapUntil.IsZero() {
+		t.Fatalf("caller-controlled pending rollover persisted: %+v", got)
+	}
+
+	allowedPending := []byte("allowed-pending")
+	if err := r.AllowCertRollover("n1", allowedPending, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("AllowCertRollover: %v", err)
+	}
+	if err := r.Register(RegisteredNode{
+		Name:             "n1",
+		Roles:            []role.Role{role.RoleMaster},
+		OverlayIP:        "10.0.0.1",
+		NodeCertPEM:      fakeCert,
+		PendingCertPEM:   fakeCertOther,
+		CertOverlapUntil: time.Now().Add(2 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Register same cert: %v", err)
+	}
+	got, ok = r.Lookup("n1")
+	if !ok {
+		t.Fatal("n1 missing after re-register")
+	}
+	if string(got.PendingCertPEM) != string(allowedPending) {
+		t.Fatalf("registry-controlled pending cert not preserved: %q", got.PendingCertPEM)
+	}
+}
+
 func TestRegistry_ReRegisterRejectsOverlayMove(t *testing.T) {
 	r := NewRegistry()
 	mustRegister(t, r, RegisteredNode{Name: "n1", Roles: []role.Role{role.RoleMaster}, OverlayIP: "10.0.0.1", NodeCertPEM: fakeCert})

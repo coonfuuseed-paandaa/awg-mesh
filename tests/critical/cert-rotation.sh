@@ -14,7 +14,7 @@ if ! command -v "$GO" >/dev/null 2>&1; then
     exit 1
 fi
 
-"$GO" test -count=1 -run 'TestGenerateCA|TestIssueCert|TestSaveLoadCertKey|TestValidateCert|TestCertInfo|TestRunNodePrepareCommandWritesV2TokenMaterialAndCerts|TestServer_StreamCertUpdate|TestNewDaemon_ConfiguresCertLifecycleFromCADir|TestNewDaemon_RejectsIncompleteDefaultCAMaterial|TestDaemon_WithCAMaterialRequiresMTLSRegister|TestAgentAppliesCertUpdateToLocalFiles|TestApplyCertUpdateRemovesNewKeyWhenCertWriteFails|TestValidateCommandConfigDefaultsCACertFromPreparedNodeLayout|TestValidateCommandConfigInsecureControlPlaneGate|TestLoadClientCertificateFromFilesReadsCurrentFiles|TestRegistry_AllowCertRollover' \
+"$GO" test -count=1 -run 'TestGenerateCA|TestIssueCert|TestSaveLoadCertKey|TestValidateCert|TestCertInfo|TestRunNodePrepareCommandWritesV2TokenMaterialAndCerts|TestServer_StreamCertUpdate|TestNewDaemon_ConfiguresCertLifecycleFromCADir|TestNewDaemon_RejectsIncompleteDefaultCAMaterial|TestDaemon_WithCAMaterialRequiresMTLSRegister|TestAgentAppliesCertUpdateToLocalFiles|TestApplyCertUpdateRemovesNewKeyWhenCertWriteFails|TestValidateCommandConfigDefaultsCACertFromPreparedNodeLayout|TestValidateCommandConfigInsecureControlPlaneGate|TestLoadClientCertificateFromFilesReadsCurrentFiles|TestRegistry_AllowCertRollover|TestRegistry_RegisterIgnoresCallerProvidedPendingRollover' \
     ./pkg/tls/... ./cmd/mesh-ctl/cmd ./pkg/control_plane ./pkg/clientd >/dev/null
 
 if ! grep -q 'rpc StreamCertUpdate' proto/control_plane.proto; then

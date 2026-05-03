@@ -80,6 +80,23 @@ func TestValidateCommandConfigDefaultsCACertFromPreparedNodeLayout(t *testing.T)
 	if validated.CACertPath != filepath.Join(configDir, "ca.crt") {
 		t.Fatalf("default CA path = %q, want %q", validated.CACertPath, filepath.Join(configDir, "ca.crt"))
 	}
+
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	if err := os.WriteFile(filepath.Join(cwd, "ca.crt"), []byte("ca"), 0o644); err != nil {
+		t.Fatalf("write cwd ca.crt: %v", err)
+	}
+	cfg = validCommandConfig(t)
+	cfg.CertPath = "node.pem"
+	cfg.KeyPath = ""
+	cfg.CACertPath = ""
+	validated, err = ValidateCommandConfig(cfg)
+	if err != nil {
+		t.Fatalf("arbitrary cert path config rejected: %v", err)
+	}
+	if validated.CACertPath != "" {
+		t.Fatalf("arbitrary cert path auto-discovered CA %q, want empty", validated.CACertPath)
+	}
 }
 
 func TestValidateCommandConfigInsecureControlPlaneGate(t *testing.T) {

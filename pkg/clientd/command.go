@@ -108,7 +108,7 @@ func ValidateCommandConfig(cfg CommandConfig) (CommandConfig, error) {
 		cfg.KeyPath = filepath.Join(filepath.Dir(cfg.CertPath), "node.key")
 	}
 	if strings.TrimSpace(cfg.CACertPath) == "" {
-		if candidate := defaultCACertPath(cfg.CertPath); regularFile(candidate) {
+		if candidate := defaultCACertPath(cfg.CertPath); candidate != "" && regularFile(candidate) {
 			cfg.CACertPath = candidate
 		}
 	}
@@ -231,7 +231,14 @@ func controlPlaneServerName(target string) string {
 }
 
 func defaultCACertPath(certPath string) string {
-	certDir := filepath.Dir(certPath)
+	cleanCertPath := filepath.Clean(certPath)
+	if filepath.Base(cleanCertPath) != "node.crt" {
+		return ""
+	}
+	certDir := filepath.Dir(cleanCertPath)
+	if filepath.Base(certDir) == "." || filepath.Base(filepath.Dir(certDir)) != "nodes" {
+		return ""
+	}
 	return filepath.Join(filepath.Dir(filepath.Dir(certDir)), "ca.crt")
 }
 
