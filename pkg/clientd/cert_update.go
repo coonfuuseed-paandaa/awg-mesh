@@ -60,7 +60,9 @@ func writeCertKeyPairAtomic(certPath, keyPath string, certPEM, keyPEM []byte) er
 	}
 	certBackup, hadCert, err := backupExistingFile(certPath)
 	if err != nil {
-		restoreCertKeyPair(certPath, keyPath, certBackup, keyBackup, hadCert, hadKey, false, false)
+		if restoreErr := restoreCertKeyPair(certPath, keyPath, certBackup, keyBackup, hadCert, hadKey, false, false); restoreErr != nil {
+			return fmt.Errorf("backup existing cert update cert: %w; rollback failed: %v", err, restoreErr)
+		}
 		return fmt.Errorf("backup existing cert update cert: %w", err)
 	}
 
