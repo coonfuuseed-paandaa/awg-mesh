@@ -43,6 +43,8 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(newTopologyCommand())
 	rootCmd.AddCommand(newNodeCommand())
 	rootCmd.AddCommand(newAuditLogCommand())
+	rootCmd.AddCommand(newBackupCommand())
+	rootCmd.AddCommand(newRestoreCommand())
 	// F-009 CR-001: v1.x role-subcommands (master/endpoint/client) removed.
 	// Replacement role-agnostic commands (`node prepare`, `node deploy`,
 	// `node init`, `node remove`) land in CR-010 mesh-ctl redesign.
