@@ -101,6 +101,15 @@ docker_chr() {
     "${DOCKER_CHR_BIN}" "$@"
 }
 
+docker_host_path() {
+    local path="${1}"
+    if [[ "${DOCKER_CHR_BIN}" == *.exe ]] && command -v wslpath > /dev/null 2>&1; then
+        wslpath -w "${path}"
+        return
+    fi
+    printf '%s\n' "${path}"
+}
+
 routeros_runtime_supported() {
     local version="${1}"
     local major minor
@@ -112,6 +121,20 @@ routeros_runtime_supported() {
     [[ "${minor}" -ge 21 ]] || return 1
     [[ "${minor}" -ne 22 ]] || return 1
     return 0
+}
+
+routeros_transitional_container_dialect() {
+    local version="${1}"
+    local major minor patch
+    IFS=. read -r major minor patch _extra <<EOF
+${version}
+EOF
+    patch="${patch:-0}"
+
+    [[ "${major}" == "7" ]] || return 1
+    [[ "${minor}" == "21" ]] || return 1
+    [[ "${patch}" =~ ^[0-9]+$ ]] || return 1
+    [[ "${patch}" -lt 4 ]]
 }
 
 create_docker_network() {
@@ -223,14 +246,20 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
 export_client_image_tar() {
     local build_log="${CTL_CONFIG_DIR}/docker-buildx-client.log"
     local oci_archive="${CTL_CONFIG_DIR}/awg-mesh-client.oci.tar"
+    local dockerfile_path
+    local context_path
+    local output_archive
+    dockerfile_path="$(docker_host_path "${REPO_ROOT}/../deploy/Dockerfile.client")"
+    context_path="$(docker_host_path "${REPO_ROOT}/..")"
+    output_archive="$(docker_host_path "${oci_archive}")"
 
-    docker buildx build \
+    docker_chr buildx build \
         --platform linux/amd64 \
         --provenance=false \
         --tag "${CLIENT_IMAGE}" \
-        --output "type=docker,dest=${oci_archive}" \
-        -f "${REPO_ROOT}/../deploy/Dockerfile.client" \
-        "${REPO_ROOT}/.." > "${build_log}" 2>&1 || {
+        --output "type=docker,dest=${output_archive}" \
+        -f "${dockerfile_path}" \
+        "${context_path}" > "${build_log}" 2>&1 || {
             tail -80 "${build_log}" >&2 || true
             return 1
         }
@@ -352,13 +381,18 @@ if ! routeros_runtime_supported "${TARGET_ROS_VERSION}"; then
     exit 2
 fi
 
-for cmd in docker python3 sshpass ssh scp; do
+if ! command -v "${DOCKER_CHR_BIN}" > /dev/null 2>&1; then
+    echo "ERROR: ${DOCKER_CHR_BIN} not found or not executable" >&2
+    exit 2
+fi
+
+for cmd in python3 sshpass ssh scp; do
     if ! command -v "${cmd}" > /dev/null 2>&1; then
         echo "ERROR: ${cmd} not in PATH" >&2
         exit 2
     fi
 done
-if ! docker buildx version > /dev/null 2>&1; then
+if ! docker_chr buildx version > /dev/null 2>&1; then
     echo "ERROR: docker buildx is required to export a RouterOS-compatible client image archive" >&2
     exit 2
 fi
@@ -368,12 +402,12 @@ if [[ ! -c /dev/kvm ]]; then
     exit 2
 fi
 
-if ! docker image inspect "${BASELINE_IMAGE}" > /dev/null 2>&1; then
+if ! docker_chr image inspect "${BASELINE_IMAGE}" > /dev/null 2>&1; then
     echo "ERROR: ${BASELINE_IMAGE} not found." >&2
     echo "       Run: bash tests/simulation/lib/build-chr-baseline.sh CHR_VERSION=${CHR_VERSION}" >&2
     exit 2
 fi
-BASELINE_READY="$(docker image inspect "${BASELINE_IMAGE}" --format '{{ index .Config.Labels "awg-mesh.chr-container-enabled" }}' 2>/dev/null || true)"
+BASELINE_READY="$(docker_chr image inspect "${BASELINE_IMAGE}" --format '{{ index .Config.Labels "awg-mesh.chr-container-enabled" }}' 2>/dev/null || true)"
 if [[ "${BASELINE_READY}" != "true" ]]; then
     echo "ERROR: ${BASELINE_IMAGE} is missing ${BASELINE_READY_LABEL}=true." >&2
     echo "       Rebuild it with: FORCE=1 CHR_VERSION=${CHR_VERSION} bash tests/simulation/lib/build-chr-baseline.sh" >&2
@@ -398,12 +432,12 @@ else
     echo "[pre-flight] RUN_RUNTIME_BASELINE=0 - skipping bare RouterOS runtime baseline"
 fi
 
-if ! docker image inspect "${NODE_IMAGE}" > /dev/null 2>&1; then
+if ! docker_chr image inspect "${NODE_IMAGE}" > /dev/null 2>&1; then
     echo "ERROR: ${NODE_IMAGE} not found. Build via: docker build -t ${NODE_IMAGE} -f deploy/Dockerfile.node ." >&2
     exit 2
 fi
 
-if ! docker image inspect "${CLIENT_IMAGE}" > /dev/null 2>&1; then
+if ! docker_chr image inspect "${CLIENT_IMAGE}" > /dev/null 2>&1; then
     echo "ERROR: ${CLIENT_IMAGE} not found. Build via: docker build -t ${CLIENT_IMAGE} -f deploy/Dockerfile.client ." >&2
     exit 2
 fi
@@ -621,13 +655,23 @@ if grep -q "/interface/wireguard" "${RSC_FILE}"; then
 fi
 pass "T4.b: generated .rsc stays on RouterOS container path"
 
-if grep -q "/container/mounts/add list=${ROUTEROS_CONTAINER_NAME}_CONFIG" "${RSC_FILE}" \
+if routeros_transitional_container_dialect "${TARGET_ROS_VERSION}"; then
+    if grep -q "/container/mounts/add name=${ROUTEROS_CONTAINER_NAME}_CONFIG" "${RSC_FILE}" \
+        && grep -q "mounts=${ROUTEROS_CONTAINER_NAME}_CONFIG" "${RSC_FILE}" \
+        && grep -q "/container/envs/add name=${ROUTEROS_CONTAINER_NAME}_ENVS" "${RSC_FILE}"; then
+        pass "T4.c: generated .rsc uses transitional RouterOS runtime dialect"
+    else
+        fail "T4.c: generated .rsc does not use expected RouterOS runtime dialect for ${TARGET_ROS_VERSION}"
+        indent_stderr < "${RSC_FILE}"
+        exit 4
+    fi
+elif grep -q "/container/mounts/add list=${ROUTEROS_CONTAINER_NAME}_CONFIG" "${RSC_FILE}" \
     && grep -q "mountlists=${ROUTEROS_CONTAINER_NAME}_CONFIG" "${RSC_FILE}" \
     && grep -q "/container/envs/add list=${ROUTEROS_CONTAINER_NAME}_ENVS" "${RSC_FILE}"; then
     pass "T4.c: generated .rsc uses canonical RouterOS runtime dialect"
 else
-    fail "T4.c: generated .rsc does not use canonical RouterOS runtime dialect for ${TARGET_ROS_VERSION}"
-    sed 's/^/    /' "${RSC_FILE}" >&2
+    fail "T4.c: generated .rsc does not use expected RouterOS runtime dialect for ${TARGET_ROS_VERSION}"
+    indent_stderr < "${RSC_FILE}"
     exit 4
 fi
 
