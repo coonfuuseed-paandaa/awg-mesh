@@ -118,7 +118,16 @@ func (iface *Interface) Configure(cfg Config) error {
 	if iface == nil {
 		return errors.New("interface is nil")
 	}
-	return NewUAPIClient().ConfigureDevice(iface.name, cfg)
+	if err := NewUAPIClient().ConfigureDevice(iface.name, cfg); err != nil {
+		return err
+	}
+	if iface.dev == nil {
+		return nil
+	}
+	if err := iface.dev.Up(); err != nil {
+		return fmt.Errorf("bring interface %q up: %w", iface.name, err)
+	}
+	return nil
 }
 
 // OpenExistingInterface attempts to obtain a handle to an already-running AWG

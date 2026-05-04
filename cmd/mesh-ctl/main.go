@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/cmd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 )
 
 func main() {
@@ -52,8 +53,9 @@ func version() string {
 		}
 	}
 
-	// Base version: strip pseudo-version to base tag, or "dev"
-	base := "dev"
+	// Base version: strip pseudo-version to base tag, or the suite version
+	// constant for local release-branch builds.
+	base := awgmesh.Version
 	if modVer != "" && modVer != "(devel)" && strings.Contains(modVer, "-0.") {
 		// "v0.2.1-0.20260327..." → "v0.2.1"
 		if idx := strings.Index(modVer, "-0."); idx > 0 {

@@ -1,13 +1,195 @@
 #!/usr/bin/env sh
 # deploy/client-init.sh — Container ENTRYPOINT for awg-mesh client mode.
-# Runs before the Go binary: probes firewall backend, installs MASQUERADE
-# + MSS clamp, writes rt_tables when client-state.yml is present, then
-# execs the Go binary. POSIX sh (busybox compat). shellcheck-clean.
+# Runs before the Go binary: probes firewall backend, pins the control-plane
+# route, installs MASQUERADE + MSS clamp, writes rt_tables when
+# client-state.yml is present, then execs the Go binary. POSIX sh
+# (busybox compat). shellcheck-clean.
 
 set -eu
 
 ###############################################################################
-# 1. Detect firewall backend
+# 0. Bootstrap mounted config from RouterOS environment
+###############################################################################
+
+mkdir -p /config
+
+if [ -n "${MESH_TOKEN_HASH:-}" ] && [ ! -s /config/mesh.token ]; then
+    printf '%s' "${MESH_TOKEN_HASH}" > /config/mesh.token
+    chmod 600 /config/mesh.token
+    echo "client-init: wrote /config/mesh.token from MESH_TOKEN_HASH"
+fi
+
+write_b64_file() {
+    value="$1"
+    path="$2"
+    label="$3"
+    if [ -z "${value}" ] || [ -s "${path}" ]; then
+        return 0
+    fi
+    printf '%s' "${value}" | base64 -d > "${path}"
+    chmod 600 "${path}"
+    echo "client-init: wrote ${path} from ${label}"
+}
+
+write_b64_file "${MESH_NODE_CERT_B64:-}" /config/node.crt MESH_NODE_CERT_B64
+write_b64_file "${MESH_NODE_KEY_B64:-}" /config/node.key MESH_NODE_KEY_B64
+write_b64_file "${MESH_CA_CERT_B64:-}" /config/ca.crt MESH_CA_CERT_B64
+
+###############################################################################
+# 1. Pin control-plane route before the Go process creates a TUN device
+###############################################################################
+
+find_control_plane_arg() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --control-plane=*)
+                printf '%s\n' "${1#--control-plane=}"
+                return 0
+                ;;
+            --control-plane)
+                shift
+                if [ "$#" -gt 0 ]; then
+                    printf '%s\n' "$1"
+                    return 0
+                fi
+                return 1
+                ;;
+        esac
+        shift
+    done
+    return 1
+}
+
+control_plane_ipv4_host() {
+    authority="$1"
+    case "${authority}" in
+        "" | localhost | 127.* | \[*\]* | *[!0-9.:]*)
+            return 1
+            ;;
+        *:*)
+            host="${authority%%:*}"
+            ;;
+        *)
+            host="${authority}"
+            ;;
+    esac
+    case "${host}" in
+        "" | 127.* | *[!0-9.]*)
+            return 1
+            ;;
+    esac
+    printf '%s\n' "${host}"
+}
+
+control_plane_tcp_port() {
+    authority="$1"
+    case "${authority}" in
+        *:*)
+            port="${authority##*:}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    case "${port}" in
+        "" | *[!0-9]*)
+            return 1
+            ;;
+    esac
+    printf '%s\n' "${port}"
+}
+
+tcp_reachable() {
+    host="$1"
+    port="$2"
+    if [ -z "${host}" ] || [ -z "${port}" ] || ! command -v nc >/dev/null 2>&1; then
+        return 1
+    fi
+    nc -z -w 2 "${host}" "${port}" >/dev/null 2>&1
+}
+
+verify_control_plane_route_pin() {
+    host="$1"
+    port="$2"
+    via="$3"
+    dev="$4"
+    if [ -z "${port}" ] || ! command -v nc >/dev/null 2>&1; then
+        return 0
+    fi
+    if tcp_reachable "${host}" "${port}"; then
+        return 0
+    fi
+    ip route del "${host}/32" 2>/dev/null || true
+    if tcp_reachable "${host}" "${port}"; then
+        echo "client-init: WARN: removed control-plane route pin ${host}/32 because it broke TCP reachability" >&2
+        return 0
+    fi
+    if [ -n "${via}" ]; then
+        ip route replace "${host}/32" via "${via}" dev "${dev}" 2>/dev/null || true
+    else
+        ip route replace "${host}/32" dev "${dev}" 2>/dev/null || true
+    fi
+}
+
+pin_control_plane_route() {
+    control_plane="$(find_control_plane_arg "$@" || true)"
+    if [ -z "${control_plane}" ]; then
+        return 0
+    fi
+
+    control_plane_host="$(control_plane_ipv4_host "${control_plane}" || true)"
+    if [ -z "${control_plane_host}" ]; then
+        return 0
+    fi
+    control_plane_port="$(control_plane_tcp_port "${control_plane}" || true)"
+
+    route_line="$(ip route get "${control_plane_host}" 2>/dev/null | head -n 1 || true)"
+    if [ -z "${route_line}" ]; then
+        echo "client-init: WARN: cannot resolve route to control-plane ${control_plane_host}" >&2
+        return 0
+    fi
+
+    route_via=""
+    route_dev=""
+    set -- ${route_line}
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            via)
+                shift
+                route_via="${1:-}"
+                ;;
+            dev)
+                shift
+                route_dev="${1:-}"
+                ;;
+        esac
+        shift || true
+    done
+
+    if [ -z "${route_dev}" ]; then
+        echo "client-init: WARN: route to control-plane ${control_plane_host} has no dev" >&2
+        return 0
+    fi
+
+    if [ -n "${route_via}" ]; then
+        if ip route replace "${control_plane_host}/32" via "${route_via}" dev "${route_dev}" 2>/dev/null; then
+            echo "client-init: pinned control-plane route ${control_plane_host}/32 via ${route_via} dev ${route_dev}"
+            verify_control_plane_route_pin "${control_plane_host}" "${control_plane_port}" "${route_via}" "${route_dev}"
+        else
+            echo "client-init: WARN: failed to pin control-plane route ${control_plane_host}/32 via ${route_via} dev ${route_dev}" >&2
+        fi
+    elif ip route replace "${control_plane_host}/32" dev "${route_dev}" 2>/dev/null; then
+        echo "client-init: pinned control-plane route ${control_plane_host}/32 dev ${route_dev}"
+        verify_control_plane_route_pin "${control_plane_host}" "${control_plane_port}" "" "${route_dev}"
+    else
+        echo "client-init: WARN: failed to pin control-plane route ${control_plane_host}/32 dev ${route_dev}" >&2
+    fi
+}
+
+pin_control_plane_route "$@"
+
+###############################################################################
+# 2. Detect firewall backend
 ###############################################################################
 
 MESH_FW_BACKEND=""
@@ -24,7 +206,7 @@ fi
 echo "client-init: firewall backend: ${MESH_FW_BACKEND}"
 
 ###############################################################################
-# 2 + 3. Install MASQUERADE on wg-c* and MSS clamp on FORWARD (idempotent)
+# 3 + 4. Install MASQUERADE on wg-c* and MSS clamp on FORWARD (idempotent)
 ###############################################################################
 
 if [ "${MESH_FW_BACKEND}" = "nftables" ]; then
@@ -78,7 +260,7 @@ else
 fi
 
 ###############################################################################
-# 4. Write rt_tables from /config/client-state.yml routing_policies section
+# 5. Write rt_tables from /config/client-state.yml routing_policies section
 ###############################################################################
 # saveClientState (pkg/node/client_state.go) persists the schema below:
 #
@@ -149,7 +331,7 @@ if [ -f "${CLIENT_STATE}" ]; then
 fi
 
 ###############################################################################
-# 5. Hand off to the Go binary (replace shell process — no orphan shell)
+# 6. Hand off to the Go binary (replace shell process — no orphan shell)
 ###############################################################################
 
 exec /usr/local/bin/awg-mesh-node "$@"

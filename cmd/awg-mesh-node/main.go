@@ -12,9 +12,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -124,6 +126,8 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
 	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
 	masterClientPrivateKeyFile := fs.String("client-private-key-file", "", "master: base64 WireGuard private key file for the client-facing vanilla-WG listener")
+	var masterClientPeers routeFlags
+	fs.Var(&masterClientPeers, "client-peer", "master: static client-facing peer public_key=allowed_cidr[,allowed_cidr]; repeatable")
 	egressInternetIface := fs.String("internet-iface", "", "egress: internet-bound interface for MASQUERADE")
 	ingressPublicAddr := fs.String("ingress-public-addr", "", "ingress: public HTTP/TLS bind address")
 	ingressTenant := fs.String("ingress-tenant", ingress.DefaultTenant, "ingress: tenant for routes declared with --ingress-route")
@@ -189,6 +193,11 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			writef(stderr, "master: %v\n", err)
 			return 2
 		}
+		clientPeers, err := parseMasterClientPeers(masterClientPeers)
+		if err != nil {
+			writef(stderr, "master: %v\n", err)
+			return 2
+		}
 		return runMaster(context.Background(), node.MasterConfig{
 			Name:      *nodeName,
 			OverlayIP: *overlayIP,
@@ -198,6 +207,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 				ClientListenPort:    *masterClientListenPort,
 				MeshListenPort:      *masterMeshListenPort,
 				ClientPrivateKey:    clientPrivateKey,
+				ClientPeers:         clientPeers,
 			},
 		}, *dryRun, stdout, stderr)
 	case "endpoint", "egress":
@@ -276,6 +286,52 @@ func loadOptionalWGPrivateKey(path string) (*wg.Key, error) {
 		return nil, fmt.Errorf("client private key file %q must not contain the zero key", trimmed)
 	}
 	return &key, nil
+}
+
+func parseMasterClientPeers(values routeFlags) ([]wg.PeerConfig, error) {
+	peers := make([]wg.PeerConfig, 0, len(values))
+	for _, value := range values {
+		separator := strings.LastIndex(value, "=")
+		if separator < 0 {
+			return nil, fmt.Errorf("--client-peer %q must use public_key=allowed_cidr[,allowed_cidr]", value)
+		}
+		rawKey := value[:separator]
+		rawAllowed := value[separator+1:]
+		key, err := wg.ParseKey(strings.TrimSpace(rawKey))
+		if err != nil {
+			return nil, fmt.Errorf("--client-peer %q has invalid public key: %w", value, err)
+		}
+		allowed, err := parseAllowedCIDRs(rawAllowed)
+		if err != nil {
+			return nil, fmt.Errorf("--client-peer %q: %w", value, err)
+		}
+		peers = append(peers, wg.PeerConfig{
+			PublicKey:         key,
+			ReplaceAllowedIPs: true,
+			AllowedIPs:        allowed,
+		})
+	}
+	return peers, nil
+}
+
+func parseAllowedCIDRs(raw string) ([]net.IPNet, error) {
+	parts := strings.Split(raw, ",")
+	allowed := make([]net.IPNet, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowed CIDR %q: %w", trimmed, err)
+		}
+		allowed = append(allowed, *ipNet)
+	}
+	if len(allowed) == 0 {
+		return nil, errors.New("at least one allowed CIDR is required")
+	}
+	return allowed, nil
 }
 
 func runControlPlane(listenAddr, stateDir, caDir string, certRotationDays, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {

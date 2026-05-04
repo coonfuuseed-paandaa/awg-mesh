@@ -82,6 +82,14 @@ type DeployScript struct {
 	OverlayIP     string   // client overlay IP from topology
 	OverlayNet    string   // overlay CIDR from topology (e.g. "172.20.70.0/24")
 	TokenHash     string   // bcrypt hash of bearer token
+	NodeCertB64   string   // base64-encoded node.crt copied into /config on first boot
+	NodeKeyB64    string   // base64-encoded node.key copied into /config on first boot
+	CACertB64     string   // optional base64-encoded ca.crt copied into /config
+	ControlPlane  string   // optional control-plane address for runnable clientd command
+	Region        string   // node region passed to clientd
+	Protocol      string   // clientd protocol (default: amneziawg)
+	InterfaceName string   // clientd interface name (default: awg-mesh0)
+	TargetROS     string   // RouterOS target version for container CLI dialect selection
 	DNS           []string // DNS servers (default: ["1.1.1.1", "8.8.8.8"])
 	GRPCPort      int      // gRPC management port for dstnat (default: 9090)
 	StorageRoot   string   // container storage root on MikroTik (default: "docker" when empty)
@@ -102,14 +110,20 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 	mountSrc := "/" + storageRoot + "/etc/awg-mesh-client-" + strings.ToLower(ds.TopologyName) + "-config"
 
 	containerCfg := ContainerConfig{
-		Name:      ds.ContainerName,
-		Image:     ds.Image,
-		Interface: ds.Veth,
-		RootDir:   "/" + storageRoot + "/awg-mesh-client-" + strings.ToLower(ds.TopologyName),
-		MountName: mountName,
-		MountSrc:  mountSrc,
-		DNS:       ds.DNS,
-		EnvVars:   envVars,
+		Name:             ds.ContainerName,
+		Image:            ds.Image,
+		Interface:        ds.Veth,
+		RootDir:          "/" + storageRoot + "/awg-mesh-client-" + strings.ToLower(ds.TopologyName),
+		MountName:        mountName,
+		MountSrc:         mountSrc,
+		DNS:              ds.DNS,
+		EnvVars:          envVars,
+		Command:          buildClientCommand(ds),
+		TargetROSVersion: ds.TargetROS,
+	}
+	containerCommands, err := GenerateContainerCommandsForTarget(containerCfg)
+	if err != nil {
+		return "", err
 	}
 
 	templateData := struct {
@@ -130,8 +144,8 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 		NATCommands:       GenerateNATCommands(ds.VethGateway, ds.GRPCPort),
 		FirewallCommands:  GenerateFirewallCommands(ds.BridgeName),
 		RouteCommands:     GenerateRouteCommands(ds.OverlayNet, ds.VethGateway),
-		ContainerCommands: GenerateContainerCommands(containerCfg),
-		StartCommand:      fmt.Sprintf("/container/start [find where name=%s]", escapeRouterOSToken(ds.ContainerName)),
+		ContainerCommands: containerCommands,
+		StartCommand:      "# RouterOS starts the container after local image import; start-on-boot=yes keeps it running after reboot.",
 	}
 
 	script, err := executeTemplate("deploy-rsc", deployScriptTemplate, templateData)
@@ -224,12 +238,55 @@ func validateDeployScript(ds DeployScript) error {
 }
 
 func buildDeployEnvVars(ds DeployScript) map[string]string {
-	return map[string]string{
+	envVars := map[string]string{
 		"MESH_TOKEN_HASH": strings.TrimSpace(ds.TokenHash),
 		"MESH_MODE":       "client",
 		"MESH_NAME":       strings.TrimSpace(ds.TopologyName),
 		"MESH_OVERLAY_IP": strings.TrimSpace(ds.OverlayIP),
 	}
+	if strings.TrimSpace(ds.NodeCertB64) != "" {
+		envVars["MESH_NODE_CERT_B64"] = strings.TrimSpace(ds.NodeCertB64)
+	}
+	if strings.TrimSpace(ds.NodeKeyB64) != "" {
+		envVars["MESH_NODE_KEY_B64"] = strings.TrimSpace(ds.NodeKeyB64)
+	}
+	if strings.TrimSpace(ds.CACertB64) != "" {
+		envVars["MESH_CA_CERT_B64"] = strings.TrimSpace(ds.CACertB64)
+	}
+	return envVars
+}
+
+func buildClientCommand(ds DeployScript) string {
+	controlPlane := strings.TrimSpace(ds.ControlPlane)
+	if controlPlane == "" {
+		return ""
+	}
+	region := strings.TrimSpace(ds.Region)
+	if region == "" {
+		region = "default"
+	}
+	protocol := strings.TrimSpace(ds.Protocol)
+	if protocol == "" {
+		protocol = "amneziawg"
+	}
+	iface := strings.TrimSpace(ds.InterfaceName)
+	if iface == "" {
+		iface = "awg-mesh0"
+	}
+	args := []string{
+		"--mode", "client",
+		"--control-plane", controlPlane,
+		"--name", strings.TrimSpace(ds.TopologyName),
+		"--overlay-ip", strings.TrimSpace(ds.OverlayIP),
+		"--region", region,
+		"--cert", "/config/node.crt",
+		"--key", "/config/node.key",
+		"--state-dir", "/config",
+		"--iface", iface,
+		"--protocol", protocol,
+		"--allow-insecure-control-plane",
+	}
+	return strings.Join(args, " ")
 }
 
 func validateRotateParams(params RotateParams) error {

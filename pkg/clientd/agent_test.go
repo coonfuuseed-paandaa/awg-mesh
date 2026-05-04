@@ -135,6 +135,75 @@ func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
 	}
 }
 
+func TestAgentRegistersBeforeApplyingCachedState(t *testing.T) {
+	const streamTestTimeout = 10 * time.Second
+
+	server := &streamingTestServer{
+		registered: make(chan *pb.RegisterNodeRequest, 1),
+	}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	cachePath := filepath.Join(t.TempDir(), "clientd-state.json")
+	if err := NewStateCache(cachePath).Save(State{
+		PeerListVersion: 7,
+		Peers:           []PeerEntry{{PeerName: "cached-master", PeerPubkey: bytesOf(0x42), AllowedIPs: []string{"10.0.0.1/32"}}},
+	}); err != nil {
+		t.Fatalf("seed cached state: %v", err)
+	}
+
+	configurator := &recordingConfigurator{notify: make(chan State, 1)}
+	agent, err := NewAgent(Config{
+		NodeName:      "client-a",
+		Roles:         []role.Role{role.RoleClient},
+		OverlayIP:     "10.10.0.10",
+		Region:        "eu-test",
+		NodeCertPEM:   []byte("cert-bytes"),
+		Version:       "test-version",
+		InterfaceName: "awg-test0",
+		Protocol:      wg.ProtocolAmneziaWG,
+		StatePath:     cachePath,
+	}, pb.NewControlPlaneClient(conn), configurator)
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(ctx) }()
+	defer cancel()
+
+	select {
+	case state := <-configurator.notify:
+		t.Fatalf("cached state applied before registration: %#v", state)
+	case <-server.registered:
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for registration")
+	}
+
+	select {
+	case state := <-configurator.notify:
+		if state.PeerListVersion != 7 || len(state.Peers) != 1 || state.Peers[0].PeerName != "cached-master" {
+			t.Fatalf("unexpected cached state apply: %#v", state)
+		}
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for cached state apply")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for agent shutdown")
+	}
+}
+
 func TestAgentAppliesCertUpdateToLocalFiles(t *testing.T) {
 	const streamTestTimeout = 10 * time.Second
 

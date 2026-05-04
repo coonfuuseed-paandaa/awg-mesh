@@ -132,9 +132,12 @@ observability:
 - **Linux kernel:** ≥4.19 with WireGuard kernel module (built-in since 5.6) for
   every mesh node. Mesh-internal nodes additionally require AmneziaWG kernel
   module ≥1.0 (build from `amneziawg-linux-kernel-module` repo).
-- **MikroTik RouterOS:** ≥7.0 for native vanilla-WG client (no AWG support on
-  RouterOS — relies on master's vanilla-WG listener). RouterOS ≥7.4 ARM with
-  container support enables awg-mesh-client container path for full AWG client.
+- **MikroTik RouterOS:** current v2.0 release work targets RouterOS 7.21+
+  container deployments running `awg-mesh-client`. `mesh-ctl` still generates
+  version-specific `/container` syntax for the documented legacy/transitional
+  pivots, but the client data plane requires container-side nftables support.
+  Native RouterOS vanilla WireGuard compatibility remains a required future
+  track, but it is not wired into the current release gate.
 - **macOS / Windows / FreeBSD:** OUT of scope for v2.0 (AWG kernel module Linux-only).
 
 ## CR roadmap
@@ -153,7 +156,7 @@ observability:
 | CR-011 | Critical suite v2 (full implementation of 18+ tests) | v2.0.0-beta.2 |
 | CR-012 | Emulation playbook v2 | v2.0.0-rc.1 |
 | CR-013 | Migration tooling v1.x → v2.0 | v2.0.0-rc.1 |
-| CR-014 | Mikrotik vanilla-WG bridge (.rsc generator + container option) | v2.0.0-rc.1 |
+| CR-014 | MikroTik native vanilla-WG bridge (deferred/unwired); current gate uses RouterOS container deployment | future |
 | Release | Tag, push, image publication, retag verification | v2.0.0 |
 
 See plan F-009 for full CR dependency graph and parallelism map.

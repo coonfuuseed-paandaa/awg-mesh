@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
 	mikrotikv2 "github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik/v2"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
@@ -16,6 +18,7 @@ import (
 
 const (
 	routerOSScriptFilename       = "routeros.rsc"
+	defaultMikrotikClientImage   = "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest"
 	mikrotikWGPrivateKeyFile     = "wireguard-private.key"
 	mikrotikWGPublicKeyFile      = "wireguard-public.key"
 	masterClientWGPrivateKeyFile = "client-wg-private.key"
@@ -38,9 +41,63 @@ func preparePlatform(override string, node topology.NodeV2) string {
 	return ""
 }
 
-func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, configDir, nodeDir string) (mikrotikPrepareArtifacts, error) {
+func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, configDir, nodeDir, tokenHash, controlPlane, targetROS string) (mikrotikPrepareArtifacts, error) {
 	if !nodeHasRole(node, role.RoleClient) {
 		return mikrotikPrepareArtifacts{}, fmt.Errorf("node %q must have role client for --platform mikrotik", node.Name)
+	}
+	certB64, err := readBase64File(filepath.Join(nodeDir, "node.crt"))
+	if err != nil {
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("read node certificate for %q: %w", node.Name, err)
+	}
+	keyB64, err := readBase64File(filepath.Join(nodeDir, "node.key"))
+	if err != nil {
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("read node key for %q: %w", node.Name, err)
+	}
+	caB64, err := readBase64File(filepath.Join(configDir, "ca.crt"))
+	if err != nil {
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("read mesh CA certificate: %w", err)
+	}
+
+	containerName := mikrotik.DeriveContainerName(node.Name)
+	script, err := mikrotik.GenerateDeployRSC(mikrotik.DeployScript{
+		TopologyName:  node.Name,
+		ContainerName: containerName,
+		Image:         defaultMikrotikClientImage,
+		Veth:          containerName,
+		OverlayIP:     node.OverlayIP,
+		OverlayNet:    topo.Mesh.OverlaySupernet,
+		TokenHash:     tokenHash,
+		NodeCertB64:   certB64,
+		NodeKeyB64:    keyB64,
+		CACertB64:     caB64,
+		ControlPlane:  controlPlane,
+		Region:        node.Region,
+		TargetROS:     targetROS,
+	})
+	if err != nil {
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("generate mikrotik RouterOS container script for %q: %w", node.Name, err)
+	}
+	scriptPath := filepath.Join(nodeDir, routerOSScriptFilename)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("write RouterOS script for %q: %w", node.Name, err)
+	}
+
+	return mikrotikPrepareArtifacts{
+		RouterOSScriptPath: scriptPath,
+	}, nil
+}
+
+func readBase64File(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+func prepareMikrotikNativeWireGuardRouterOS(topo *topology.TopologyV2, node topology.NodeV2, configDir, nodeDir string) (mikrotikPrepareArtifacts, error) {
+	if !nodeHasRole(node, role.RoleClient) {
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("node %q must have role client for native RouterOS WireGuard", node.Name)
 	}
 	clientPrivate, _, clientPaths, err := loadOrCreateWireGuardKeyPair(nodeDir, mikrotikWGPrivateKeyFile, mikrotikWGPublicKeyFile)
 	if err != nil {

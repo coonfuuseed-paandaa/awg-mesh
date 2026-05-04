@@ -60,8 +60,9 @@ func TestGenerateDeployRSC(t *testing.T) {
 		"dns=1.1.1.1,8.8.8.8",
 		"logging=yes",
 		"start-on-boot=yes",
-		// Start
-		"/container/start [find where name=AWG_MESH_HOME]",
+		// RouterOS imports local container images asynchronously; immediate
+		// /container/start inside the same /import transaction is not reliable.
+		"RouterOS starts the container after local image import",
 	}
 
 	mustNotContain := []string{
@@ -69,6 +70,7 @@ func TestGenerateDeployRSC(t *testing.T) {
 		"key=MESH_AWG_CONFIG", // dead duplicate of MESH_MASTERS
 		"key=MESH_CONFIG_DIR", // redundant — /config is the binary default
 		"192.168.100",         // old default subnet — must be gone
+		"/container/start",
 	}
 
 	// Plaintext MESH_TOKEN= must never land in a generated script.

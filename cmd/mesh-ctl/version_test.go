@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+)
 
 func TestVersionFromBuildOverride(t *testing.T) {
 	orig := versionFromBuild
@@ -21,5 +26,8 @@ func TestVersionFallbackWhenEmpty(t *testing.T) {
 	got := version()
 	if got == "v9.9.9-test" {
 		t.Fatalf("version() returned the test-override value in fallback path: %q", got)
+	}
+	if !strings.HasPrefix(got, awgmesh.Version) {
+		t.Fatalf("version() fallback = %q, want prefix %q", got, awgmesh.Version)
 	}
 }

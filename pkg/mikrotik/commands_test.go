@@ -16,6 +16,7 @@ func TestGenerateContainerCommands(t *testing.T) {
 		MountName: "AWG_MESH_HOME_CONFIG",
 		MountSrc:  "/docker/etc/awg-mesh-client-home-config",
 		DNS:       []string{"1.1.1.1", "8.8.8.8"},
+		Command:   "--mode client --name mikrotik-home",
 		EnvVars: map[string]string{
 			"MESH_MODE": "client",
 			"MESH_NAME": "mikrotik-home",
@@ -43,6 +44,7 @@ func TestGenerateContainerCommands(t *testing.T) {
 		"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
 		"mountlists=AWG_MESH_HOME_CONFIG",
 		"dns=1.1.1.1,8.8.8.8",
+		`cmd="--mode client --name mikrotik-home"`,
 		"logging=yes",
 		"start-on-boot=yes",
 	}
@@ -59,6 +61,100 @@ func TestGenerateContainerCommands(t *testing.T) {
 			if !strings.Contains(cmd, "list=") {
 				t.Errorf("env command missing list= parameter: %q", cmd)
 			}
+		}
+	}
+}
+
+func TestGenerateContainerCommandsSelectsRouterOSDialect(t *testing.T) {
+	t.Parallel()
+
+	base := ContainerConfig{
+		Name:      "AWG_MESH_HOME",
+		Image:     "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Interface: "AWG_MESH_HOME",
+		RootDir:   "/docker/awg-mesh-client-home",
+		MountName: "AWG_MESH_HOME_CONFIG",
+		MountSrc:  "/docker/etc/awg-mesh-client-home-config",
+		EnvVars:   map[string]string{"MESH_MODE": "client"},
+	}
+
+	tests := []struct {
+		name      string
+		targetROS string
+		want      []string
+		notWant   []string
+	}{
+		{
+			name:      "legacy 7.16",
+			targetROS: "7.16.2",
+			want: []string{
+				"/container/mounts/add name=AWG_MESH_HOME_CONFIG",
+				"/container/envs/add name=AWG_MESH_HOME_ENVS",
+				"image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+				"mounts=AWG_MESH_HOME_CONFIG",
+			},
+			notWant: []string{"mountlists=", "remote-image="},
+		},
+		{
+			name:      "transitional 7.20",
+			targetROS: "7.20.8",
+			want: []string{
+				"/container/mounts/add name=AWG_MESH_HOME_CONFIG",
+				"/container/envs/add name=AWG_MESH_HOME_ENVS",
+				"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+				"mounts=AWG_MESH_HOME_CONFIG",
+			},
+			notWant: []string{"mountlists="},
+		},
+		{
+			name:      "canonical 7.21",
+			targetROS: "7.21.4",
+			want: []string{
+				"/container/mounts/add list=AWG_MESH_HOME_CONFIG",
+				"/container/envs/add list=AWG_MESH_HOME_ENVS",
+				"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+				"mountlists=AWG_MESH_HOME_CONFIG",
+			},
+			notWant: []string{"mounts=AWG_MESH_HOME_CONFIG", "/container/envs/add name="},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := base
+			cfg.TargetROSVersion = tt.targetROS
+			commands, err := GenerateContainerCommandsForTarget(cfg)
+			if err != nil {
+				t.Fatalf("GenerateContainerCommandsForTarget: %v", err)
+			}
+			joined := strings.Join(commands, "\n")
+			for _, want := range tt.want {
+				if !strings.Contains(joined, want) {
+					t.Errorf("expected %q in commands:\n%s", want, joined)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(joined, notWant) {
+					t.Errorf("did not expect %q in commands:\n%s", notWant, joined)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateContainerCommandsRejectsUnsupportedRouterOS(t *testing.T) {
+	t.Parallel()
+
+	for _, targetROS := range []string{"7.4.0", "7.22.1", "6.49.10"} {
+		_, err := GenerateContainerCommandsForTarget(ContainerConfig{
+			Name:             "AWG_MESH_HOME",
+			Image:            "image",
+			Interface:        "veth1",
+			TargetROSVersion: targetROS,
+		})
+		if err == nil {
+			t.Fatalf("expected target RouterOS %s to be rejected", targetROS)
 		}
 	}
 }

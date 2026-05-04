@@ -18,16 +18,26 @@ const (
 	defaultBridgeName  = "BR_AWG_MESH"
 )
 
+type containerDialect int
+
+const (
+	containerDialectLegacy containerDialect = iota
+	containerDialectTransitional
+	containerDialectCanonical
+)
+
 // ContainerConfig holds parameters for generating MikroTik container CLI commands.
 type ContainerConfig struct {
-	Name      string
-	Image     string
-	Interface string
-	RootDir   string   // e.g. /docker/awg-mesh-client-home
-	MountName string   // e.g. AWG_MESH_HOME_CONFIG
-	MountSrc  string   // e.g. /docker/etc/awg-mesh-client-home-config
-	DNS       []string // e.g. ["1.1.1.1", "8.8.8.8"]
-	EnvVars   map[string]string
+	Name             string
+	Image            string
+	Interface        string
+	RootDir          string   // e.g. /docker/awg-mesh-client-home
+	MountName        string   // e.g. AWG_MESH_HOME_CONFIG
+	MountSrc         string   // e.g. /docker/etc/awg-mesh-client-home-config
+	DNS              []string // e.g. ["1.1.1.1", "8.8.8.8"]
+	EnvVars          map[string]string
+	Command          string
+	TargetROSVersion string
 }
 
 // ToUpperSnake converts a topology name like "mikrotik-home" to "MIKROTIK_HOME".
@@ -55,6 +65,16 @@ func DeriveMountName(containerName string) string {
 
 // GenerateContainerCommands returns /container/mounts + /container/envs + /container/add CLI commands.
 func GenerateContainerCommands(cfg ContainerConfig) []string {
+	commands, _ := GenerateContainerCommandsForTarget(cfg)
+	return commands
+}
+
+// GenerateContainerCommandsForTarget returns RouterOS-version-specific container commands.
+func GenerateContainerCommandsForTarget(cfg ContainerConfig) ([]string, error) {
+	dialect, err := selectMikrotikDialect(cfg.TargetROSVersion)
+	if err != nil {
+		return nil, err
+	}
 	envListName := DeriveEnvListName(cfg.Name)
 
 	var cmds []string
@@ -62,20 +82,25 @@ func GenerateContainerCommands(cfg ContainerConfig) []string {
 	// Mount for persistent /config
 	// per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
 	if cfg.MountName != "" && cfg.MountSrc != "" {
+		mountListParam := "list"
+		if dialect != containerDialectCanonical {
+			mountListParam = "name"
+		}
 		cmds = append(cmds, fmt.Sprintf(
-			"/container/mounts/add list=%s src=%s dst=/config",
+			"/container/mounts/add %s=%s src=%s dst=/config",
+			mountListParam,
 			escapeRouterOSToken(cfg.MountName),
 			escapeRouterOSToken(cfg.MountSrc),
 		))
 	}
 
 	// Environment variables
-	cmds = append(cmds, buildEnvCommands(envListName, cfg.EnvVars)...)
+	cmds = append(cmds, buildEnvCommands(envListName, cfg.EnvVars, dialect)...)
 
 	// Container add with production settings
-	cmds = append(cmds, buildContainerAddCommand(cfg, envListName))
+	cmds = append(cmds, buildContainerAddCommand(cfg, envListName, dialect))
 
-	return cmds
+	return cmds, nil
 }
 
 // GenerateBridgeCommands returns commands to create a bridge, assign the gateway
@@ -174,7 +199,7 @@ func GenerateFirewallCommands(bridgeName string) []string {
 	return []string{block}
 }
 
-func buildEnvCommands(envListName string, envVars map[string]string) []string {
+func buildEnvCommands(envListName string, envVars map[string]string, dialect containerDialect) []string {
 	if len(envVars) == 0 {
 		return nil
 	}
@@ -186,12 +211,12 @@ func buildEnvCommands(envListName string, envVars map[string]string) []string {
 	sort.Strings(keys)
 
 	commands := make([]string, 0, len(keys))
+	envListParam := "list"
+	if dialect != containerDialectCanonical {
+		envListParam = "name"
+	}
 	for _, key := range keys {
 		value := envVars[key]
-		// RouterOS 7.21+ renamed the /container/envs/add parameter from
-		// `name=` to `list=`. The project documents 7.21 as the minimum
-		// supported release, so we emit `list=` here.
-		//
 		// MESH_TOKEN_HASH uses the v2 charset [A-Za-z0-9._-] — no RouterOS-
 		// meaningful characters — so quoting is unnecessary and may interfere
 		// with template parsing. All other env var values are quoted normally.
@@ -202,7 +227,8 @@ func buildEnvCommands(envListName string, envVars map[string]string) []string {
 			emittedValue = quoteRouterOSValue(value)
 		}
 		commands = append(commands, fmt.Sprintf(
-			"/container/envs/add list=%s key=%s value=%s",
+			"/container/envs/add %s=%s key=%s value=%s",
+			envListParam,
 			escapeRouterOSToken(envListName),
 			escapeRouterOSToken(key),
 			emittedValue,
@@ -211,29 +237,42 @@ func buildEnvCommands(envListName string, envVars map[string]string) []string {
 	return commands
 }
 
-func buildContainerAddCommand(cfg ContainerConfig, envListName string) string {
+func buildContainerAddCommand(cfg ContainerConfig, envListName string, dialect containerDialect) string {
 	rootDir := cfg.RootDir
 	if rootDir == "" {
 		rootDir = "/docker/awg-mesh-client-" + strings.ToLower(strings.TrimSpace(cfg.Name))
+	}
+
+	imageParam := "remote-image"
+	if dialect == containerDialectLegacy {
+		imageParam = "image"
 	}
 
 	// per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
 	parts := []string{
 		"/container/add",
 		"interface=" + escapeRouterOSToken(cfg.Interface),
-		"remote-image=" + escapeRouterOSToken(cfg.Image), // per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
-		"hostname=" + escapeRouterOSToken(strings.ToLower(cfg.Name)),
+		imageParam + "=" + escapeRouterOSToken(cfg.Image),
+		"hostname=" + escapeRouterOSToken(strings.ReplaceAll(strings.ToLower(cfg.Name), "_", "-")),
 		"root-dir=" + escapeRouterOSToken(rootDir),
 		"envlist=" + escapeRouterOSToken(envListName),
 		"name=" + escapeRouterOSToken(cfg.Name),
 	}
 
 	if cfg.MountName != "" {
-		parts = append(parts, "mountlists="+escapeRouterOSToken(cfg.MountName)) // per https://help.mikrotik.com/docs/spaces/ROS/pages/84901929/Container
+		mountRefParam := "mountlists"
+		if dialect != containerDialectCanonical {
+			mountRefParam = "mounts"
+		}
+		parts = append(parts, mountRefParam+"="+escapeRouterOSToken(cfg.MountName))
 	}
 
 	if len(cfg.DNS) > 0 {
 		parts = append(parts, "dns="+escapeRouterOSToken(strings.Join(cfg.DNS, ",")))
+	}
+
+	if strings.TrimSpace(cfg.Command) != "" {
+		parts = append(parts, "cmd="+quoteRouterOSValue(strings.TrimSpace(cfg.Command)))
 	}
 
 	parts = append(parts,
@@ -242,6 +281,42 @@ func buildContainerAddCommand(cfg ContainerConfig, envListName string) string {
 	)
 
 	return strings.Join(parts, " ")
+}
+
+func selectMikrotikDialect(version string) (containerDialect, error) {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		return containerDialectCanonical, nil
+	}
+
+	parts := strings.Split(trimmed, ".")
+	if len(parts) < 2 {
+		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q must include major.minor", version)
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q has invalid major version: %w", version, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q has invalid minor version: %w", version, err)
+	}
+	if major != 7 {
+		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q is unsupported: RouterOS 7.5+ is required", version)
+	}
+	if minor < 5 {
+		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q is unsupported: /container requires RouterOS 7.5+", version)
+	}
+	if minor == 22 {
+		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q is unsupported: RouterOS 7.22 has a known container routing regression; use 7.21 LTS or 7.23+", version)
+	}
+	if minor <= 17 {
+		return containerDialectLegacy, nil
+	}
+	if minor <= 20 {
+		return containerDialectTransitional, nil
+	}
+	return containerDialectCanonical, nil
 }
 
 // deriveSubnetCIDR converts a gateway IP like "100.127.0.1" to its /24 subnet "100.127.0.0/24".

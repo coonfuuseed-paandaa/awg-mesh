@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +163,7 @@ func TestRunNodePrepareCommandWritesV2TokenMaterialAndCerts(t *testing.T) {
 	}
 }
 
-func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) {
+func TestRunNodePrepareCommandWritesMikrotikContainerRouterOSScript(t *testing.T) {
 	dir := t.TempDir()
 	topologyPath := writeMikrotikPrepareTopology(t, dir)
 	configDir := filepath.Join(dir, "config")
@@ -173,6 +174,7 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 		topologyPath: topologyPath,
 		configDir:    configDir,
 		platform:     "mikrotik",
+		controlPlane: "192.0.2.5:9090",
 		output:       "json",
 		stdout:       &out,
 	})
@@ -188,11 +190,14 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 	if got.RouterOSScriptPath != filepath.Join(nodeDir, routerOSScriptFilename) {
 		t.Fatalf("routeros_script_path = %q, want %q", got.RouterOSScriptPath, filepath.Join(nodeDir, routerOSScriptFilename))
 	}
-	if got.WireGuardPrivateKeyPath != filepath.Join(nodeDir, mikrotikWGPrivateKeyFile) {
-		t.Fatalf("wireguard_private_key_path = %q", got.WireGuardPrivateKeyPath)
+	if got.WireGuardPrivateKeyPath != "" {
+		t.Fatalf("wireguard_private_key_path = %q, want empty for container path", got.WireGuardPrivateKeyPath)
 	}
-	if got.WireGuardPublicKeyPath != filepath.Join(nodeDir, mikrotikWGPublicKeyFile) {
-		t.Fatalf("wireguard_public_key_path = %q", got.WireGuardPublicKeyPath)
+	if got.WireGuardPublicKeyPath != "" {
+		t.Fatalf("wireguard_public_key_path = %q, want empty for container path", got.WireGuardPublicKeyPath)
+	}
+	if _, err := os.Stat(filepath.Join(nodeDir, mikrotikWGPrivateKeyFile)); !os.IsNotExist(err) {
+		t.Fatalf("native WireGuard private key should not be generated for container path, stat err=%v", err)
 	}
 
 	scriptBytes, err := os.ReadFile(got.RouterOSScriptPath)
@@ -200,43 +205,105 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 		t.Fatalf("read RouterOS script: %v", err)
 	}
 	script := string(scriptBytes)
-	masterAKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-a", masterClientWGPublicKeyFile))
-	masterBKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-b", masterClientWGPublicKeyFile))
 	for _, want := range []string{
-		"/interface/wireguard/add",
-		"private-key=\"",
-		"/ip/address/add address=172.21.92.130/32 interface=awg-mesh",
-		"/interface/wireguard/peers/add",
-		"public-key=\"" + masterAKey + "\" endpoint-address=203.0.113.10 endpoint-port=51820",
-		"public-key=\"" + masterBKey + "\" endpoint-address=198.51.100.11 endpoint-port=51820",
-		"allowed-address=172.21.92.2/32,172.21.92.34/32",
-		"allowed-address=172.21.92.20/32,172.21.92.3/32",
+		"# awg-mesh RouterOS deployment script",
+		"/interface/veth add name=AWG_MESH_ROUTER_01",
+		"/container/mounts/add list=AWG_MESH_ROUTER_01_CONFIG",
+		"/container/add interface=AWG_MESH_ROUTER_01",
+		"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		"envlist=AWG_MESH_ROUTER_01_ENVS",
+		"key=MESH_TOKEN_HASH",
+		"key=MESH_NODE_CERT_B64",
+		"key=MESH_NODE_KEY_B64",
+		"key=MESH_CA_CERT_B64",
+		`cmd="--mode client --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --state-dir /config --iface awg-mesh0 --protocol amneziawg --allow-insecure-control-plane"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("RouterOS script missing %q:\n%s", want, redactRouterOSScript(script))
 		}
 	}
-	if strings.Contains(strings.ToLower(script), "amnezia") {
-		t.Fatalf("native RouterOS script must not contain AmneziaWG settings:\n%s", redactRouterOSScript(script))
+	if strings.Contains(script, "/interface/wireguard") {
+		t.Fatalf("container RouterOS script must not configure native WireGuard:\n%s", redactRouterOSScript(script))
 	}
+}
 
-	var secondOut bytes.Buffer
-	if err := runNodePrepareCommand(nodePrepareOptions{
+func TestRunNodePrepareCommandWritesLegacyMikrotikContainerDialect(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+	configDir := filepath.Join(dir, "config")
+
+	err := runNodePrepareCommand(nodePrepareOptions{
 		nodeName:     "router-01",
 		topologyPath: topologyPath,
 		configDir:    configDir,
 		platform:     "mikrotik",
+		controlPlane: "192.0.2.5:9090",
+		targetROS:    "7.16.2",
 		output:       "json",
-		stdout:       &secondOut,
-	}); err != nil {
-		t.Fatalf("runNodePrepareCommand second run: %v", err)
-	}
-	secondScript, err := os.ReadFile(got.RouterOSScriptPath)
+		stdout:       io.Discard,
+	})
 	if err != nil {
-		t.Fatalf("read second RouterOS script: %v", err)
+		t.Fatalf("runNodePrepareCommand: %v", err)
 	}
-	if script != string(secondScript) {
-		t.Fatalf("RouterOS script changed after key reuse\nfirst:\n%s\nsecond:\n%s", redactRouterOSScript(script), redactRouterOSScript(string(secondScript)))
+
+	scriptBytes, err := os.ReadFile(filepath.Join(configDir, "nodes", "router-01", routerOSScriptFilename))
+	if err != nil {
+		t.Fatalf("read RouterOS script: %v", err)
+	}
+	script := string(scriptBytes)
+	for _, want := range []string{
+		"/container/mounts/add name=AWG_MESH_ROUTER_01_CONFIG",
+		"/container/envs/add name=AWG_MESH_ROUTER_01_ENVS",
+		"image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		"mounts=AWG_MESH_ROUTER_01_CONFIG",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("RouterOS 7.16 script missing %q:\n%s", want, redactRouterOSScript(script))
+		}
+	}
+	if strings.Contains(script, "mountlists=") || strings.Contains(script, "/container/envs/add list=") {
+		t.Fatalf("RouterOS 7.16 script contains canonical dialect:\n%s", redactRouterOSScript(script))
+	}
+}
+
+func TestPrepareMikrotikNativeWireGuardRouterOSRemainsDeferredGenerator(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+	configDir := filepath.Join(dir, "config")
+
+	topo, err := loadTopologyV2(topologyPath)
+	if err != nil {
+		t.Fatalf("load topology: %v", err)
+	}
+	node, err := findTopologyNode(topo, "router-01")
+	if err != nil {
+		t.Fatalf("find router-01: %v", err)
+	}
+	nodeDir, err := safeNodeConfigDir(configDir, node.Name)
+	if err != nil {
+		t.Fatalf("node dir: %v", err)
+	}
+
+	artifacts, err := prepareMikrotikNativeWireGuardRouterOS(topo, node, configDir, nodeDir)
+	if err != nil {
+		t.Fatalf("prepare native WireGuard generator: %v", err)
+	}
+	if artifacts.WireGuardPrivateKeyPath == "" || artifacts.WireGuardPublicKeyPath == "" {
+		t.Fatalf("native generator did not report WireGuard key paths: %+v", artifacts)
+	}
+	scriptBytes, err := os.ReadFile(artifacts.RouterOSScriptPath)
+	if err != nil {
+		t.Fatalf("read native RouterOS script: %v", err)
+	}
+	script := string(scriptBytes)
+	for _, want := range []string{
+		"# awg-mesh v2 RouterOS native WireGuard client script",
+		"/interface/wireguard/add",
+		"/interface/wireguard/peers/add",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("native generator output missing %q:\n%s", want, script)
+		}
 	}
 }
 

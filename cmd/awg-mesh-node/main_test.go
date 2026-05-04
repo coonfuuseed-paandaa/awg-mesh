@@ -81,6 +81,45 @@ func TestRunMasterDryRunAcceptsClientPrivateKeyFile(t *testing.T) {
 	}
 }
 
+func TestRunMasterDryRunAcceptsClientPeer(t *testing.T) {
+	t.Parallel()
+
+	privateKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--client-peer", privateKey.PublicKey().String() + "=172.21.92.130/32",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestRunMasterDryRunRejectsInvalidClientPeer(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--client-peer", "not-a-key=172.21.92.130/32",
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid public key") {
+		t.Fatalf("expected public key parse error, got %s", stderr.String())
+	}
+}
+
 func TestRunMasterDryRunRejectsInvalidClientPrivateKeyFile(t *testing.T) {
 	t.Parallel()
 

@@ -35,6 +35,8 @@ type nodePrepareOptions struct {
 	topologyPath string
 	configDir    string
 	platform     string
+	controlPlane string
+	targetROS    string
 	output       string
 	stdout       io.Writer
 }
@@ -135,6 +137,8 @@ func newNodePrepareCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&options.platform, "platform", "", "Prepare platform override (mikrotik)")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane address to embed in platform-specific runtime artifacts")
+	cmd.Flags().StringVar(&options.targetROS, "target-ros", "", "Target RouterOS version for MikroTik container script dialect (default: 7.21+ canonical)")
 	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
 	return cmd
 }
@@ -263,7 +267,7 @@ func runNodePrepareCommand(options nodePrepareOptions) error {
 	switch platform := preparePlatform(options.platform, node); platform {
 	case "", "linux":
 	case "mikrotik":
-		artifacts, err := prepareMikrotikRouterOS(topo, node, options.configDir, nd)
+		artifacts, err := prepareMikrotikRouterOS(topo, node, options.configDir, nd, tokenHash, options.controlPlane, options.targetROS)
 		if err != nil {
 			return err
 		}

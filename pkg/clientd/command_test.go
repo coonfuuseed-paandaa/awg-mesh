@@ -1,6 +1,7 @@
 package clientd
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"os"
@@ -201,6 +202,65 @@ func TestValidateCommandConfigAllowsEgressRoleOverride(t *testing.T) {
 	cfg.Roles = []role.Role{role.RoleClient, role.RoleEgress}
 	if _, err := ValidateCommandConfig(cfg); err == nil || !strings.Contains(err.Error(), "client") {
 		t.Fatalf("expected invalid role combination, got %v", err)
+	}
+}
+
+func TestCertUpdatePathsRequireMTLS(t *testing.T) {
+	cfg := validCommandConfig(t)
+	cfg.CertPath = "/config/node.crt"
+	cfg.KeyPath = "/config/node.key"
+	cfg.CACertPath = ""
+	certPath, keyPath := certUpdatePaths(cfg)
+	if certPath != "" || keyPath != "" {
+		t.Fatalf("insecure control-plane enabled cert updates: cert=%q key=%q", certPath, keyPath)
+	}
+
+	cfg.CACertPath = "/config/ca.crt"
+	certPath, keyPath = certUpdatePaths(cfg)
+	if certPath != cfg.CertPath || keyPath != cfg.KeyPath {
+		t.Fatalf("mTLS control-plane disabled cert updates: cert=%q key=%q", certPath, keyPath)
+	}
+}
+
+func TestLazyTransportConfiguratorCreatesTransportOnFirstApply(t *testing.T) {
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	created := 0
+	configurator := &lazyTransportConfigurator{
+		protocol:   wg.ProtocolAmneziaWG,
+		name:       "awg-test0",
+		localRoles: []role.Role{role.RoleClient},
+		newTransport: func(protocol wg.Protocol, name string) (wg.Transport, error) {
+			created++
+			if protocol != wg.ProtocolAmneziaWG || name != "awg-test0" {
+				t.Fatalf("unexpected transport request: protocol=%s name=%s", protocol, name)
+			}
+			return transport, nil
+		},
+	}
+
+	if created != 0 {
+		t.Fatalf("transport created before Apply")
+	}
+	state := State{Peers: []PeerEntry{{
+		PeerName:   "master-a",
+		PeerRole:   role.RoleMaster,
+		PeerPubkey: bytesOf(0x42),
+		AllowedIPs: []string{"10.0.0.1/32"},
+	}}}
+	if err := configurator.Apply(context.Background(), state); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if err := configurator.Apply(context.Background(), state); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if created != 1 {
+		t.Fatalf("transport factory called %d times, want 1", created)
+	}
+	if got := len(transport.configsSnapshot()); got != 2 {
+		t.Fatalf("transport configure calls = %d, want 2", got)
+	}
+	if err := configurator.Close(); err != nil {
+		t.Fatalf("close lazy configurator: %v", err)
 	}
 }
 
