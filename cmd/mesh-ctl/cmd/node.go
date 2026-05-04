@@ -267,6 +267,9 @@ func runNodePrepareCommand(options nodePrepareOptions) error {
 	switch platform := preparePlatform(options.platform, node); platform {
 	case "", "linux":
 	case "mikrotik":
+		if strings.TrimSpace(options.controlPlane) == "" {
+			return fmt.Errorf("--control-plane is required for --platform mikrotik")
+		}
 		artifacts, err := prepareMikrotikRouterOS(topo, node, options.configDir, nd, tokenHash, options.controlPlane, options.targetROS)
 		if err != nil {
 			return err

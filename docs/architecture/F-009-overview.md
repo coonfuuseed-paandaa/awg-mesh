@@ -132,12 +132,15 @@ observability:
 - **Linux kernel:** ≥4.19 with WireGuard kernel module (built-in since 5.6) for
   every mesh node. Mesh-internal nodes additionally require AmneziaWG kernel
   module ≥1.0 (build from `amneziawg-linux-kernel-module` repo).
-- **MikroTik RouterOS:** current v2.0 release work targets RouterOS 7.21+
-  container deployments running `awg-mesh-client`. `mesh-ctl` still generates
-  version-specific `/container` syntax for the documented legacy/transitional
-  pivots, but the client data plane requires container-side nftables support.
-  Native RouterOS vanilla WireGuard compatibility remains a required future
-  track, but it is not wired into the current release gate.
+- **MikroTik RouterOS:** the v2.0 runtime release gate targets RouterOS 7.21+
+  container deployments running `awg-mesh-client`, because the current client
+  data plane requires container-side nftables support. This is not the same as
+  the generator syntax floor: `mesh-ctl` still emits version-specific
+  `/container` syntax for the documented legacy/transitional pivots
+  (`7.16.2`, `7.20.8`, `7.21.4`) so script generation remains regression
+  tested across those dialects. Native RouterOS vanilla WireGuard compatibility
+  remains a required future track, but it is not wired into the current release
+  gate.
 - **macOS / Windows / FreeBSD:** OUT of scope for v2.0 (AWG kernel module Linux-only).
 
 ## CR roadmap

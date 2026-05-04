@@ -13,24 +13,48 @@ set -eu
 
 mkdir -p /config
 
-if [ -n "${MESH_TOKEN_HASH:-}" ] && [ ! -s /config/mesh.token ]; then
-    printf '%s' "${MESH_TOKEN_HASH}" > /config/mesh.token
-    chmod 600 /config/mesh.token
-    echo "client-init: wrote /config/mesh.token from MESH_TOKEN_HASH"
-fi
+write_config_file() {
+    value="$1"
+    path="$2"
+    label="$3"
+    if [ -z "${value}" ]; then
+        return 0
+    fi
+    tmp="${path}.tmp.$$"
+    printf '%s' "${value}" > "${tmp}"
+    if [ -s "${path}" ] && cmp -s "${tmp}" "${path}"; then
+        rm -f "${tmp}"
+        chmod 600 "${path}"
+        return 0
+    fi
+    mv "${tmp}" "${path}"
+    chmod 600 "${path}"
+    echo "client-init: wrote ${path} from ${label}"
+}
 
 write_b64_file() {
     value="$1"
     path="$2"
     label="$3"
-    if [ -z "${value}" ] || [ -s "${path}" ]; then
+    if [ -z "${value}" ]; then
         return 0
     fi
-    printf '%s' "${value}" | base64 -d > "${path}"
+    tmp="${path}.tmp.$$"
+    if ! printf '%s' "${value}" | base64 -d > "${tmp}"; then
+        rm -f "${tmp}"
+        return 1
+    fi
+    if [ -s "${path}" ] && cmp -s "${tmp}" "${path}"; then
+        rm -f "${tmp}"
+        chmod 600 "${path}"
+        return 0
+    fi
+    mv "${tmp}" "${path}"
     chmod 600 "${path}"
     echo "client-init: wrote ${path} from ${label}"
 }
 
+write_config_file "${MESH_TOKEN_HASH:-}" /config/mesh.token MESH_TOKEN_HASH
 write_b64_file "${MESH_NODE_CERT_B64:-}" /config/node.crt MESH_NODE_CERT_B64
 write_b64_file "${MESH_NODE_KEY_B64:-}" /config/node.key MESH_NODE_KEY_B64
 write_b64_file "${MESH_CA_CERT_B64:-}" /config/ca.crt MESH_CA_CERT_B64
@@ -151,6 +175,7 @@ pin_control_plane_route() {
 
     route_via=""
     route_dev=""
+    # shellcheck disable=SC2086 # intentional tokenization of `ip route get` output.
     set -- ${route_line}
     while [ "$#" -gt 0 ]; do
         case "$1" in

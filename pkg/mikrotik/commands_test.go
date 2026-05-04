@@ -23,7 +23,10 @@ func TestGenerateContainerCommands(t *testing.T) {
 		},
 	}
 
-	commands := GenerateContainerCommands(cfg)
+	commands, err := GenerateContainerCommands(cfg)
+	if err != nil {
+		t.Fatalf("GenerateContainerCommands: %v", err)
+	}
 
 	// Should have: mount + env1 + env2 + container/add = 4 commands
 	if len(commands) < 4 {
@@ -107,6 +110,17 @@ func TestGenerateContainerCommandsSelectsRouterOSDialect(t *testing.T) {
 			notWant: []string{"mountlists="},
 		},
 		{
+			name:      "early 7.21 remains transitional",
+			targetROS: "7.21.3",
+			want: []string{
+				"/container/mounts/add name=AWG_MESH_HOME_CONFIG",
+				"/container/envs/add name=AWG_MESH_HOME_ENVS",
+				"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+				"mounts=AWG_MESH_HOME_CONFIG",
+			},
+			notWant: []string{"mountlists=", "/container/envs/add list="},
+		},
+		{
 			name:      "canonical 7.21",
 			targetROS: "7.21.4",
 			want: []string{
@@ -143,10 +157,29 @@ func TestGenerateContainerCommandsSelectsRouterOSDialect(t *testing.T) {
 	}
 }
 
+func TestGenerateContainerCommandsDoesNotReferenceMissingMount(t *testing.T) {
+	t.Parallel()
+
+	commands, err := GenerateContainerCommandsForTarget(ContainerConfig{
+		Name:             "AWG_MESH_HOME",
+		Image:            "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Interface:        "AWG_MESH_HOME",
+		MountName:        "AWG_MESH_HOME_CONFIG",
+		TargetROSVersion: "7.21.4",
+	})
+	if err != nil {
+		t.Fatalf("GenerateContainerCommandsForTarget: %v", err)
+	}
+	joined := strings.Join(commands, "\n")
+	if strings.Contains(joined, "/container/mounts/add") || strings.Contains(joined, "mountlists=AWG_MESH_HOME_CONFIG") {
+		t.Fatalf("commands referenced an undefined mount:\n%s", joined)
+	}
+}
+
 func TestGenerateContainerCommandsRejectsUnsupportedRouterOS(t *testing.T) {
 	t.Parallel()
 
-	for _, targetROS := range []string{"7.4.0", "7.22.1", "6.49.10"} {
+	for _, targetROS := range []string{"7.4.0", "7.22.1", "6.49.10", "7.21.bad"} {
 		_, err := GenerateContainerCommandsForTarget(ContainerConfig{
 			Name:             "AWG_MESH_HOME",
 			Image:            "image",

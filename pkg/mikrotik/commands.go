@@ -64,9 +64,8 @@ func DeriveMountName(containerName string) string {
 }
 
 // GenerateContainerCommands returns /container/mounts + /container/envs + /container/add CLI commands.
-func GenerateContainerCommands(cfg ContainerConfig) []string {
-	commands, _ := GenerateContainerCommandsForTarget(cfg)
-	return commands
+func GenerateContainerCommands(cfg ContainerConfig) ([]string, error) {
+	return GenerateContainerCommandsForTarget(cfg)
 }
 
 // GenerateContainerCommandsForTarget returns RouterOS-version-specific container commands.
@@ -259,7 +258,7 @@ func buildContainerAddCommand(cfg ContainerConfig, envListName string, dialect c
 		"name=" + escapeRouterOSToken(cfg.Name),
 	}
 
-	if cfg.MountName != "" {
+	if cfg.MountName != "" && cfg.MountSrc != "" {
 		mountRefParam := "mountlists"
 		if dialect != containerDialectCanonical {
 			mountRefParam = "mounts"
@@ -301,6 +300,13 @@ func selectMikrotikDialect(version string) (containerDialect, error) {
 	if err != nil {
 		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q has invalid minor version: %w", version, err)
 	}
+	patch := 0
+	if len(parts) >= 3 {
+		patch, err = strconv.Atoi(parts[2])
+		if err != nil {
+			return containerDialectCanonical, fmt.Errorf("target RouterOS version %q has invalid patch version: %w", version, err)
+		}
+	}
 	if major != 7 {
 		return containerDialectCanonical, fmt.Errorf("target RouterOS version %q is unsupported: RouterOS 7.5+ is required", version)
 	}
@@ -314,6 +320,9 @@ func selectMikrotikDialect(version string) (containerDialect, error) {
 		return containerDialectLegacy, nil
 	}
 	if minor <= 20 {
+		return containerDialectTransitional, nil
+	}
+	if minor == 21 && patch < 4 {
 		return containerDialectTransitional, nil
 	}
 	return containerDialectCanonical, nil

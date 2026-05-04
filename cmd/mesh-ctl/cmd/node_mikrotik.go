@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
 	mikrotikv2 "github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik/v2"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
@@ -18,7 +19,7 @@ import (
 
 const (
 	routerOSScriptFilename       = "routeros.rsc"
-	defaultMikrotikClientImage   = "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest"
+	mikrotikClientImageRepo      = "ghcr.io/coonfuuseed-paandaa/awg-mesh-client"
 	mikrotikWGPrivateKeyFile     = "wireguard-private.key"
 	mikrotikWGPublicKeyFile      = "wireguard-public.key"
 	masterClientWGPrivateKeyFile = "client-wg-private.key"
@@ -41,9 +42,20 @@ func preparePlatform(override string, node topology.NodeV2) string {
 	return ""
 }
 
+func defaultMikrotikClientImage() string {
+	tag := strings.TrimSpace(awgmesh.Version)
+	if tag == "" || tag == "dev" {
+		tag = "latest"
+	}
+	return mikrotikClientImageRepo + ":" + tag
+}
+
 func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, configDir, nodeDir, tokenHash, controlPlane, targetROS string) (mikrotikPrepareArtifacts, error) {
 	if !nodeHasRole(node, role.RoleClient) {
 		return mikrotikPrepareArtifacts{}, fmt.Errorf("node %q must have role client for --platform mikrotik", node.Name)
+	}
+	if strings.TrimSpace(controlPlane) == "" {
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("--control-plane is required for --platform mikrotik")
 	}
 	certB64, err := readBase64File(filepath.Join(nodeDir, "node.crt"))
 	if err != nil {
@@ -62,7 +74,7 @@ func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, co
 	script, err := mikrotik.GenerateDeployRSC(mikrotik.DeployScript{
 		TopologyName:  node.Name,
 		ContainerName: containerName,
-		Image:         defaultMikrotikClientImage,
+		Image:         defaultMikrotikClientImage(),
 		Veth:          containerName,
 		OverlayIP:     node.OverlayIP,
 		OverlayNet:    topo.Mesh.OverlaySupernet,

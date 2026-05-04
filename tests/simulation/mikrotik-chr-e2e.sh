@@ -27,7 +27,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPO_ROOT
 readonly CHR_VERSION="${CHR_VERSION:-7.21.4}"
 readonly TARGET_ROS_VERSION="${TARGET_ROS_VERSION:-${CHR_VERSION}}"
 readonly BASELINE_IMAGE="awg-mesh-chr-baseline:${CHR_VERSION}"
@@ -39,7 +40,8 @@ readonly RUNTIME_BASELINE_SCRIPT="${REPO_ROOT}/simulation/mikrotik-chr-baseline-
 readonly RUN_RUNTIME_BASELINE="${RUN_RUNTIME_BASELINE:-1}"
 readonly CHR_ROUTEROS_NIC_MAC="${CHR_ROUTEROS_NIC_MAC:-3e:b1:b2:e4:28:54}"
 
-readonly SUFFIX="$(printf "%05d" "${RANDOM}")"
+SUFFIX="$(printf "%05d" "${RANDOM}")"
+readonly SUFFIX
 readonly NET_NAME="chr-e2e-net-${SUFFIX}"
 NET_SUBNET=""
 CP_BRIDGE_IP=""
@@ -72,9 +74,11 @@ if [[ "${DOCKER_CHR_BIN}" == "docker" && -n "${WSL_DISTRO_NAME:-}" && -x /Docker
     DOCKER_CHR_BIN="/Docker/host/bin/docker.exe"
 fi
 
-readonly CTL_CONFIG_DIR="$(mktemp -d -t chr-e2e-ctl-XXXXXX)"
+CTL_CONFIG_DIR="$(mktemp -d -t chr-e2e-ctl-XXXXXX)"
+readonly CTL_CONFIG_DIR
 readonly CLIENT_IMAGE_TAR="${CTL_CONFIG_DIR}/awg-mesh-client.tar"
-readonly TOPO_FILE="$(mktemp -t chr-e2e-topo-XXXXXX.yml)"
+TOPO_FILE="$(mktemp -t chr-e2e-topo-XXXXXX.yml)"
+readonly TOPO_FILE
 
 # ---------------------------------------------------------------------------
 # Counters
@@ -82,11 +86,16 @@ readonly TOPO_FILE="$(mktemp -t chr-e2e-topo-XXXXXX.yml)"
 PASSES=0
 FAILURES=0
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RESET='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; RESET='\033[0m'
 
 pass() { echo -e "  [${GREEN}PASS${RESET}] $*"; (( PASSES++ )) || true; }
 fail() { echo -e "  [${RED}FAIL${RESET}] $*" >&2; (( FAILURES++ )) || true; }
 info() { echo "  [info] $*"; }
+indent_stderr() {
+    while IFS= read -r line; do
+        printf '    %s\n' "${line}" >&2
+    done
+}
 
 docker_chr() {
     "${DOCKER_CHR_BIN}" "$@"
@@ -202,7 +211,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         threading.Thread(target=handle, args=(client,), daemon=True).start()
 '
 
-    for i in $(seq 1 20); do
+    for _attempt in $(seq 1 20); do
         if docker_chr exec "${CTR_CHR}" sh -lc "nc -z 127.0.0.1 '${CP_GRPC_HOST_PORT}'"; then
             return 0
         fi
@@ -298,6 +307,7 @@ PY
 # ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2329 # cleanup is invoked by trap.
 cleanup() {
     local rc=$?
     echo ""
@@ -453,7 +463,7 @@ for boot_attempt in $(seq 1 "${CHR_BOOT_ATTEMPTS}"); do
 
     info "Waiting CHR SSH ready (up to 120s; baseline boots fast)..."
     SSH_READY=0
-    for i in $(seq 1 24); do
+    for _attempt in $(seq 1 24); do
         if sshpass -p "${CHR_PASS}" ssh "${SSH_OPTS[@]}" -p "${SSH_HOST_PORT}" admin@127.0.0.1 ":put ok" > /dev/null 2>&1; then
             SSH_READY=1
             break
@@ -560,7 +570,7 @@ docker_chr run -d \
     --state-dir /var/lib/awg-mesh > /dev/null
 
 CP_READY=0
-for i in $(seq 1 30); do
+for _attempt in $(seq 1 30); do
     if docker_chr logs "${CTR_CP}" 2>&1 | grep -q "control-plane: listening"; then
         CP_READY=1
         break
@@ -596,7 +606,7 @@ RSC_LINES=$(wc -l < "${RSC_FILE}")
 pass "T4: .rsc fixture ready: ${RSC_FILE} (${RSC_LINES} lines)"
 
 if grep -q "/container/add interface=${ROUTEROS_CONTAINER_NAME}" "${RSC_FILE}" \
-    && grep -Eq "(remote-image|image)=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest" "${RSC_FILE}" \
+    && grep -Eq '(remote-image|image)=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:[^"[:space:]]+' "${RSC_FILE}" \
     && grep -q "cmd=\"--mode client --control-plane ${CP_ROUTEROS_ADDR}" "${RSC_FILE}"; then
     pass "T4.a: generated .rsc defines awg-mesh-client container command"
 else
@@ -659,7 +669,7 @@ if [[ "${CP_FETCH_RC}" -eq 0 ]] || echo "${CP_FETCH_OUT}" | grep -qiE "connectio
     pass "T5.c: CHR reaches slirp-proxied control-plane port"
 else
     fail "T5.c: CHR cannot reach slirp-proxied control-plane port"
-    echo "${CP_FETCH_OUT}" | sed 's/^/    /' >&2
+    indent_stderr <<< "${CP_FETCH_OUT}"
     exit 3
 fi
 
@@ -674,7 +684,7 @@ export_client_image_tar || {
     fail "T6.a: client image archive export failed"; exit 5
 }
 RSC_IMPORT_FILE="${CTL_CONFIG_DIR}/routeros-local-image.rsc"
-sed -E 's#(remote-image|image)=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest#file=awg-mesh-client.tar#' \
+sed -E 's#(remote-image|image)=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:[^"[:space:]]+#file=awg-mesh-client.tar#' \
     "${RSC_FILE}" > "${RSC_IMPORT_FILE}"
 pass "T6.a: local client image tar + import script ready"
 
@@ -707,7 +717,7 @@ START_OUT=$(sshpass -p "${CHR_PASS}" ssh "${SSH_OPTS[@]}" -p "${SSH_HOST_PORT}" 
     "/container/start [find where name=\"${ROUTEROS_CONTAINER_NAME}\"]" 2>&1) && START_RC=0 || START_RC=$?
 if [[ "${START_RC}" -ne 0 ]]; then
     fail "T6.e: /container/start exit ${START_RC}"
-    echo "${START_OUT}" | sed 's/^/    /' >&2
+    indent_stderr <<< "${START_OUT}"
     exit 5
 fi
 pass "T6.e: awg-mesh-client RouterOS container start requested"
@@ -734,7 +744,7 @@ if [[ "${CONTAINER_PRESENT}" -eq 1 ]]; then
     pass "T6.f: RouterOS container object exists"
 else
     fail "T6.f: RouterOS container object missing"
-    echo "${CONTAINER_OUT}" | sed 's/^/    /' >&2
+    indent_stderr <<< "${CONTAINER_OUT}"
     exit 5
 fi
 
@@ -742,7 +752,7 @@ if [[ "${CONTAINER_RUNNING}" -eq 1 ]]; then
     pass "T6.g: awg-mesh-client RouterOS container is running"
 else
     fail "T6.g: awg-mesh-client RouterOS container did not reach running state"
-    echo "${CONTAINER_OUT}" | sed 's/^/    /' >&2
+    indent_stderr <<< "${CONTAINER_OUT}"
     exit 5
 fi
 

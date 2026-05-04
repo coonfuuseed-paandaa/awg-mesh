@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/protobuf/proto"
@@ -205,12 +206,13 @@ func TestRunNodePrepareCommandWritesMikrotikContainerRouterOSScript(t *testing.T
 		t.Fatalf("read RouterOS script: %v", err)
 	}
 	script := string(scriptBytes)
+	expectedClientImage := "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:" + awgmesh.Version
 	for _, want := range []string{
 		"# awg-mesh RouterOS deployment script",
 		"/interface/veth add name=AWG_MESH_ROUTER_01",
 		"/container/mounts/add list=AWG_MESH_ROUTER_01_CONFIG",
 		"/container/add interface=AWG_MESH_ROUTER_01",
-		"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		"remote-image=" + expectedClientImage,
 		"envlist=AWG_MESH_ROUTER_01_ENVS",
 		"key=MESH_TOKEN_HASH",
 		"key=MESH_NODE_CERT_B64",
@@ -224,6 +226,26 @@ func TestRunNodePrepareCommandWritesMikrotikContainerRouterOSScript(t *testing.T
 	}
 	if strings.Contains(script, "/interface/wireguard") {
 		t.Fatalf("container RouterOS script must not configure native WireGuard:\n%s", redactRouterOSScript(script))
+	}
+}
+
+func TestRunNodePrepareCommandRequiresMikrotikControlPlane(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+
+	err := runNodePrepareCommand(nodePrepareOptions{
+		nodeName:     "router-01",
+		topologyPath: topologyPath,
+		configDir:    filepath.Join(dir, "config"),
+		platform:     "mikrotik",
+		output:       "json",
+		stdout:       io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected --control-plane requirement")
+	}
+	if !strings.Contains(err.Error(), "--control-plane") {
+		t.Fatalf("error %q does not mention --control-plane", err)
 	}
 }
 
@@ -251,10 +273,11 @@ func TestRunNodePrepareCommandWritesLegacyMikrotikContainerDialect(t *testing.T)
 		t.Fatalf("read RouterOS script: %v", err)
 	}
 	script := string(scriptBytes)
+	expectedClientImage := "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:" + awgmesh.Version
 	for _, want := range []string{
 		"/container/mounts/add name=AWG_MESH_ROUTER_01_CONFIG",
 		"/container/envs/add name=AWG_MESH_ROUTER_01_ENVS",
-		"image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		"image=" + expectedClientImage,
 		"mounts=AWG_MESH_ROUTER_01_CONFIG",
 	} {
 		if !strings.Contains(script, want) {
