@@ -8,7 +8,7 @@
 #   - RouterOS veth/bridge/IP, NAT, and forward firewall rules work
 #   - RouterOS container logging exposes probe output through /log
 #   - a Linux container inside RouterOS can reach both a simulation node and
-#     the exact control-plane address later passed to awg-mesh-client
+#     the exact coordination target address later passed to awg-mesh-client
 #
 # Exit codes: 0 / 1 assertion failure / 2 env failure / 3 CHR boot timeout /
 #             4 RouterOS config failure / 5 probe image/container failure.
@@ -208,7 +208,7 @@ optional() {
 }
 
 echo "AWG_MESH_BASELINE_PROBE_BEGIN"
-echo "probe: target=${HTTP_TARGET}:${HTTP_PORT} control=${CONTROL_PLANE_HOST}:${CONTROL_PLANE_PORT}"
+echo "probe: target=${HTTP_TARGET}:${HTTP_PORT} coordination=${CONTROL_PLANE_HOST}:${CONTROL_PLANE_PORT}"
 echo "probe: ip addr"
 ip addr
 echo "probe: ip route"
@@ -218,7 +218,7 @@ optional "http target tcp" nc -z -w 5 "${HTTP_TARGET}" "${HTTP_PORT}"
 required "http target request" sh -c "printf 'GET /healthz HTTP/1.0\r\nHost: probe\r\n\r\n' | nc -w 5 \"${HTTP_TARGET}\" \"${HTTP_PORT}\""
 optional "ping target" ping -c 1 -W 2 "${PING_TARGET}"
 optional "traceroute target" traceroute -m 3 -w 1 "${PING_TARGET}"
-required "control-plane tcp" sh -c "printf '\n' | nc -w 5 \"${CONTROL_PLANE_HOST}\" \"${CONTROL_PLANE_PORT}\" >/dev/null"
+required "coordination tcp" sh -c "printf '\n' | nc -w 5 \"${CONTROL_PLANE_HOST}\" \"${CONTROL_PLANE_PORT}\" >/dev/null"
 
 if [ "${failures}" -eq 0 ]; then
     echo "AWG_MESH_BASELINE_PROBE_DONE"
@@ -528,7 +528,7 @@ pass "pre-flight: ${BASELINE_IMAGE} has ${BASELINE_READY_LABEL}=true"
 
 info "CHR Docker CLI:  ${DOCKER_CHR_BIN}"
 info "Probe image:     ${PROBE_IMAGE}"
-info "RouterOS CP:     ${CP_ROUTEROS_ADDR}"
+info "RouterOS coord:  ${CP_ROUTEROS_ADDR}"
 info "Reachability:    ${CHR_REACHABILITY_MODE}"
 info "SSH host port:   ${SSH_HOST_PORT}"
 info "Suffix:          ${SUFFIX}"
@@ -557,7 +557,7 @@ start_simulation_targets || {
     exit 2
 }
 pass "T2.a: HTTP/ICMP target running at ${HTTP_TARGET_IP}:${HTTP_PORT} and host port ${HTTP_HOST_PORT}"
-pass "T2.b: control-plane TCP probe published as ${CP_ROUTEROS_ADDR}"
+pass "T2.b: coordination TCP probe published as ${CP_ROUTEROS_ADDR}"
 
 echo ""
 echo "[T3] Booting CHR from ${BASELINE_IMAGE}..."
@@ -599,10 +599,10 @@ fi
 pass "T3.b: docker-routeros eth0 remains hostfwd default route"
 
 if ! start_chr_tcp_proxy "${CP_GRPC_HOST_PORT}" "${CP_PROXY_TARGET_HOST}" "${CP_GRPC_HOST_PORT}"; then
-    fail "T3.c: CHR slirp control-plane proxy did not start"
+    fail "T3.c: CHR slirp coordination proxy did not start"
     exit 3
 fi
-pass "T3.c: CHR slirp control-plane proxy listens on ${CP_ROUTEROS_ADDR}"
+pass "T3.c: CHR slirp coordination proxy listens on ${CP_ROUTEROS_ADDR}"
 
 if ! start_chr_tcp_proxy "${HTTP_HOST_PORT}" "${CP_PROXY_TARGET_HOST}" "${HTTP_HOST_PORT}"; then
     fail "T3.d: CHR slirp HTTP target proxy did not start"
@@ -673,7 +673,7 @@ fi
 
 CP_FETCH_OUT="$(routeros_ssh "/tool/fetch url=http://${CP_ROUTEROS_ADDR} keep-result=no" 2>&1 || true)"
 if printf '%s' "${CP_FETCH_OUT}" | grep -qiE "status: finished|downloaded|connection reset by peer|remote disconnected|closed"; then
-    pass "T4.e: RouterOS guest reaches exact future control-plane address"
+    pass "T4.e: RouterOS guest reaches exact coordination target address"
 else
     fail "T4.e: RouterOS guest cannot reach ${CP_ROUTEROS_ADDR}"
     printf '%s\n' "${CP_FETCH_OUT}" | sed 's/^/    /' >&2
