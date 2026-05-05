@@ -103,6 +103,7 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 	if err := validateDeployScript(ds); err != nil {
 		return "", err
 	}
+	coordinationTarget := strings.TrimSpace(ds.ControlPlane)
 
 	envVars := buildDeployEnvVars(ds)
 	mountName := DeriveMountName(ds.ContainerName)
@@ -150,7 +151,7 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 		RouteCommands:      GenerateRouteCommands(ds.OverlayNet, ds.VethGateway),
 		ContainerCommands:  containerCommands,
 		StartCommand:       "# RouterOS starts the container after local image import; start-on-boot=yes keeps it running after reboot.",
-		CoordinationTarget: strings.TrimSpace(ds.ControlPlane),
+		CoordinationTarget: coordinationTarget,
 	}
 
 	script, err := executeTemplate("deploy-rsc", deployScriptTemplate, templateData)
@@ -230,6 +231,9 @@ func validateDeployScript(ds DeployScript) error {
 	}
 	if strings.TrimSpace(ds.OverlayNet) == "" {
 		return fmt.Errorf("overlay network is required")
+	}
+	if strings.ContainsAny(ds.ControlPlane, "\r\n") {
+		return fmt.Errorf("control-plane must be a single-line host:port value")
 	}
 
 	if _, err := netip.ParseAddr(ds.OverlayIP); err != nil {

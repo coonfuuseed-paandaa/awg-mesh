@@ -88,6 +88,25 @@ func TestRunMasterDryRunAcceptsCoordinationListenerFlags(t *testing.T) {
 	}
 }
 
+func TestRunMasterRejectsCoordinationOptionsWithoutListener(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--coordination-state-dir", t.TempDir(),
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit when coordination options omit listener; stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--coordination-listen is required") {
+		t.Fatalf("expected coordination-listen error, got stderr=%s", stderr.String())
+	}
+}
+
 func TestControlPlaneModeRemainsCompatibilitySurface(t *testing.T) {
 	t.Parallel()
 

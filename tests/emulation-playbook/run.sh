@@ -74,7 +74,9 @@ require_contains() {
 require_contains_flat() {
     local file="$1"
     local needle="$2"
-    if ! tr '\n' ' ' <"${file}" | grep -Fq "${needle}"; then
+    local flattened
+    flattened="$(tr '\n' ' ' <"${file}")"
+    if ! grep -Fq -- "${needle}" <<<"${flattened}"; then
         echo "missing expected text: ${needle}" >&2
         cat "${file}" >&2
         return 1

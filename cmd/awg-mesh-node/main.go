@@ -401,6 +401,14 @@ func parseCSV(value string) []string {
 func buildMasterCoordinationConfig(listenAddr, stateDir, caDir string, certHosts []string, certRotationDays, auditCap int, allowInsecureBind bool) (*node.MasterCoordinationConfig, error) {
 	listenAddr = strings.TrimSpace(listenAddr)
 	if listenAddr == "" {
+		if strings.TrimSpace(stateDir) != "" ||
+			strings.TrimSpace(caDir) != "" ||
+			len(certHosts) > 0 ||
+			certRotationDays != 0 ||
+			auditCap != 0 ||
+			allowInsecureBind {
+			return nil, errors.New("--coordination-listen is required when any other --coordination-* flag is set")
+		}
 		return nil, nil
 	}
 	stateDir = strings.TrimSpace(stateDir)

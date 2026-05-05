@@ -214,6 +214,7 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 		{name: "missing token hash", mutate: func(ds *DeployScript) { ds.TokenHash = "" }, expectError: "token hash is required"},
 		{name: "invalid overlay ip", mutate: func(ds *DeployScript) { ds.OverlayIP = "bad-ip" }, expectError: "invalid overlay IP"},
 		{name: "invalid overlay net", mutate: func(ds *DeployScript) { ds.OverlayNet = "bad-cidr" }, expectError: "invalid overlay network"},
+		{name: "multiline coordination target", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5:9090\n/system reboot" }, expectError: "control-plane must be a single-line host:port value"},
 	}
 
 	for _, tt := range tests {

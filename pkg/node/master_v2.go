@@ -91,6 +91,9 @@ func (m *Master) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 	case err := <-coordinationDone:
+		if err == nil && ctx.Err() != nil {
+			break
+		}
 		if err != nil {
 			closeErr := m.Close()
 			return errors.Join(fmt.Errorf("master coordination stopped: %w", err), closeErr)

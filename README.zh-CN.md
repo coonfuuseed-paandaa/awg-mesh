@@ -43,10 +43,12 @@ graph TB
     ctl -- "validate / generate / prepare" --> topo
     topo -- "desired state" --> master
     topo -- "responsible master targets" --> egress
+    topo -- "responsible master targets" --> ingress
     topo -- "responsible master targets" --> client
     topo -- "failover targets" --> master2
     master -- "hosts" --> coord
     egress -- "mTLS registration / peer updates" --> coord
+    ingress -- "mTLS registration / peer updates" --> coord
     client -- "mTLS registration / peer updates" --> coord
     mt -- "mTLS registration / peer updates" --> coord
     client -- "vanilla WG to master" --> master
