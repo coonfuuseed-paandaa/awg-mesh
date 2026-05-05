@@ -36,7 +36,7 @@ func controlPlaneAdminTransportCredentials(controlPlane, configDir string) (cred
 	}
 	rootCAs, err := pkgtls.LoadCACert(filepath.Join(configDir, "ca.crt"))
 	if err != nil {
-		return nil, fmt.Errorf("load mesh CA cert: %w", err)
+		return nil, fmt.Errorf("load mesh CA cert for coordination target: %w", err)
 	}
 	return credentials.NewTLS(&tls.Config{
 		RootCAs:      rootCAs,
@@ -48,7 +48,7 @@ func controlPlaneAdminTransportCredentials(controlPlane, configDir string) (cred
 
 func loadOrCreateControlPlaneAdminCert(configDir string) (tls.Certificate, error) {
 	if strings.TrimSpace(configDir) == "" {
-		return tls.Certificate{}, fmt.Errorf("config dir is required for control-plane mTLS")
+		return tls.Certificate{}, fmt.Errorf("config dir is required for coordination target mTLS")
 	}
 	adminDir := filepath.Join(configDir, controlPlaneAdminCertDir)
 	certPath := filepath.Join(adminDir, "node.crt")

@@ -56,11 +56,11 @@ func TestRunNodeListCommandOutputsStableJSON(t *testing.T) {
 	if got.Count != 5 || len(got.Nodes) != 5 {
 		t.Fatalf("unexpected node list JSON: %+v", got)
 	}
-	if got.Nodes[0].Name != "control-plane-01" || got.Nodes[0].Status != "declared" {
+	if got.Nodes[0].Name != "egress-us-01" || got.Nodes[0].Status != "declared" {
 		t.Fatalf("JSON output is not sorted/stable: %+v", got.Nodes[0])
 	}
-	if strings.Join(got.Nodes[0].Roles, ",") != "master,balancer" {
-		t.Fatalf("roles = %#v, want master,balancer", got.Nodes[0].Roles)
+	if strings.Join(got.Nodes[0].Roles, ",") != "egress" {
+		t.Fatalf("roles = %#v, want egress", got.Nodes[0].Roles)
 	}
 }
 
@@ -247,6 +247,54 @@ func TestRunNodePrepareCommandRequiresMikrotikControlPlane(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--control-plane") {
 		t.Fatalf("error %q does not mention --control-plane", err)
+	}
+}
+
+func TestValidateNodeInitOptionsRequiresResponsibleMasterCoordinationTarget(t *testing.T) {
+	_, err := validateNodeInitOptions(nodeInitOptions{
+		nodeName: "master-01",
+		output:   "human",
+		timeout:  2 * time.Second,
+		stdout:   &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected missing coordination target error")
+	}
+	for _, want := range []string{"--control-plane", "coordination target", "responsible master"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+
+	validated, err := validateNodeInitOptions(nodeInitOptions{
+		nodeName:     "master-01",
+		controlPlane: "master-01.example:9090",
+		output:       "human",
+		timeout:      2 * time.Second,
+		stdout:       &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatalf("validate responsible master target: %v", err)
+	}
+	if validated.controlPlane != "master-01.example:9090" {
+		t.Fatalf("control-plane compatibility flag did not preserve coordination target: %+v", validated)
+	}
+}
+
+func TestValidateNodeRemoveOptionsRequiresResponsibleMasterCoordinationTarget(t *testing.T) {
+	_, err := validateNodeRemoveOptions(nodeRemoveOptions{
+		nodeName: "master-01",
+		output:   "human",
+		timeout:  2 * time.Second,
+		stdout:   &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected missing coordination target error")
+	}
+	for _, want := range []string{"--control-plane", "coordination target", "responsible master"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
 	}
 }
 

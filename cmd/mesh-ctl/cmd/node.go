@@ -136,7 +136,7 @@ func newNodePrepareCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&options.platform, "platform", "", "Prepare platform override (mikrotik)")
-	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane address to embed in platform-specific runtime artifacts")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Responsible master coordination target address to embed in platform-specific runtime artifacts")
 	cmd.Flags().StringVar(&options.targetROS, "target-ros", "", "Target RouterOS version for MikroTik container script dialect (default: 7.21+ canonical)")
 	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
 	return cmd
@@ -151,7 +151,7 @@ func newNodeInitCommand(version string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init <name>",
-		Short: "Register a prepared v2 node with the control plane",
+		Short: "Register a prepared v2 node with the responsible master coordination target",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.nodeName = args[0]
@@ -162,7 +162,7 @@ func newNodeInitCommand(version string) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane gRPC address")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Responsible master coordination gRPC address (compatibility flag name)")
 	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
 	cmd.Flags().DurationVar(&options.timeout, "timeout", defaultNodeInitTimeout, "Init timeout")
 	return cmd
@@ -194,7 +194,7 @@ func newNodeRemoveCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "remove <name>",
-		Short: "Decommission a node through the control plane",
+		Short: "Decommission a node through the responsible master coordination target",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.nodeName = args[0]
@@ -204,7 +204,7 @@ func newNodeRemoveCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane gRPC address")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Responsible master coordination gRPC address (compatibility flag name)")
 	cmd.Flags().DurationVar(&options.drain, "drain", 0, "Drain window before peer removal")
 	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
 	cmd.Flags().DurationVar(&options.timeout, "timeout", defaultNodeRemoveTimeout, "Remove timeout")
@@ -268,7 +268,7 @@ func runNodePrepareCommand(options nodePrepareOptions) error {
 	case "", "linux":
 	case "mikrotik":
 		if strings.TrimSpace(options.controlPlane) == "" {
-			return fmt.Errorf("--control-plane is required for --platform mikrotik")
+			return fmt.Errorf("--control-plane is required as the responsible master coordination target for --platform mikrotik")
 		}
 		artifacts, err := prepareMikrotikRouterOS(topo, node, options.configDir, nd, tokenHash, options.controlPlane, options.targetROS)
 		if err != nil {
@@ -313,7 +313,7 @@ func runNodeInitCommand(options nodeInitOptions) error {
 
 	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
-		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
+		return fmt.Errorf("connect coordination target %q: %w", validated.controlPlane, err)
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -329,7 +329,7 @@ func runNodeInitCommand(options nodeInitOptions) error {
 		return fmt.Errorf("register node %q: %w", node.Name, err)
 	}
 	if resp == nil {
-		return fmt.Errorf("register node %q: control plane returned nil response", node.Name)
+		return fmt.Errorf("register node %q: coordination target returned nil response", node.Name)
 	}
 
 	result := nodeInitJSONOutput{
@@ -341,7 +341,7 @@ func runNodeInitCommand(options nodeInitOptions) error {
 	if !resp.GetAccepted() {
 		detail := strings.TrimSpace(resp.GetRejectReason())
 		if detail == "" {
-			detail = "control plane rejected registration"
+			detail = "coordination target rejected registration"
 		}
 		return fmt.Errorf("register node %q rejected: %s", node.Name, detail)
 	}
@@ -383,7 +383,7 @@ func runNodeRemoveCommand(options nodeRemoveOptions) error {
 
 	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
-		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
+		return fmt.Errorf("connect coordination target %q: %w", validated.controlPlane, err)
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -403,7 +403,7 @@ func runNodeRemoveCommand(options nodeRemoveOptions) error {
 	if !resp.GetSuccess() {
 		detail := strings.TrimSpace(resp.GetError())
 		if detail == "" {
-			detail = "control plane rejected decommission"
+			detail = "coordination target rejected decommission"
 		}
 		return fmt.Errorf("decommission node %q: %s", validated.nodeName, detail)
 	}
@@ -417,7 +417,7 @@ func validateNodeInitOptions(options nodeInitOptions) (nodeInitOptions, error) {
 	}
 	controlPlane := strings.TrimSpace(options.controlPlane)
 	if controlPlane == "" {
-		return nodeInitOptions{}, fmt.Errorf("--control-plane is required")
+		return nodeInitOptions{}, fmt.Errorf("--control-plane is required as the responsible master coordination target")
 	}
 	nodeVersion := strings.TrimSpace(options.nodeVersion)
 	if nodeVersion == "" {
@@ -450,7 +450,7 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 	}
 	controlPlane := strings.TrimSpace(options.controlPlane)
 	if controlPlane == "" {
-		return nodeRemoveOptions{}, fmt.Errorf("--control-plane is required")
+		return nodeRemoveOptions{}, fmt.Errorf("--control-plane is required as the responsible master coordination target")
 	}
 	if options.drain < 0 {
 		return nodeRemoveOptions{}, fmt.Errorf("--drain must be >= 0")

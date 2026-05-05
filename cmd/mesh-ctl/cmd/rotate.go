@@ -63,8 +63,8 @@ func newRotateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&options.endpoint, "endpoint", "", "Endpoint name in topology")
 	cmd.Flags().StringVar(&options.preset, "preset", defaultRotatePreset, "AWG preset name")
 	cmd.Flags().StringVar(&options.familyName, "family", "", "Optional protocol family name")
-	cmd.Flags().BoolVar(&options.meshWide, "mesh-wide", false, "Rotate every mesh-internal node through the control plane")
-	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane gRPC address for --mesh-wide")
+	cmd.Flags().BoolVar(&options.meshWide, "mesh-wide", false, "Rotate every mesh-internal node through the responsible master coordination target")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Responsible master coordination gRPC address for --mesh-wide (compatibility flag name)")
 	cmd.Flags().DurationVar(&options.applyDelay, "apply-delay", rotation.DefaultApplyLeadTime, "Mesh-wide apply delay")
 
 	return cmd
@@ -129,7 +129,7 @@ func validateRotateOptions(options rotateOptions) (rotateOptions, error) {
 			return rotateOptions{}, fmt.Errorf("--endpoint cannot be used with --mesh-wide")
 		}
 		if trimmedControlPlane == "" {
-			return rotateOptions{}, fmt.Errorf("--control-plane is required with --mesh-wide")
+			return rotateOptions{}, fmt.Errorf("--control-plane is required as the responsible master coordination target with --mesh-wide")
 		}
 		if options.applyDelay <= 0 {
 			return rotateOptions{}, fmt.Errorf("--apply-delay must be greater than zero")
@@ -139,7 +139,7 @@ func validateRotateOptions(options rotateOptions) (rotateOptions, error) {
 			return rotateOptions{}, fmt.Errorf("--endpoint is required")
 		}
 		if trimmedControlPlane != "" {
-			return rotateOptions{}, fmt.Errorf("--control-plane requires --mesh-wide")
+			return rotateOptions{}, fmt.Errorf("--control-plane coordination target requires --mesh-wide")
 		}
 	}
 
@@ -223,7 +223,7 @@ func executeMeshWideRotation(ctx context.Context, options rotateOptions) error {
 	}
 	conn, err := newControlPlaneAdminConn(options.controlPlane, options.configDir)
 	if err != nil {
-		return fmt.Errorf("connect control-plane %q: %w", options.controlPlane, err)
+		return fmt.Errorf("connect coordination target %q: %w", options.controlPlane, err)
 	}
 	defer func() { _ = conn.Close() }()
 
