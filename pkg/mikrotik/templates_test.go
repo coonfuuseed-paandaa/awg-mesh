@@ -127,6 +127,9 @@ func TestGenerateDeployRSCClientCommandUsesMTLS(t *testing.T) {
 	if !strings.Contains(script, "--ca-cert /config/ca.crt") {
 		t.Fatalf("client command missing CA cert flag:\n%s", script)
 	}
+	if !strings.Contains(script, "Responsible master coordination target: 192.0.2.5:9090") {
+		t.Fatalf("script does not label the responsible master coordination target:\n%s", script)
+	}
 	if strings.Contains(script, "--allow-insecure-control-plane") {
 		t.Fatalf("client command must not force insecure control-plane transport:\n%s", script)
 	}

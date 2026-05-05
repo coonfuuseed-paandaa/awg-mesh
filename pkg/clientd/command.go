@@ -60,17 +60,17 @@ func ParseCommandConfig(args []string, output io.Writer) (CommandConfig, error) 
 	fs.SetOutput(output)
 	cfg := CommandConfig{}
 	protocol := string(wg.ProtocolAmneziaWG)
-	fs.StringVar(&cfg.ControlPlane, "control-plane", "", "control-plane gRPC address")
+	fs.StringVar(&cfg.ControlPlane, "control-plane", "", "responsible master coordination gRPC address (compatibility flag name)")
 	fs.StringVar(&cfg.Name, "name", "", "node name")
 	fs.StringVar(&cfg.OverlayIP, "overlay-ip", "", "assigned overlay IP")
 	fs.StringVar(&cfg.Region, "region", "", "node region")
 	fs.StringVar(&cfg.CertPath, "cert", "", "node certificate PEM path")
 	fs.StringVar(&cfg.KeyPath, "key", "", "node private key PEM path")
-	fs.StringVar(&cfg.CACertPath, "ca-cert", "", "mesh CA certificate PEM path for mTLS control-plane connections")
+	fs.StringVar(&cfg.CACertPath, "ca-cert", "", "mesh CA certificate PEM path for mTLS coordination target connections")
 	fs.StringVar(&cfg.StateDir, "state-dir", "/var/lib/awg-mesh", "clientd state directory")
 	fs.StringVar(&cfg.InterfaceName, "iface", "awg-mesh0", "WireGuard interface name")
 	fs.StringVar(&protocol, "protocol", string(wg.ProtocolAmneziaWG), "transport protocol: vanilla-wg or amneziawg")
-	fs.BoolVar(&cfg.AllowInsecureControlPlane, "allow-insecure-control-plane", false, "allow insecure control-plane gRPC to non-loopback targets")
+	fs.BoolVar(&cfg.AllowInsecureControlPlane, "allow-insecure-control-plane", false, "allow insecure coordination target gRPC to non-loopback targets")
 	if err := fs.Parse(args); err != nil {
 		return CommandConfig{}, err
 	}
@@ -126,7 +126,7 @@ func ValidateCommandConfig(cfg CommandConfig) (CommandConfig, error) {
 		return CommandConfig{}, fmt.Errorf("invalid --iface: %w", err)
 	}
 	if strings.TrimSpace(cfg.CACertPath) == "" && !cfg.AllowInsecureControlPlane && !isLoopbackControlPlaneTarget(cfg.ControlPlane) {
-		return CommandConfig{}, fmt.Errorf("insecure control-plane target %q must be loopback or require --allow-insecure-control-plane", cfg.ControlPlane)
+		return CommandConfig{}, fmt.Errorf("insecure coordination target %q must be loopback or require --allow-insecure-control-plane", cfg.ControlPlane)
 	}
 	return cfg, nil
 }
@@ -163,7 +163,7 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 	}
 	conn, err := grpc.NewClient(cfg.ControlPlane, grpc.WithTransportCredentials(transportCredentials))
 	if err != nil {
-		return fmt.Errorf("create control-plane client: %w", err)
+		return fmt.Errorf("create coordination target client: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -192,7 +192,7 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "clientd node=%s control-plane=%s iface=%s protocol=%s\n", cfg.Name, cfg.ControlPlane, cfg.InterfaceName, cfg.Protocol)
+	_, _ = fmt.Fprintf(stdout, "clientd node=%s coordination-target=%s iface=%s protocol=%s\n", cfg.Name, cfg.ControlPlane, cfg.InterfaceName, cfg.Protocol)
 	return agent.Run(ctx)
 }
 
@@ -202,7 +202,7 @@ func controlPlaneTransportCredentials(cfg CommandConfig) (credentials.TransportC
 	}
 	rootCAs, err := pkgtls.LoadCACert(cfg.CACertPath)
 	if err != nil {
-		return nil, fmt.Errorf("load control-plane CA cert: %w", err)
+		return nil, fmt.Errorf("load coordination target CA cert: %w", err)
 	}
 	clientCertLoader := loadClientCertificateFromFiles(cfg.CertPath, cfg.KeyPath)
 	if _, err := clientCertLoader(nil); err != nil {

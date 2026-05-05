@@ -10,6 +10,9 @@ import (
 const deployScriptTemplate = `# awg-mesh RouterOS deployment script
 # Generated for container {{.ContainerName}}
 # Topology node name: {{.TopologyName}}
+{{- if .CoordinationTarget }}
+# Responsible master coordination target: {{.CoordinationTarget}}
+{{- end }}
 #
 # KEYPAIR NOTE:
 # The awg-mesh-client container generates its own AmneziaWG keypair on first boot.
@@ -85,7 +88,7 @@ type DeployScript struct {
 	NodeCertB64   string   // base64-encoded node.crt copied into /config on first boot
 	NodeKeyB64    string   // base64-encoded node.key copied into /config on first boot
 	CACertB64     string   // optional base64-encoded ca.crt copied into /config
-	ControlPlane  string   // optional control-plane address for runnable clientd command
+	ControlPlane  string   // optional responsible master coordination target for runnable clientd command
 	Region        string   // node region passed to clientd
 	Protocol      string   // clientd protocol (default: amneziawg)
 	InterfaceName string   // clientd interface name (default: awg-mesh0)
@@ -127,25 +130,27 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 	}
 
 	templateData := struct {
-		ContainerName     string
-		TopologyName      string
-		BridgeCommands    []string
-		VethCommands      []string
-		NATCommands       []string
-		FirewallCommands  []string
-		RouteCommands     []string
-		ContainerCommands []string
-		StartCommand      string
+		ContainerName      string
+		TopologyName       string
+		BridgeCommands     []string
+		VethCommands       []string
+		NATCommands        []string
+		FirewallCommands   []string
+		RouteCommands      []string
+		ContainerCommands  []string
+		StartCommand       string
+		CoordinationTarget string
 	}{
-		ContainerName:     ds.ContainerName,
-		TopologyName:      ds.TopologyName,
-		BridgeCommands:    GenerateBridgeCommands(ds.BridgeName, ds.Veth, ds.VethGateway),
-		VethCommands:      GenerateVethCommands(ds.Veth, ds.VethGateway),
-		NATCommands:       GenerateNATCommands(ds.VethGateway, ds.GRPCPort),
-		FirewallCommands:  GenerateFirewallCommands(ds.BridgeName),
-		RouteCommands:     GenerateRouteCommands(ds.OverlayNet, ds.VethGateway),
-		ContainerCommands: containerCommands,
-		StartCommand:      "# RouterOS starts the container after local image import; start-on-boot=yes keeps it running after reboot.",
+		ContainerName:      ds.ContainerName,
+		TopologyName:       ds.TopologyName,
+		BridgeCommands:     GenerateBridgeCommands(ds.BridgeName, ds.Veth, ds.VethGateway),
+		VethCommands:       GenerateVethCommands(ds.Veth, ds.VethGateway),
+		NATCommands:        GenerateNATCommands(ds.VethGateway, ds.GRPCPort),
+		FirewallCommands:   GenerateFirewallCommands(ds.BridgeName),
+		RouteCommands:      GenerateRouteCommands(ds.OverlayNet, ds.VethGateway),
+		ContainerCommands:  containerCommands,
+		StartCommand:       "# RouterOS starts the container after local image import; start-on-boot=yes keeps it running after reboot.",
+		CoordinationTarget: strings.TrimSpace(ds.ControlPlane),
 	}
 
 	script, err := executeTemplate("deploy-rsc", deployScriptTemplate, templateData)

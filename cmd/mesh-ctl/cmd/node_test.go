@@ -248,6 +248,34 @@ func TestRunNodePrepareCommandRequiresMikrotikControlPlane(t *testing.T) {
 	if !strings.Contains(err.Error(), "--control-plane") {
 		t.Fatalf("error %q does not mention --control-plane", err)
 	}
+	for _, want := range []string{"coordination target", "responsible master"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestPrepareMikrotikRouterOSRequiresResponsibleMasterCoordinationTarget(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+	topo, err := loadTopologyV2(topologyPath)
+	if err != nil {
+		t.Fatalf("load topology: %v", err)
+	}
+	node, err := findTopologyNode(topo, "router-01")
+	if err != nil {
+		t.Fatalf("find node: %v", err)
+	}
+
+	_, err = prepareMikrotikRouterOS(topo, node, filepath.Join(dir, "config"), t.TempDir(), "mesh1.test", "", "7.21.4")
+	if err == nil {
+		t.Fatal("expected missing coordination target error")
+	}
+	for _, want := range []string{"--control-plane", "coordination target", "responsible master"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
 }
 
 func TestValidateNodeInitOptionsRequiresResponsibleMasterCoordinationTarget(t *testing.T) {
