@@ -35,7 +35,8 @@ readonly BASELINE_IMAGE="awg-mesh-chr-baseline:${CHR_VERSION}"
 readonly BASELINE_READY_LABEL="awg-mesh.chr-container-enabled"
 readonly NODE_IMAGE="${NODE_IMAGE:-awg-mesh-node:local}"
 readonly CLIENT_IMAGE="${CLIENT_IMAGE:-awg-mesh-client:local}"
-readonly MESHCTL_BIN="${MESHCTL_BIN:-${REPO_ROOT}/../bin/mesh-ctl}"
+readonly DEFAULT_MESHCTL_BIN="${REPO_ROOT}/../bin/mesh-ctl"
+readonly MESHCTL_BIN="${MESHCTL_BIN:-}"
 readonly RUNTIME_BASELINE_SCRIPT="${REPO_ROOT}/simulation/mikrotik-chr-baseline-runtime.sh"
 readonly RUN_RUNTIME_BASELINE="${RUN_RUNTIME_BASELINE:-1}"
 readonly CHR_ROUTEROS_NIC_MAC="${CHR_ROUTEROS_NIC_MAC:-3e:b1:b2:e4:28:54}"
@@ -111,9 +112,10 @@ docker_host_path() {
 }
 
 build_meshctl() {
-    info "building mesh-ctl at ${MESHCTL_BIN}"
-    mkdir -p "$(dirname "${MESHCTL_BIN}")"
-    (cd "${REPO_ROOT}/.." && CGO_ENABLED=1 go build -trimpath -o "${MESHCTL_BIN}" ./cmd/mesh-ctl)
+    local output="${1:-${DEFAULT_MESHCTL_BIN}}"
+    info "building mesh-ctl at ${output}"
+    mkdir -p "$(dirname "${output}")"
+    (cd "${REPO_ROOT}/.." && go build -trimpath -o "${output}" ./cmd/mesh-ctl)
 }
 
 meshctl_is_current() {
@@ -454,24 +456,33 @@ if ! docker_chr image inspect "${CLIENT_IMAGE}" > /dev/null 2>&1; then
     exit 2
 fi
 
-if [[ ! -x "${MESHCTL_BIN}" ]]; then
-    if command -v mesh-ctl > /dev/null 2>&1; then
-        MESHCTL_BIN_RESOLVED="$(command -v mesh-ctl)"
-    elif command -v go > /dev/null 2>&1; then
-        build_meshctl
-        MESHCTL_BIN_RESOLVED="${MESHCTL_BIN}"
-    else
-        echo "ERROR: mesh-ctl not at ${MESHCTL_BIN}, not in PATH, and go is unavailable for auto-build" >&2
-        exit 2
+if [[ -n "${MESHCTL_BIN}" ]]; then
+    if [[ ! -x "${MESHCTL_BIN}" ]]; then
+        if command -v go > /dev/null 2>&1; then
+            build_meshctl "${MESHCTL_BIN}"
+        else
+            echo "ERROR: mesh-ctl not at ${MESHCTL_BIN}, and go is unavailable for auto-build" >&2
+            exit 2
+        fi
     fi
-else
     MESHCTL_BIN_RESOLVED="${MESHCTL_BIN}"
+elif command -v mesh-ctl > /dev/null 2>&1; then
+    MESHCTL_BIN_RESOLVED="$(command -v mesh-ctl)"
+elif [[ -x "${DEFAULT_MESHCTL_BIN}" ]]; then
+    MESHCTL_BIN_RESOLVED="${DEFAULT_MESHCTL_BIN}"
+elif command -v go > /dev/null 2>&1; then
+    build_meshctl "${DEFAULT_MESHCTL_BIN}"
+    MESHCTL_BIN_RESOLVED="${DEFAULT_MESHCTL_BIN}"
+else
+    echo "ERROR: mesh-ctl not in PATH or at ${DEFAULT_MESHCTL_BIN}, and go is unavailable for auto-build" >&2
+    exit 2
 fi
 if ! meshctl_is_current "${MESHCTL_BIN_RESOLVED}"; then
     if command -v go > /dev/null 2>&1; then
-        info "mesh-ctl at ${MESHCTL_BIN_RESOLVED} is stale or incompatible; rebuilding"
-        build_meshctl
-        MESHCTL_BIN_RESOLVED="${MESHCTL_BIN}"
+        MESHCTL_BUILD_TARGET="${MESHCTL_BIN:-${DEFAULT_MESHCTL_BIN}}"
+        info "mesh-ctl at ${MESHCTL_BIN_RESOLVED} is stale or incompatible; rebuilding ${MESHCTL_BUILD_TARGET}"
+        build_meshctl "${MESHCTL_BUILD_TARGET}"
+        MESHCTL_BIN_RESOLVED="${MESHCTL_BUILD_TARGET}"
     else
         echo "ERROR: mesh-ctl at ${MESHCTL_BIN_RESOLVED} is stale or incompatible, and go is unavailable for rebuild" >&2
         exit 2
