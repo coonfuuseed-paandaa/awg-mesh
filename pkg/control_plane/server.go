@@ -8,9 +8,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
-	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/rotation"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"

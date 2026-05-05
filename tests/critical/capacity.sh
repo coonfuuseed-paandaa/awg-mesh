@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 )
 
 func TestCriticalCapacitySynthetic(t *testing.T) {

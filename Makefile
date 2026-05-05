@@ -8,6 +8,7 @@
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 BIN_DIR := bin
+MODULE_PATH := github.com/coonfuuseed-paandaa/awg-mesh/v2
 
 .PHONY: build install install-all test lint proto-gen docker clean
 
@@ -24,13 +25,16 @@ build:
 	CGO_ENABLED=0 GOOS=linux go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/mesh-ctl ./cmd/mesh-ctl
 
 test:
-	go test -race -cover ./...
+	CGO_ENABLED=1 go test -race -count=1 -cover ./...
 
 lint:
 	golangci-lint run ./...
 
 proto-gen:
-	protoc --proto_path=proto --go_out=proto --go_opt=paths=source_relative --go-grpc_out=proto --go-grpc_opt=paths=source_relative proto/*.proto
+	protoc --proto_path=proto \
+		--go_out=. --go_opt=module=$(MODULE_PATH) \
+		--go-grpc_out=. --go-grpc_opt=module=$(MODULE_PATH) \
+		proto/*.proto
 
 docker:
 	docker build -f deploy/Dockerfile -t awg-mesh-node:$(VERSION) .

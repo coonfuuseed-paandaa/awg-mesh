@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
 func TestRunMasterDryRunUsesDefaultDualListener(t *testing.T) {

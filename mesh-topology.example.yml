@@ -1,111 +1,78 @@
-overlay:
-  space: 172.20.70.0/24
-  physical_mtu: 1500
-  awg_overhead: 80
-  ranges:
-    - name: masters
-      cidr: 172.20.70.0/27
-      balancer_ip: 172.20.70.1
-    - name: endpoints
-      cidr: 172.20.70.32/27
-      balancer_ip: 172.20.70.33
-    - name: clients
-      cidr: 172.20.70.128/25
+schema_version: 2
 
-# Optional: pin docker image versions (recommended for production).
-# Uncomment and edit the block below to activate.
-# Resolution priority: --image CLI flag > defaults.image > built-in :latest default.
-#
-# defaults:
-#   image:
-#     node:   ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v0.3.0   # used by master/endpoint prepare
-#     client: ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v0.3.0  # used by client prepare
+mesh:
+  name: example-mesh
+  overlay_supernet: 172.21.92.0/24
+  tenants: [default]
 
-masters:
+nodes:
+  - name: control-plane-01
+    roles: [master, balancer]
+    overlay_ip: 172.21.92.1
+    bridge_ip: 192.168.93.1
+    region: core
+
   - name: master-01
-    host: 198.51.100.10
-    overlay_ip: 172.20.70.2
-    listen_port: 51820
-    endpoints:
-      - node-asia-01
-      - node-asia-02
-      - node-eu-01
-  - name: master-02
-    host: 198.51.100.11
-    overlay_ip: 172.20.70.3
-    listen_port: 51820
-    endpoints:
-      - node-asia-03
-      - node-eu-01
+    roles: [master, balancer, egress]
+    overlay_ip: 172.21.92.2
+    bridge_ip: 192.168.93.10
+    public_ip: 203.0.113.10
+    region: eu
+    internet_iface: eth0
 
-endpoints:
-  - name: node-asia-01
-    host: 203.0.113.10
-    overlay_ip: 172.20.70.34
-    listen_port: 51820
-    region: asia
-  - name: node-asia-02
-    host: 203.0.113.11
-    overlay_ip: 172.20.70.35
-    listen_port: 51820
-    region: asia
-  - name: node-asia-03
-    host: 203.0.113.12
-    overlay_ip: 172.20.70.36
-    listen_port: 51820
-    region: asia
-  - name: node-eu-01
-    host: 91.200.50.100
-    overlay_ip: 172.20.70.37
-    listen_port: 51820
-    region: pl
+  - name: egress-us-01
+    roles: [egress]
+    overlay_ip: 172.21.92.34
+    bridge_ip: 192.168.93.20
+    region: us
+    internet_iface: eth0
 
-clients:
-  - name: office-linux
-    type: linux
-    host: 10.0.0.50          # management IP for mesh-ctl client init
-    overlay_ip: 172.20.70.130
-    grpc_port: 9090           # default; override if port-forwarded
-    masters:
-      - master-01
-      - master-02
-    # Optional fields:
-    # routing_policies:
-    #   - name: video
-    #     dscp: 46
-    #     targets: [node-us-01]
-    # dns:
-    #   upstream: 1.1.1.1
+  - name: ingress-de-01
+    roles: [ingress]
+    overlay_ip: 172.21.92.20
+    bridge_ip: 192.168.93.30
+    public_ip: 203.0.113.30
+    region: de
+
+  - name: home-server-01
+    roles: [client]
+    overlay_ip: 172.21.92.130
+    region: home
+    preferred_master: master-01
 
   - name: mikrotik-home
-    type: mikrotik
-    overlay_ip: 172.20.70.131
-    grpc_port: 9090
-    masters:
-      - master-01
-    veth:
-      name: AWG_MESH_HOME       # CAPS convention for RouterOS interfaces
-      gateway: 100.127.0.1/24   # CGN space (RFC 6598) — avoids LAN conflicts
-    # Optional: override container storage root (default: "docker" → paths become /docker/...).
-    # Use when containers are stored on a USB drive or external disk.
-    # Allowed characters: alphanumeric, underscore, slash, hyphen. No ".." or leading "/".
-    # mikrotik:
-    #   storage_root: disk1     # → generates /disk1/etc/awg-mesh-client-... paths
-    dns:
-      upstream: 1.1.1.1,8.8.8.8
+    roles: [client]
+    platform: mikrotik
+    overlay_ip: 172.21.92.131
+    region: home
+    preferred_master: master-01
+    client_protocol: vanilla-wg
+
+services:
+  - name: jellyfin
+    owner_node: home-server-01
+    protocol: tcp
+    local_port: 8096
+    tenant: default
+    ingress:
+      - hostname: media.example.com
+        mode: sni_passthrough
+        ingress_node: ingress-de-01
+
+rotation:
+  tier1_interval: 24h
+  tier2_interval: 168h
+  tier3_interval: 720h
+  preset: aggressive
+  adaptive: true
 
 capture:
-  domains_file: domains.txt   # local file on admin PC, distributed to masters via gRPC
+  domains_file: domains.txt
   schedule: "0 3 * * *"
   retention_days: 30
 
-rotation:
-  defaults:
-    tier1_interval: 24h
-    tier2_interval: 168h
-    tier3_interval: 720h
-    preset: aggressive
-
-transport:
-  pool: 10.255.0.0/16
-  prefix_length: 30
+observability:
+  audit_retention_days: 90
+  cert_rotation_days: 90
+  prometheus_listen: ":9091"
+  log_level: info

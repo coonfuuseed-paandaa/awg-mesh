@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 )
 
 // RegisteredNode is one record in the identity registry.

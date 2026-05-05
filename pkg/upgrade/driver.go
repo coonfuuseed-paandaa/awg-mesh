@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/grpc"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
 )
 
 // SSHOpts configures the optional SSH-based deploy trigger.

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package awgmesh;
 
-option go_package = "github.com/coonfuuseed-paandaa/awg-mesh/proto";
+option go_package = "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto";
 
 message Empty {}
 

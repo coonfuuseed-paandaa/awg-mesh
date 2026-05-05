@@ -12,9 +12,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	pkgupgrade "github.com/coonfuuseed-paandaa/awg-mesh/pkg/upgrade"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	pkgupgrade "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/upgrade"
 	"github.com/spf13/cobra"
 )
 

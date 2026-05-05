@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
 )
 
 // UpgradeStepStatus represents the execution state of one node upgrade step.

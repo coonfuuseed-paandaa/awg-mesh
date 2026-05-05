@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

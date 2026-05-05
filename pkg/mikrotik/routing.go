@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
 )
 
 // routingScriptTemplate generates per-DSCP routing tables on MikroTik.

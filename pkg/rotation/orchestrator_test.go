@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 )
 
 func TestOrchestratorPlanFiltersMeshInternalTargets(t *testing.T) {

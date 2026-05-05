@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
-	controlplane "github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awgmesh"
+	controlplane "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/control_plane"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/protobuf/proto"
 )
 

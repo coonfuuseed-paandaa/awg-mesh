@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/clientd"
 )
 
 func TestClientdCommandValidation(t *testing.T) {

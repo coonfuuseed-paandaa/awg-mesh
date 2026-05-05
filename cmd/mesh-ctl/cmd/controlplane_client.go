@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )

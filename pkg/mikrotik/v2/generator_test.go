@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
 func TestGenerateStaticRSCProducesDeterministicNativeWireGuardScript(t *testing.T) {

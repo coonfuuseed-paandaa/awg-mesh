@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

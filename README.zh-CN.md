@@ -1,4 +1,5 @@
-**English** | [Русский](README.ru.md) | [中文](README.zh-CN.md)
+<!-- synced: 2026-05-05 source-commit: 2f22776a64f7c24bab9d2bc265a0a1458fa230e3 -->
+[English](README.md) | [Русский](README.ru.md) | **中文**
 
 [![CI](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/coonfuuseed-paandaa/awg-mesh?logo=github)](https://github.com/coonfuuseed-paandaa/awg-mesh/releases)
@@ -9,12 +10,12 @@
 
 # awg-mesh
 
-Docker-native encrypted overlay mesh network built on AmneziaWG. awg-mesh v2
-uses a flat role-tagged topology, a control-plane registration flow, local
-backup/restore, MikroTik RouterOS container deployment, and release gates that
-prove both code contracts and product behavior before a tag is published.
+awg-mesh 是基于 AmneziaWG 的 Docker-native 加密 overlay mesh 网络。awg-mesh v2
+使用扁平的 role-tagged topology、control-plane 注册流程、本地 backup/restore、
+MikroTik RouterOS `/container` 部署，以及在发布 tag 前证明代码契约和产品行为的
+release gates。
 
-## Architecture Overview
+## 架构概览
 
 ```mermaid
 graph TB
@@ -53,78 +54,74 @@ graph TB
     user --> ingress
 ```
 
-The v2 topology file declares nodes once under `nodes:` and gives each node one
-or more roles:
+v2 topology 文件在 `nodes:` 下只声明一次节点，并给每个节点分配一个或多个角色：
 
-| Role | Purpose |
+| 角色 | 用途 |
 |---|---|
-| `client` | End-user device or home server. This role is exclusive. |
-| `master` | Accepts client links and bridges them into the mesh. |
-| `balancer` | Selects the active egress/mesh path for flows. |
-| `egress` | Performs internet-bound masquerade at the boundary. |
-| `ingress` | Publishes services from mesh clients to public hostnames or ports. |
+| `client` | 终端用户设备或家庭服务器。这个角色是互斥角色。 |
+| `master` | 接收 client links，并将它们桥接进 mesh。 |
+| `balancer` | 为 flow 选择 active egress/mesh path。 |
+| `egress` | 在边界执行 internet-bound masquerade。 |
+| `ingress` | 通过 public hostnames 或 ports 发布 mesh clients 上的服务。 |
 
-See [docs/architecture/F-009-overview.md](docs/architecture/F-009-overview.md)
-for the full v2 architecture rationale and invariants.
+完整的 v2 架构依据和不变量见
+[docs/architecture/F-009-overview.md](docs/architecture/F-009-overview.md)。
 
-## What's New in v2.0
+## v2.0 新内容
 
-- **Schema v2 topology** with `schema_version: 2`, role-tagged `nodes:`, and
-  service ingress declarations.
-- **Role-agnostic CLI**: current onboarding uses `mesh-ctl node prepare`,
-  `mesh-ctl node init`, `mesh-ctl node list`, and `mesh-ctl node remove`.
-  Legacy `master`, `endpoint`, and `client` role subcommands were removed from
-  the v2 operator path.
-- **Control-plane registration** with CA-backed mTLS and local admin
-  certificates. Insecure control-plane admin paths are not part of the release
-  flow.
-- **Local backup/restore** for admin state, topology, and optional
-  control-plane state archives.
-- **MikroTik RouterOS `/container` deployment** through
-  `mesh-ctl node prepare --platform mikrotik`. Runtime release validation
-  targets RouterOS 7.21+; generator syntax tests also cover 7.16.2 and 7.20.8.
-- **Critical suite + product emulation playbook** as release blockers.
-  `PRODUCT_WORKS` is required before tagging.
-- **Go module v2 path**:
-  `github.com/coonfuuseed-paandaa/awg-mesh/v2`.
+- **Schema v2 topology**：包含 `schema_version: 2`、role-tagged `nodes:` 和
+  service ingress declarations。
+- **Role-agnostic CLI**：当前 onboarding 使用 `mesh-ctl node prepare`、
+  `mesh-ctl node init`、`mesh-ctl node list` 和 `mesh-ctl node remove`。
+  legacy `master`、`endpoint` 和 `client` role subcommands 已从 v2 operator path 中移除。
+- **Control-plane registration**：使用 CA-backed mTLS 和本地 admin certificates。
+  insecure control-plane admin paths 不属于 release flow。
+- **Local backup/restore**：用于 admin state、topology 和可选的
+  control-plane state archives。
+- **MikroTik RouterOS `/container` deployment**：通过
+  `mesh-ctl node prepare --platform mikrotik` 生成。runtime release validation
+  面向 RouterOS 7.21+；generator syntax tests 也覆盖 7.16.2 和 7.20.8。
+- **Critical suite + product emulation playbook** 是 release blockers。
+  tagging 前必须得到 `PRODUCT_WORKS`。
+- **Go module v2 path**：
+  `github.com/coonfuuseed-paandaa/awg-mesh/v2`。
 
-## Quick Start
+## 快速开始
 
-This local walkthrough builds the tools, validates the example v2 topology, and
-prepares local node credentials. It does not deploy a production mesh by itself;
-deployment requires real hosts, Docker, reachable control-plane networking, and
-node-specific firewall rules.
+这个本地 walkthrough 会构建工具、验证 v2 示例 topology，并准备本地 node credentials。
+它本身不会部署 production mesh；部署需要真实 hosts、Docker、可达的
+control-plane 网络以及针对节点的 firewall rules。
 
-### Prerequisites
+### 前置要求
 
 - Go 1.25+
-- Docker Engine 24+ for image builds and release simulations
-- Linux or WSL2 for Bash release gates
-- `/dev/net/tun` on hosts that run data-plane containers
+- Docker Engine 24+，用于 image builds 和 release simulations
+- Linux 或 WSL2，用于 Bash release gates
+- 运行 data-plane containers 的 hosts 上需要 `/dev/net/tun`
 
-### Install mesh-ctl
+### 安装 mesh-ctl
 
-For the current v2 release line:
+对于当前 v2 release line：
 
 ```bash
 go install github.com/coonfuuseed-paandaa/awg-mesh/v2/cmd/mesh-ctl@v2.0.0
 ```
 
-For local development from a clone:
+从 clone 进行本地开发：
 
 ```bash
 CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl ./cmd/mesh-ctl
 CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
 ```
 
-Add the binary directory to `PATH`, then confirm the version:
+将 binary 目录加入 `PATH`，然后确认版本：
 
 ```bash
 export PATH="$PATH:$(go env GOPATH)/bin"
 mesh-ctl version
 ```
 
-### Create and validate topology
+### 创建并验证 topology
 
 ```bash
 mkdir -p .mesh-local
@@ -133,22 +130,22 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml topology validate
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node list
 ```
 
-Expected shape:
+预期输出形态：
 
 ```text
 topology "mesh-topology.yml" valid: schema_version=2 ...
 ```
 
-### Prepare node material
+### 准备 node material
 
-`node prepare` writes local admin-side state under `--config-dir`:
+`node prepare` 会把本地 admin-side state 写入 `--config-dir`：
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node prepare master-01
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node prepare home-server-01
 ```
 
-Generated per-node artifacts include:
+生成的 per-node artifacts 包括：
 
 ```text
 .mesh-local/ca.crt
@@ -158,8 +155,7 @@ Generated per-node artifacts include:
 .mesh-local/nodes/<name>/node.key
 ```
 
-For MikroTik RouterOS container deployment, embed the reachable control-plane
-address:
+对于 MikroTik RouterOS container deployment，需要嵌入可达的 control-plane address：
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
@@ -169,13 +165,12 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
   --target-ros 7.21.4
 ```
 
-The RouterOS compatibility contract is documented in
-[docs/MIKROTIK-VERSION-COMPAT.md](docs/MIKROTIK-VERSION-COMPAT.md).
+RouterOS compatibility contract 记录在
+[docs/MIKROTIK-VERSION-COMPAT.md](docs/MIKROTIK-VERSION-COMPAT.md)。
 
-### Register nodes with the control plane
+### 将节点注册到 control plane
 
-Start a control-plane node in the deployment environment, then register prepared
-nodes:
+在部署环境中启动 control-plane node，然后注册已经准备好的 nodes：
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
@@ -185,12 +180,12 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
   node init home-server-01 --control-plane 192.0.2.10:9090
 ```
 
-`node init` uses the local CA and prepared node certificate. A rejected
-registration is a deployment blocker, not a warning.
+`node init` 使用本地 CA 和已准备好的 node certificate。被拒绝的注册是
+deployment blocker，不是 warning。
 
-## Topology Example
+## Topology 示例
 
-Minimal v2 topology:
+最小 v2 topology：
 
 ```yaml
 schema_version: 2
@@ -227,12 +222,11 @@ services:
         ingress_node: master-01
 ```
 
-Use [mesh-topology.example.yml](mesh-topology.example.yml) as the maintained
-starting point.
+使用 [mesh-topology.example.yml](mesh-topology.example.yml) 作为维护中的起点。
 
-## Docker Images
+## Docker 镜像
 
-Release images are published to both GHCR and Docker Hub.
+Release images 会同时发布到 GHCR 和 Docker Hub。
 
 ```text
 ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v2.0.0
@@ -243,7 +237,7 @@ docker.io/coonfuuseedpaandaa/awg-mesh-node:v2.0.0
 docker.io/coonfuuseedpaandaa/awg-mesh-client:v2.0.0
 ```
 
-The CI workflow publishes multi-arch manifests for:
+CI workflow 会为以下平台发布 multi-arch manifests：
 
 ```text
 linux/amd64
@@ -253,13 +247,13 @@ linux/arm/v7
 linux/arm/v6
 ```
 
-On a release tag, the workflow publishes `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X`, and
-commit-SHA tags where the major alias is enabled for non-v0 releases. For
-production, pin `:vX.Y.Z`; use `:latest` only for preview environments.
+在 release tag 上，workflow 会发布 `vX.Y.Z`、`X.Y.Z`、`X.Y`、`X` 和
+commit-SHA tags，其中 major alias 会为 non-v0 releases 启用。production
+请固定 `:vX.Y.Z`；仅在 preview environments 中使用 `:latest`。
 
-## Commands
+## 命令
 
-### Topology
+### 拓扑
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml topology validate
@@ -268,7 +262,7 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml topology generate
 mesh-ctl migrate --from old-v1-topology.yml --to mesh-topology.yml
 ```
 
-### Node lifecycle
+### 节点生命周期
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node list
@@ -277,14 +271,14 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node init <name> 
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node remove <name> --control-plane <host:port>
 ```
 
-### Backup and restore
+### 备份与恢复
 
 ```bash
 mesh-ctl --topology mesh-topology.yml --config-dir ~/.mesh-ctl backup awg-mesh-backup.zip
 mesh-ctl --topology restored-topology.yml --config-dir ~/.mesh-ctl-restored restore awg-mesh-backup.zip --confirm
 ```
 
-### Upgrade planning
+### 升级规划
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml upgrade v2.0.1 --dry-run
@@ -293,11 +287,10 @@ mesh-ctl upgrade pause
 mesh-ctl upgrade resume
 ```
 
-v2 upgrade execution is intentionally blocked until the v2 deploy executor
-ships. Current upgrade support is a plan/state-management surface, not an
-automatic production rollout.
+v2 upgrade execution 会被有意阻止，直到 v2 deploy executor 发布。当前 upgrade
+支持是 plan/state-management surface，不是自动 production rollout。
 
-### Rotation and audit
+### 轮换与审计
 
 ```bash
 mesh-ctl rotate --mesh-wide --tier 1 --control-plane <host:port>
@@ -306,13 +299,13 @@ mesh-ctl rotate --mesh-wide --tier 3 --control-plane <host:port>
 mesh-ctl audit-log query --control-plane <host:port>
 ```
 
-The older endpoint-targeted rotation flags remain for legacy paths, but v2
-mesh-wide rotation goes through the control plane.
+较旧的 endpoint-targeted rotation flags 仍保留给 legacy paths，但 v2
+mesh-wide rotation 通过 control plane 执行。
 
-## Release Gates
+## 发布门禁
 
-Every release must pass the automated critical suite, product emulation
-playbook, Docker builds, and RouterOS CHR gates before the tag is published.
+每个 release 在发布 tag 之前都必须通过 automated critical suite、
+product emulation playbook、Docker builds 和 RouterOS CHR gates。
 
 ```bash
 CGO_ENABLED=1 go test -race -count=1 ./...
@@ -325,37 +318,37 @@ BUILDX_BUILDER=default bash tests/simulation/mikrotik-chr-baseline-runtime.sh
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-version-matrix.sh
 ```
 
-The release is not complete until the annotated git tag exists on origin and
-both GHCR and Docker Hub expose matching `:vX.Y.Z` image tags. See
-[AGENTS.md](AGENTS.md) for the full release policy.
+直到 annotated git tag 出现在 origin，且 GHCR 和 Docker Hub 都能提供匹配的
+`:vX.Y.Z` image tags，release 才算完成。完整 release policy 见
+[AGENTS.md](AGENTS.md)。
 
-## Documentation Map
+## 文档地图
 
-| Document | Purpose |
+| 文档 | 用途 |
 |---|---|
-| [docs/PRODUCTION-TESTING-PLAYBOOK.md](docs/PRODUCTION-TESTING-PLAYBOOK.md) | Customer-mode product walkthrough. |
-| [docs/MIKROTIK-VERSION-COMPAT.md](docs/MIKROTIK-VERSION-COMPAT.md) | RouterOS generator/runtime compatibility. |
-| [docs/MIGRATION.md](docs/MIGRATION.md) | v1.x to v2 migration guidance. |
-| [docs/OPERATOR_FAQ.md](docs/OPERATOR_FAQ.md) | Operator details for tokens, backups, and state files. |
-| [docs/adr/README.md](docs/adr/README.md) | Architecture decision records. |
+| [docs/PRODUCTION-TESTING-PLAYBOOK.md](docs/PRODUCTION-TESTING-PLAYBOOK.md) | Customer-mode product walkthrough。 |
+| [docs/MIKROTIK-VERSION-COMPAT.md](docs/MIKROTIK-VERSION-COMPAT.md) | RouterOS generator/runtime compatibility。 |
+| [docs/MIGRATION.md](docs/MIGRATION.md) | v1.x 到 v2 migration guidance。 |
+| [docs/OPERATOR_FAQ.md](docs/OPERATOR_FAQ.md) | tokens、backups 和 state files 的 operator details。 |
+| [docs/adr/README.md](docs/adr/README.md) | Architecture decision records。 |
 
-## Development
+## 开发
 
-Build:
+构建：
 
 ```bash
 CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
 CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl ./cmd/mesh-ctl
 ```
 
-Test:
+测试：
 
 ```bash
 CGO_ENABLED=1 go test -race -count=1 ./...
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run ./...
 ```
 
-Regenerate protobuf files after editing `proto/*.proto`:
+修改 `proto/*.proto` 后重新生成 protobuf files：
 
 ```bash
 protoc --proto_path=proto \
@@ -364,6 +357,6 @@ protoc --proto_path=proto \
   proto/*.proto
 ```
 
-## License
+## 许可证
 
-MIT. See [LICENSE](LICENSE).
+MIT。见 [LICENSE](LICENSE)。

@@ -5,8 +5,8 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )

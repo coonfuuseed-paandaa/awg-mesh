@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
 type fakeMasterTransport struct {

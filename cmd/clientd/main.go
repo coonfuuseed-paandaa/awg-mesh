@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/clientd"
 )
 
 func main() {

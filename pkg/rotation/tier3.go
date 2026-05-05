@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
-	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awggen"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
 	"github.com/rs/zerolog/log"
 )
 

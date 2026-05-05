@@ -377,6 +377,7 @@ mesh-ctl upgrade v1.10.2 --dry-run --order ep-eu-1,master-eu-1
 
 - `README.md` — high-level architecture and quick start.
 - `README.ru.md` — Russian translation of the above.
+- `README.zh-CN.md` — Simplified Chinese translation of the above.
 - `docs/adr/0001-multi-image-docker-strategy.md` — why masters and clients
   ship as separate container images.
 - `docs/adr/0002-mikrotik-veth-interface-discovery.md` — how the MikroTik

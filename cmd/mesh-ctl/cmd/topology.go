@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
