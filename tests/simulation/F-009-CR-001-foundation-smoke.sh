@@ -9,7 +9,7 @@
 #
 #   R1  go build ./... succeeds
 #   R2  go vet ./... clean
-#   R3  gofmt -l . clean
+#   R3  tracked Go files are gofmt clean
 #   R4  go test -p 1 -count=1 -short ./... PASS
 #   R5  awg-mesh-node binary builds, --version reports v2.0.0
 #   R6  control-plane starts; implemented role dry-runs validate; client/clientd reports required flags
