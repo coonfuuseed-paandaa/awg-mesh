@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -29,5 +30,30 @@ func TestVersionFallbackWhenEmpty(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, awgmesh.Version) {
 		t.Fatalf("version() fallback = %q, want prefix %q", got, awgmesh.Version)
+	}
+}
+
+func TestVersionFromBuildInfoUsesSuiteVersionForLocalVCSBuild(t *testing.T) {
+	got := versionFromBuildInfo(&debug.BuildInfo{
+		Main: debug.Module{Version: "v1.14.2"},
+		Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "1234567890abcdef"},
+			{Key: "vcs.modified", Value: "false"},
+		},
+	}, true)
+
+	want := awgmesh.Version + " (12345678)"
+	if got != want {
+		t.Fatalf("versionFromBuildInfo() = %q, want %q", got, want)
+	}
+}
+
+func TestVersionFromBuildInfoPreservesModuleVersionWithoutVCS(t *testing.T) {
+	got := versionFromBuildInfo(&debug.BuildInfo{
+		Main: debug.Module{Version: "v1.14.2"},
+	}, true)
+
+	if got != "v1.14.2" {
+		t.Fatalf("versionFromBuildInfo() = %q, want v1.14.2", got)
 	}
 }
