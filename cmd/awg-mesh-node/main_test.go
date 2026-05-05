@@ -542,7 +542,7 @@ func TestRunClientModeAcceptsCACertFlag(t *testing.T) {
 	if strings.Contains(stderr.String(), "flag provided but not defined") {
 		t.Fatalf("--ca-cert was not accepted by awg-mesh-node: %s", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "load control-plane CA cert") {
+	if !strings.Contains(stderr.String(), "load coordination target CA cert") {
 		t.Fatalf("--ca-cert was not passed to clientd, stderr=%s", stderr.String())
 	}
 }

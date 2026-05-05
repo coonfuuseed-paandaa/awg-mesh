@@ -52,7 +52,7 @@ type auditLogEntry struct {
 func newAuditLogCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "audit-log",
-		Short: "Query control-plane audit logs",
+		Short: "Query coordination target audit logs",
 	}
 
 	cmd.AddCommand(newAuditLogQueryCommand())
@@ -67,7 +67,7 @@ func newAuditLogQueryCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "query",
-		Short: "Query audit events from the control plane",
+		Short: "Query audit events from the responsible master coordination target",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			options.configDir = configDir
@@ -76,7 +76,7 @@ func newAuditLogQueryCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane gRPC address")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Responsible master coordination gRPC address (compatibility flag name)")
 	cmd.Flags().Int64Var(&options.sinceUnix, "since-unix", 0, "Inclusive lower timestamp bound as Unix seconds")
 	cmd.Flags().Int64Var(&options.untilUnix, "until-unix", 0, "Inclusive upper timestamp bound as Unix seconds")
 	cmd.Flags().StringVar(&options.eventType, "event-type", "", "Audit event type filter")
@@ -98,7 +98,7 @@ func runAuditLogQueryCommand(options auditLogQueryOptions) error {
 
 	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
-		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
+		return fmt.Errorf("connect coordination target %q: %w", validated.controlPlane, err)
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -123,7 +123,7 @@ func runAuditLogQueryCommand(options auditLogQueryOptions) error {
 func validateAuditLogQueryOptions(options auditLogQueryOptions) (auditLogQueryOptions, error) {
 	controlPlane := strings.TrimSpace(options.controlPlane)
 	if controlPlane == "" {
-		return auditLogQueryOptions{}, fmt.Errorf("--control-plane is required")
+		return auditLogQueryOptions{}, fmt.Errorf("--control-plane is required as the responsible master coordination target")
 	}
 	if options.limit < 0 {
 		return auditLogQueryOptions{}, fmt.Errorf("--limit must be >= 0")
