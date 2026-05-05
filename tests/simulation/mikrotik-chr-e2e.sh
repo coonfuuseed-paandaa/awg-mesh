@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# mikrotik-chr-e2e.sh — full E2E sim against REAL RouterOS CHR (no proxy).
+# mikrotik-chr-e2e.sh — full E2E sim against REAL RouterOS CHR.
 #
 # Replaces alpine-based mikrotik-onboard.sh with honest emulation: real CHR
 # in Docker QEMU, real v2 control-plane registration, and real RouterOS
 # container import/start flow for awg-mesh-client.
 #
 # Architecture:
-#   Docker network: chr-e2e-net-${SUFFIX}
+#   Docker network: chr-e2e-net-${SUFFIX} plus docker-routeros hostfwd.
 #   ├── control-plane  (Docker Linux) — v2 registry/control-plane daemon
-#   └── chr-mikrotik   (Docker QEMU)  — real RouterOS CHR
+#   └── chr-mikrotik   (Docker QEMU)  — real RouterOS CHR using 10.0.2.2 hostfwd
 #       inside CHR userspace:
 #         /interface/veth/add + /container/add for awg-mesh-client
 #         awg-mesh-client starts with clientd args from generated .rsc
@@ -108,6 +108,18 @@ docker_host_path() {
         return
     fi
     printf '%s\n' "${path}"
+}
+
+build_meshctl() {
+    info "building mesh-ctl at ${MESHCTL_BIN}"
+    mkdir -p "$(dirname "${MESHCTL_BIN}")"
+    (cd "${REPO_ROOT}/.." && CGO_ENABLED=1 go build -trimpath -o "${MESHCTL_BIN}" ./cmd/mesh-ctl)
+}
+
+meshctl_is_current() {
+    local candidate="${1}"
+    [[ -x "${candidate}" ]] || return 1
+    "${candidate}" topology --help > /dev/null 2>&1
 }
 
 routeros_runtime_supported() {
@@ -445,12 +457,25 @@ fi
 if [[ ! -x "${MESHCTL_BIN}" ]]; then
     if command -v mesh-ctl > /dev/null 2>&1; then
         MESHCTL_BIN_RESOLVED="$(command -v mesh-ctl)"
+    elif command -v go > /dev/null 2>&1; then
+        build_meshctl
+        MESHCTL_BIN_RESOLVED="${MESHCTL_BIN}"
     else
-        echo "ERROR: mesh-ctl not at ${MESHCTL_BIN} and not in PATH" >&2
+        echo "ERROR: mesh-ctl not at ${MESHCTL_BIN}, not in PATH, and go is unavailable for auto-build" >&2
         exit 2
     fi
 else
     MESHCTL_BIN_RESOLVED="${MESHCTL_BIN}"
+fi
+if ! meshctl_is_current "${MESHCTL_BIN_RESOLVED}"; then
+    if command -v go > /dev/null 2>&1; then
+        info "mesh-ctl at ${MESHCTL_BIN_RESOLVED} is stale or incompatible; rebuilding"
+        build_meshctl
+        MESHCTL_BIN_RESOLVED="${MESHCTL_BIN}"
+    else
+        echo "ERROR: mesh-ctl at ${MESHCTL_BIN_RESOLVED} is stale or incompatible, and go is unavailable for rebuild" >&2
+        exit 2
+    fi
 fi
 
 info "CHR baseline:    ${BASELINE_IMAGE}"

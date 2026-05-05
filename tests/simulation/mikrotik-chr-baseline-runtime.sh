@@ -4,7 +4,7 @@
 #
 # This harness validates the RouterOS execution environment only:
 #   - CHR baseline image has container package + device-mode enabled
-#   - docker-routeros two-network topology gives RouterOS shared-network access
+#   - docker-routeros hostfwd/slirp reachability matches the CHR product path
 #   - RouterOS veth/bridge/IP, NAT, and forward firewall rules work
 #   - RouterOS container logging exposes probe output through /log
 #   - a Linux container inside RouterOS can reach both a simulation node and
@@ -44,6 +44,13 @@ readonly CP_ROUTEROS_HOST="${CP_ROUTEROS_HOST:-10.0.2.2}"
 readonly CP_ROUTEROS_ADDR="${CP_ROUTEROS_HOST}:${CP_GRPC_HOST_PORT}"
 readonly CP_PROXY_TARGET_HOST="${CP_PROXY_TARGET_HOST:-172.17.0.1}"
 readonly REQUIRE_SHARED_NETWORK="${REQUIRE_SHARED_NETWORK:-0}"
+if [[ -n "${CHR_REACHABILITY_MODE:-}" ]]; then
+    readonly CHR_REACHABILITY_MODE
+elif [[ "${REQUIRE_SHARED_NETWORK}" == "1" ]]; then
+    readonly CHR_REACHABILITY_MODE="direct"
+else
+    readonly CHR_REACHABILITY_MODE="slirp-proxy"
+fi
 
 readonly SUFFIX="$(printf "%05d" "${RANDOM}")"
 readonly NET_NAME="chr-baseline-runtime-net-${SUFFIX}"
@@ -522,8 +529,17 @@ pass "pre-flight: ${BASELINE_IMAGE} has ${BASELINE_READY_LABEL}=true"
 info "CHR Docker CLI:  ${DOCKER_CHR_BIN}"
 info "Probe image:     ${PROBE_IMAGE}"
 info "RouterOS CP:     ${CP_ROUTEROS_ADDR}"
+info "Reachability:    ${CHR_REACHABILITY_MODE}"
 info "SSH host port:   ${SSH_HOST_PORT}"
 info "Suffix:          ${SUFFIX}"
+
+case "${CHR_REACHABILITY_MODE}" in
+    direct|slirp-proxy|auto) ;;
+    *)
+        echo "ERROR: CHR_REACHABILITY_MODE must be one of: direct, slirp-proxy, auto" >&2
+        exit 2
+        ;;
+esac
 
 echo ""
 echo "[T1] Building bare Linux probe image..."
@@ -595,7 +611,7 @@ fi
 pass "T3.d: CHR slirp HTTP target proxy listens on ${CP_ROUTEROS_HOST}:${HTTP_HOST_PORT}"
 
 echo ""
-echo "[T4] Verifying RouterOS package/device-mode and shared-network access..."
+echo "[T4] Verifying RouterOS package/device-mode and selected reachability mode..."
 DEVICE_MODE_OUT="$(routeros_ssh "/system/device-mode/print" 2>&1 || true)"
 if printf '%s' "${DEVICE_MODE_OUT}" | grep -q "container: yes"; then
     pass "T4.a: /system/device-mode has container=yes"
@@ -616,31 +632,34 @@ fi
 
 routeros_ssh "/ip/dhcp-client/add interface=ether2 add-default-route=no use-peer-dns=no disabled=no comment=\"awg-mesh baseline shared net\"; :delay 5s; /interface/print detail; /ip/address/print detail; /ip/dhcp-client/print detail; /ip/route/print detail" > "${WORK_DIR}/routeros-network-inventory.log" 2>&1 || true
 
-SHARED_PING_OK=0
-if routeros_ssh "/ping address=${HTTP_TARGET_IP} count=1" 2>&1 | tee "${WORK_DIR}/routeros-ping-http.log" | grep -qi "received=1"; then
-    SHARED_PING_OK=1
-fi
+SHARED_NETWORK_MODE=""
+if [[ "${CHR_REACHABILITY_MODE}" == "direct" || "${CHR_REACHABILITY_MODE}" == "auto" ]]; then
+    SHARED_PING_OK=0
+    if routeros_ssh "/ping address=${HTTP_TARGET_IP} count=1" 2>&1 | tee "${WORK_DIR}/routeros-ping-http.log" | grep -qi "received=1"; then
+        SHARED_PING_OK=1
+    fi
 
-SHARED_FETCH_OUT="$(routeros_ssh "/tool/fetch url=http://${HTTP_TARGET_IP}:${HTTP_PORT}/healthz keep-result=no" 2>&1 || true)"
-if [[ "${SHARED_PING_OK}" -eq 1 ]] && printf '%s' "${SHARED_FETCH_OUT}" | grep -qiE "status: finished|downloaded"; then
-    SHARED_NETWORK_MODE="direct"
-    PROBE_HTTP_TARGET="${HTTP_TARGET_IP}"
-    PROBE_HTTP_PORT="${HTTP_PORT}"
-    PROBE_PING_TARGET="${HTTP_TARGET_IP}"
-    pass "T4.c: RouterOS guest reaches simulation target on docker-routeros shared network"
-else
-    if [[ "${REQUIRE_SHARED_NETWORK}" == "1" ]]; then
+    SHARED_FETCH_OUT="$(routeros_ssh "/tool/fetch url=http://${HTTP_TARGET_IP}:${HTTP_PORT}/healthz keep-result=no" 2>&1 || true)"
+    if [[ "${SHARED_PING_OK}" -eq 1 ]] && printf '%s' "${SHARED_FETCH_OUT}" | grep -qiE "status: finished|downloaded"; then
+        SHARED_NETWORK_MODE="direct"
+        PROBE_HTTP_TARGET="${HTTP_TARGET_IP}"
+        PROBE_HTTP_PORT="${HTTP_PORT}"
+        PROBE_PING_TARGET="${HTTP_TARGET_IP}"
+        pass "T4.c: RouterOS guest reaches simulation target on docker-routeros shared network"
+    elif [[ "${CHR_REACHABILITY_MODE}" == "direct" ]]; then
         fail "T4.c: RouterOS guest cannot reach simulation target ${HTTP_TARGET_IP} on shared network"
         sed 's/^/    /' "${WORK_DIR}/routeros-ping-http.log" >&2
         printf '%s\n' "${SHARED_FETCH_OUT}" | sed 's/^/    /' >&2
         exit 3
     fi
+fi
+
+if [[ -z "${SHARED_NETWORK_MODE}" ]]; then
     SHARED_NETWORK_MODE="slirp-proxy"
     PROBE_HTTP_TARGET="${CP_ROUTEROS_HOST}"
     PROBE_HTTP_PORT="${HTTP_HOST_PORT}"
     PROBE_PING_TARGET="${CP_ROUTEROS_HOST}"
-    warn "T4.c: docker-routeros shared network did not reach ${HTTP_TARGET_IP}; using slirp proxy for bootstrap reachability"
-    warn "T4.c: set REQUIRE_SHARED_NETWORK=1 to make this a hard data-plane gate"
+    pass "T4.c: RouterOS guest uses slirp-proxied simulation target"
 fi
 
 FETCH_OUT="$(routeros_ssh "/tool/fetch url=http://${PROBE_HTTP_TARGET}:${PROBE_HTTP_PORT}/healthz keep-result=no" 2>&1 || true)"
