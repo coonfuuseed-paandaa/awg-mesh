@@ -22,6 +22,7 @@ func TestMasterCoordinationListenerExposesRegistryAndOwnership(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- master.Run(ctx)
@@ -45,15 +46,15 @@ func TestMasterCoordinationListenerExposesRegistryAndOwnership(t *testing.T) {
 	}()
 	client := pb.NewControlPlaneClient(conn)
 
-	rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer rpcCancel()
-	resp, err := client.RegisterNode(rpcCtx, &pb.RegisterNodeRequest{
+	registerCtx, registerCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	resp, err := client.RegisterNode(registerCtx, &pb.RegisterNodeRequest{
 		NodeName:    "master-01",
 		Roles:       []string{"master"},
 		NodeCertPem: []byte("test-cert"),
 		OverlayIp:   "172.21.92.2",
 		Region:      "eu",
 	})
+	registerCancel()
 	if err != nil {
 		cancel()
 		t.Fatalf("RegisterNode through master coordination: %v", err)
@@ -63,7 +64,9 @@ func TestMasterCoordinationListenerExposesRegistryAndOwnership(t *testing.T) {
 		t.Fatalf("registration rejected by master coordination: %s", resp.GetRejectReason())
 	}
 
-	stream, err := client.StreamOwnership(rpcCtx, &pb.StreamOwnershipRequest{SubscriberNode: "master-01"})
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer streamCancel()
+	stream, err := client.StreamOwnership(streamCtx, &pb.StreamOwnershipRequest{SubscriberNode: "master-01"})
 	if err != nil {
 		cancel()
 		t.Fatalf("StreamOwnership through master coordination: %v", err)
