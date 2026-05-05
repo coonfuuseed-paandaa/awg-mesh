@@ -10,6 +10,7 @@ Run these after unit tests, Docker image builds, the critical suite, and the
 emulation playbook:
 
 ```bash
+CGO_ENABLED=1 go test -race -count=1 ./...
 bash tests/simulation/F-009-CR-001-foundation-smoke.sh
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-chr-baseline-runtime.sh
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-version-matrix.sh

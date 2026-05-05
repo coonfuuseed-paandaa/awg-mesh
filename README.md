@@ -202,7 +202,7 @@ mesh:
 
 nodes:
   - name: master-01
-    roles: [master, balancer, egress]
+    roles: [master, balancer, egress, ingress]
     overlay_ip: 172.21.92.2
     bridge_ip: 192.168.93.10
     public_ip: 203.0.113.10
@@ -224,7 +224,7 @@ services:
     ingress:
       - hostname: media.example.com
         mode: sni_passthrough
-        ingress_node: ingress-de-01
+        ingress_node: master-01
 ```
 
 Use [mesh-topology.example.yml](mesh-topology.example.yml) as the maintained
@@ -315,7 +315,7 @@ Every release must pass the automated critical suite, product emulation
 playbook, Docker builds, and RouterOS CHR gates before the tag is published.
 
 ```bash
-go test -race -count=1 ./...
+CGO_ENABLED=1 go test -race -count=1 ./...
 docker build -t awg-mesh-node:local -f deploy/Dockerfile.node .
 docker build -t awg-mesh-client:local -f deploy/Dockerfile.client .
 bash tests/critical/run-all.sh --strict
@@ -351,7 +351,7 @@ CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl ./cmd/mesh-ctl
 Test:
 
 ```bash
-go test -race -count=1 ./...
+CGO_ENABLED=1 go test -race -count=1 ./...
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run ./...
 ```
 
