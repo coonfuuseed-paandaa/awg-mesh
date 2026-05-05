@@ -10,7 +10,7 @@
 # awg-mesh
 
 Docker-native encrypted overlay mesh network built on AmneziaWG. awg-mesh v2
-uses a flat role-tagged topology, a control-plane registration flow, local
+uses a flat role-tagged topology, master-owned runtime zones, local
 backup/restore, MikroTik RouterOS container deployment, and release gates that
 prove both code contracts and product behavior before a tag is published.
 
@@ -20,31 +20,34 @@ prove both code contracts and product behavior before a tag is published.
 graph TB
     subgraph Admin["Admin workstation"]
         ctl["mesh-ctl"]
+        topo["mesh-topology.yml\nsource of truth"]
     end
 
-    subgraph Control["Control plane"]
-        cp["awg-mesh-node\n--mode control-plane"]
-    end
-
-    subgraph Mesh["v2 mesh nodes"]
-        master["master + balancer"]
-        egress["egress"]
-        ingress["ingress"]
-        client["client"]
+    subgraph ZoneA["Master-owned zone"]
+        master["master-01\nmaster + balancer + ingress"]
+        coord["runtime coordination endpoint\nhosted by responsible master"]
+        egress["egress-01"]
+        ingress["ingress role"]
+        client["client / home server"]
         mt["MikroTik\n/container client"]
+    end
+
+    subgraph Failover["Optional failover zone"]
+        master2["master-02\nindependent master"]
     end
 
     user["Users / apps"]
     internet["Internet"]
 
-    ctl -- "mTLS admin gRPC" --> cp
-    ctl -- "prepare local certs/tokens" --> client
-    ctl -- "prepare local certs/tokens" --> master
-    cp -- "registered identity\npeer/control data" --> master
-    cp -- "registered identity\npeer/control data" --> egress
-    cp -- "registered identity\npeer/control data" --> ingress
-    cp -- "registered identity\npeer/control data" --> client
-    cp -- "registered identity\npeer/control data" --> mt
+    ctl -- "validate / generate / prepare" --> topo
+    topo -- "desired state" --> master
+    topo -- "responsible master targets" --> egress
+    topo -- "responsible master targets" --> client
+    topo -- "failover targets" --> master2
+    master -- "hosts" --> coord
+    egress -- "mTLS registration / peer updates" --> coord
+    client -- "mTLS registration / peer updates" --> coord
+    mt -- "mTLS registration / peer updates" --> coord
     client -- "vanilla WG to master" --> master
     mt -- "vanilla WG to master" --> master
     master -- "mesh-internal AWG" --> egress
@@ -52,6 +55,12 @@ graph TB
     egress -- "NAT at boundary" --> internet
     user --> ingress
 ```
+
+`mesh-ctl` is the desired-state tool: it reads `mesh-topology.yml`, validates
+intent, prepares node material, and drives explicit operator actions. The data
+plane runs on `awg-mesh-node` instances. In the current v2.x model, masters own
+runtime responsibility for their zones; no standalone daemon is required in the
+happy path, and masters do not share runtime state with each other.
 
 The v2 topology file declares nodes once under `nodes:` and gives each node one
 or more roles:
@@ -64,8 +73,13 @@ or more roles:
 | `egress` | Performs internet-bound masquerade at the boundary. |
 | `ingress` | Publishes services from mesh clients to public hostnames or ports. |
 
+Egress, ingress, balancer, and client nodes use the responsible master generated
+from topology. Peering every non-client role to every master is a deployment
+choice, not a default invariant.
+
 See [docs/architecture/F-009-overview.md](docs/architecture/F-009-overview.md)
-for the full v2 architecture rationale and invariants.
+for historical F-009 background. The v2.0.1 release path documented here is
+the current master-owned-zone contract.
 
 ## What's New in v2.0
 
@@ -75,11 +89,11 @@ for the full v2 architecture rationale and invariants.
   `mesh-ctl node init`, `mesh-ctl node list`, and `mesh-ctl node remove`.
   Legacy `master`, `endpoint`, and `client` role subcommands were removed from
   the v2 operator path.
-- **Control-plane registration** with CA-backed mTLS and local admin
-  certificates. Insecure control-plane admin paths are not part of the release
+- **Master-owned coordination** with CA-backed mTLS and local admin
+  certificates. Insecure coordination/admin paths are not part of the release
   flow.
 - **Local backup/restore** for admin state, topology, and optional
-  control-plane state archives.
+  coordination state archives.
 - **MikroTik RouterOS `/container` deployment** through
   `mesh-ctl node prepare --platform mikrotik`. Runtime release validation
   targets RouterOS 7.21+; generator syntax tests also cover 7.16.2 and 7.20.8.
@@ -92,8 +106,8 @@ for the full v2 architecture rationale and invariants.
 
 This local walkthrough builds the tools, validates the example v2 topology, and
 prepares local node credentials. It does not deploy a production mesh by itself;
-deployment requires real hosts, Docker, reachable control-plane networking, and
-node-specific firewall rules.
+deployment requires real hosts, Docker, a reachable responsible-master
+coordination endpoint, and node-specific firewall rules.
 
 ### Prerequisites
 
@@ -107,7 +121,7 @@ node-specific firewall rules.
 For the current v2 release line:
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/v2/cmd/mesh-ctl@v2.0.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/v2/cmd/mesh-ctl@v2.0.1
 ```
 
 For local development from a clone:
@@ -158,8 +172,9 @@ Generated per-node artifacts include:
 .mesh-local/nodes/<name>/node.key
 ```
 
-For MikroTik RouterOS container deployment, embed the reachable control-plane
-address:
+For MikroTik RouterOS container deployment, embed the reachable responsible
+master coordination address. The current CLI flag name remains
+`--control-plane` for v2.0.1 compatibility:
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
@@ -172,10 +187,11 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
 The RouterOS compatibility contract is documented in
 [docs/MIKROTIK-VERSION-COMPAT.md](docs/MIKROTIK-VERSION-COMPAT.md).
 
-### Register nodes with the control plane
+### Register nodes with the responsible master
 
-Start a control-plane node in the deployment environment, then register prepared
-nodes:
+Start the responsible master node in the deployment environment, then register
+prepared nodes against that master's coordination endpoint. The
+`--control-plane` flag is the retained compatibility name for this target:
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
@@ -235,12 +251,12 @@ starting point.
 Release images are published to both GHCR and Docker Hub.
 
 ```text
-ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v2.0.0
-ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v2.0.0
-ghcr.io/coonfuuseed-paandaa/awg-mesh:v2.0.0          # GHCR-only legacy node alias
+ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v2.0.1
+ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v2.0.1
+ghcr.io/coonfuuseed-paandaa/awg-mesh:v2.0.1          # GHCR-only legacy node alias
 
-docker.io/coonfuuseedpaandaa/awg-mesh-node:v2.0.0
-docker.io/coonfuuseedpaandaa/awg-mesh-client:v2.0.0
+docker.io/coonfuuseedpaandaa/awg-mesh-node:v2.0.1
+docker.io/coonfuuseedpaandaa/awg-mesh-client:v2.0.1
 ```
 
 The CI workflow publishes multi-arch manifests for:
@@ -269,6 +285,10 @@ mesh-ctl migrate --from old-v1-topology.yml --to mesh-topology.yml
 ```
 
 ### Node lifecycle
+
+The `--control-plane` flag name is retained for v2.0.1 CLI compatibility. In
+the current master-owned-zone model, pass the responsible master coordination
+address.
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node list
@@ -299,6 +319,10 @@ automatic production rollout.
 
 ### Rotation and audit
 
+Mesh-wide rotation and audit queries target the responsible master coordination
+endpoint. The flag name remains `--control-plane` for compatibility with the
+v2.0.0 command surface.
+
 ```bash
 mesh-ctl rotate --mesh-wide --tier 1 --control-plane <host:port>
 mesh-ctl rotate --mesh-wide --tier 2 --control-plane <host:port>
@@ -306,8 +330,19 @@ mesh-ctl rotate --mesh-wide --tier 3 --control-plane <host:port>
 mesh-ctl audit-log query --control-plane <host:port>
 ```
 
-The older endpoint-targeted rotation flags remain for legacy paths, but v2
-mesh-wide rotation goes through the control plane.
+The older endpoint-targeted rotation flags remain for legacy paths.
+
+## Compatibility and Future Management Plane
+
+`awg-mesh-node --mode control-plane` remains a v2.0.1 compatibility/deprecated
+surface for deployments that adopted the v2.0.0 standalone path. It is not the
+current Quick Start path, not required by customer-mode release gates, and not a
+replacement for `mesh-ctl` as the desired-state tool.
+
+A broader management plane and WebUI may be designed later for large
+installations. That future layer is separate from the current data-plane runtime
+model and must not introduce master-to-master gossip, consensus, or shared
+state into the v2.x happy path.
 
 ## Release Gates
 
