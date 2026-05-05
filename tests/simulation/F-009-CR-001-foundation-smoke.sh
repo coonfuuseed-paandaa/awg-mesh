@@ -9,7 +9,7 @@
 #
 #   R1  go build ./... succeeds
 #   R2  go vet ./... clean
-#   R3  gofmt -l . clean
+#   R3  tracked Go files are gofmt clean
 #   R4  go test -p 1 -count=1 -short ./... PASS
 #   R5  awg-mesh-node binary builds, --version reports v2.0.0
 #   R6  control-plane starts; implemented role dry-runs validate; client/clientd reports required flags
@@ -150,9 +150,10 @@ else
     bad "R2" "$(tail -5 /tmp/F009-r2.log)"
 fi
 
-# R3: gofmt clean
-if run_in_docker "${PRELUDE}; out=\$(gofmt -l . 2>&1); if [ -n \"\$out\" ]; then echo \"gofmt drift:\"; echo \"\$out\"; exit 1; fi" >/tmp/F009-r3.log 2>&1; then
-    ok "R3 — gofmt -l . clean"
+# R3: gofmt clean. Use tracked Go files only; local .agent worktrees and
+# other gitignored agent artifacts can contain unrelated review snapshots.
+if run_in_docker "${PRELUDE}; out=\$(git ls-files '*.go' | xargs -r gofmt -l 2>&1); if [ -n \"\$out\" ]; then echo \"gofmt drift:\"; echo \"\$out\"; exit 1; fi" >/tmp/F009-r3.log 2>&1; then
+    ok "R3 — tracked Go files are gofmt clean"
 else
     bad "R3" "$(tail -10 /tmp/F009-r3.log)"
 fi
