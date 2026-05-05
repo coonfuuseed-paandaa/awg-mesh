@@ -131,8 +131,10 @@ echo ""
 
 ensure_smoke_image
 
-# Image bakes libpcap-dev — no apt-get in per-check prelude. Just set -e.
-PRELUDE='set -euo pipefail'
+# Image bakes libpcap-dev — no apt-get in per-check prelude.
+# Git runs as root inside the smoke container against a mounted host checkout;
+# mark /work safe so Go VCS stamping can query git status.
+PRELUDE='set -euo pipefail; git config --global --add safe.directory /work'
 
 # R1: go build clean
 if run_in_docker "${PRELUDE}; go build ./... 2>&1" >/tmp/F009-r1.log 2>&1; then
