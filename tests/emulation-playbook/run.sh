@@ -71,6 +71,16 @@ require_contains() {
     fi
 }
 
+require_contains_flat() {
+    local file="$1"
+    local needle="$2"
+    if ! tr '\n' ' ' <"${file}" | grep -Fq "${needle}"; then
+        echo "missing expected text: ${needle}" >&2
+        cat "${file}" >&2
+        return 1
+    fi
+}
+
 require_not_contains() {
     local file="$1"
     local needle="$2"
@@ -176,27 +186,21 @@ s4_backup_and_restore() {
     [[ -f "${RESTORED_CONFIG}/nodes/home-server-01/node.key" ]] || return 1
 }
 
-s5_upgrade_and_control_plane() {
-    local upgrade_out cp_out state_dir code
-    state_dir="${TMP_ROOT}/control-plane-state"
+s5_upgrade_and_master_owned_contract() {
+    local upgrade_out
     upgrade_out="$(run_capture upgrade_dry_run "${MESH_CTL}" --topology "${TOPOLOGY}" upgrade v2.0.1 --dry-run)" || return 1
     require_contains "${upgrade_out}" "PHASE" || return 1
     require_contains "${upgrade_out}" "masters" || return 1
     require_contains "${upgrade_out}" "mesh-roles" || return 1
     require_contains "${upgrade_out}" "clients" || return 1
 
-    cp_out="${TMP_ROOT}/control-plane.out"
-    set +e
-    timeout 3 "${NODE_BIN}" --mode control-plane --listen 127.0.0.1:0 --state-dir "${state_dir}" >"${cp_out}" 2>&1
-    code=$?
-    set -e
-    if [[ "${code}" -ne 124 ]]; then
-        cat "${cp_out}" >&2
-        echo "control-plane exited with ${code}, expected timeout-managed run" >&2
-        return 1
-    fi
-    require_contains "${cp_out}" "control-plane: listening on 127.0.0.1:0" || return 1
-    require_contains "${cp_out}" "shutting down" || return 1
+    require_contains "${REPO_ROOT}/README.md" "master-owned runtime zones" || return 1
+    require_contains_flat "${REPO_ROOT}/README.md" "responsible-master coordination endpoint" || return 1
+    require_contains_flat "${REPO_ROOT}/README.md" "Peering every non-client role to every master is a deployment choice" || return 1
+    require_contains_flat "${REPO_ROOT}/README.md" 'The `--control-plane` flag is the retained compatibility name for this target' || return 1
+    require_contains "${PLAYBOOK}" "S5 - Upgrade plan and master-owned coordination contract" || return 1
+    require_not_contains "${PLAYBOOK}" 'Start `awg-mesh-node --mode control-plane`' || return 1
+    require_not_contains "${PLAYBOOK}" "control-plane startup" || return 1
 }
 
 s6_critical_suite_handoff() {
@@ -273,7 +277,7 @@ scenario "S1" "First-run binaries" s1_first_run_binaries
 scenario "S2" "Topology-as-code first look" s2_topology_first_look
 scenario "S3" "Admin prepare artifacts" s3_admin_prepare_artifacts
 scenario "S4" "Backup and restore" s4_backup_and_restore
-scenario "S5" "Upgrade plan and control-plane startup" s5_upgrade_and_control_plane
+scenario "S5" "Upgrade plan and master-owned coordination contract" s5_upgrade_and_master_owned_contract
 scenario "S6" "Critical-suite handoff" s6_critical_suite_handoff
 
 write_report

@@ -13,10 +13,11 @@ This playbook validates these user-facing surfaces:
 
 - `mesh-ctl` first-run help, version, topology, node, backup, restore, and
   upgrade planning commands.
-- `awg-mesh-node` first-run version output and control-plane startup behavior.
+- `awg-mesh-node` first-run version output and master-owned-zone documentation
+  contract.
 - v2.0 topology-as-code using `pkg/topology/testdata/v2-topology.yml`.
 - Admin-side prepare -> backup -> restore lifecycle.
-- Control-plane/clientd certificate lifecycle coverage through the critical
+- Coordination/clientd certificate lifecycle coverage through the critical
   suite handoff.
 - The handoff from customer-mode walkthrough to the automated critical suite.
 
@@ -162,25 +163,29 @@ The script writes a customer-mode run report to:
   target.
 - Restore succeeds without `--confirm`.
 
-### S5 - Upgrade plan and control-plane startup
+### S5 - Upgrade plan and master-owned coordination contract
 
 **Flow:**
 
 1. Run `mesh-ctl upgrade v2.0.1 --dry-run`.
-2. Start `awg-mesh-node --mode control-plane` on loopback with a throwaway state
-   directory and a short timeout.
+2. Read the public README architecture and command sections.
+3. Confirm the documented current path uses master-owned zones and a
+   responsible master coordination endpoint.
 
 **Expected user-visible output:**
 
 - Upgrade output shows ordered phases for masters, mesh roles, and clients.
-- Control-plane logs include `listening on 127.0.0.1:0`.
-- Timeout termination is graceful and logs shutdown.
+- The README describes `mesh-ctl` as the desired-state tool.
+- The README describes responsible masters as the current coordination target.
+- The customer-mode playbook does not instruct operators to start a standalone
+  daemon as the current happy path.
 
 **Failure signatures:**
 
 - Upgrade plan omits a declared role.
-- Control-plane refuses a valid state directory.
-- Control-plane binds to a non-loopback address without explicit opt-in.
+- Public docs present a standalone daemon as the current deployment path.
+- Public docs imply runtime master-to-master shared state or universal peering
+  as a required invariant.
 
 ### S6 - Critical-suite handoff
 
@@ -208,7 +213,7 @@ The script writes a customer-mode run report to:
 | F-009 FR-1..FR-14 | v2 mesh operator surface and release readiness | S1, S2, S6 |
 | F-009 FR-15 | Decommission lifecycle evidence through critical suite handoff | S6 |
 | F-009 FR-16 | Automatic node certificate lifecycle evidence through critical suite handoff | S6 |
-| F-009 FR-18 | Backup/restore and control-plane DR | S4, S5, S6 |
+| F-009 FR-18 | Backup/restore and coordination recovery | S4, S5, S6 |
 | F-009 FR-19 | Upgrade planning flow | S5 |
 | F-009 FR-20 | Audit log query coverage through critical suite handoff | S6 |
 | Rule 11 | Customer-mode product walkthrough | S1..S6 |
@@ -220,7 +225,7 @@ The script writes a customer-mode run report to:
 | Command exits 0 but expected file is missing | silent-success regression | Re-run the exact command and inspect generated artifact paths |
 | Help omits a documented command | CLI surface drift | Compare help output to this playbook |
 | JSON output loses expected fields | automation contract regression | Save stdout and validate field names |
-| Control-plane starts only with unsafe bind flags | security regression | Check bind address and flags used |
+| Docs present a standalone daemon as the current path | architecture contract drift | Compare README architecture and S5 wording |
 | Critical suite skip is unlabeled | release-gate drift | Open the critical runner output and identify the script |
 
 ## Verdict Template
@@ -240,7 +245,7 @@ Copy this into the run report when executing manually:
 | S2 | Topology-as-code first look | PASS | - |
 | S3 | Admin prepare artifacts | PASS | - |
 | S4 | Backup and restore | PASS | - |
-| S5 | Upgrade plan and control-plane startup | PASS | - |
+| S5 | Upgrade plan and master-owned coordination contract | PASS | - |
 | S6 | Critical-suite handoff | PASS | - |
 
 **Surprises:**
