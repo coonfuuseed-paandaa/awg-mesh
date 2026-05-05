@@ -82,6 +82,10 @@ func TestMasterRunStartsAndClosesOnCancel(t *testing.T) {
 	}()
 
 	waitFor(t, func() bool { return master.Status().Listeners.Started })
+	status := master.Status()
+	if status.Coordination.Enabled || status.Coordination.Started || status.Coordination.BoundAddr != "" {
+		t.Fatalf("master without coordination config must keep coordination disabled, got %#v", status.Coordination)
+	}
 	cancel()
 
 	select {

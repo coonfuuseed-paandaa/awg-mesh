@@ -2,7 +2,9 @@ package mikrotik
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -10,6 +12,9 @@ import (
 const deployScriptTemplate = `# awg-mesh RouterOS deployment script
 # Generated for container {{.ContainerName}}
 # Topology node name: {{.TopologyName}}
+{{- if .CoordinationTarget }}
+# Responsible master coordination target: {{.CoordinationTarget}}
+{{- end }}
 #
 # KEYPAIR NOTE:
 # The awg-mesh-client container generates its own AmneziaWG keypair on first boot.
@@ -85,7 +90,7 @@ type DeployScript struct {
 	NodeCertB64   string   // base64-encoded node.crt copied into /config on first boot
 	NodeKeyB64    string   // base64-encoded node.key copied into /config on first boot
 	CACertB64     string   // optional base64-encoded ca.crt copied into /config
-	ControlPlane  string   // optional control-plane address for runnable clientd command
+	ControlPlane  string   // optional responsible master coordination target for runnable clientd command
 	Region        string   // node region passed to clientd
 	Protocol      string   // clientd protocol (default: amneziawg)
 	InterfaceName string   // clientd interface name (default: awg-mesh0)
@@ -100,6 +105,7 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 	if err := validateDeployScript(ds); err != nil {
 		return "", err
 	}
+	coordinationTarget := strings.TrimSpace(ds.ControlPlane)
 
 	envVars := buildDeployEnvVars(ds)
 	mountName := DeriveMountName(ds.ContainerName)
@@ -127,25 +133,27 @@ func GenerateDeployRSC(ds DeployScript) (string, error) {
 	}
 
 	templateData := struct {
-		ContainerName     string
-		TopologyName      string
-		BridgeCommands    []string
-		VethCommands      []string
-		NATCommands       []string
-		FirewallCommands  []string
-		RouteCommands     []string
-		ContainerCommands []string
-		StartCommand      string
+		ContainerName      string
+		TopologyName       string
+		BridgeCommands     []string
+		VethCommands       []string
+		NATCommands        []string
+		FirewallCommands   []string
+		RouteCommands      []string
+		ContainerCommands  []string
+		StartCommand       string
+		CoordinationTarget string
 	}{
-		ContainerName:     ds.ContainerName,
-		TopologyName:      ds.TopologyName,
-		BridgeCommands:    GenerateBridgeCommands(ds.BridgeName, ds.Veth, ds.VethGateway),
-		VethCommands:      GenerateVethCommands(ds.Veth, ds.VethGateway),
-		NATCommands:       GenerateNATCommands(ds.VethGateway, ds.GRPCPort),
-		FirewallCommands:  GenerateFirewallCommands(ds.BridgeName),
-		RouteCommands:     GenerateRouteCommands(ds.OverlayNet, ds.VethGateway),
-		ContainerCommands: containerCommands,
-		StartCommand:      "# RouterOS starts the container after local image import; start-on-boot=yes keeps it running after reboot.",
+		ContainerName:      ds.ContainerName,
+		TopologyName:       ds.TopologyName,
+		BridgeCommands:     GenerateBridgeCommands(ds.BridgeName, ds.Veth, ds.VethGateway),
+		VethCommands:       GenerateVethCommands(ds.Veth, ds.VethGateway),
+		NATCommands:        GenerateNATCommands(ds.VethGateway, ds.GRPCPort),
+		FirewallCommands:   GenerateFirewallCommands(ds.BridgeName),
+		RouteCommands:      GenerateRouteCommands(ds.OverlayNet, ds.VethGateway),
+		ContainerCommands:  containerCommands,
+		StartCommand:       "# RouterOS starts the container after local image import; start-on-boot=yes keeps it running after reboot.",
+		CoordinationTarget: coordinationTarget,
 	}
 
 	script, err := executeTemplate("deploy-rsc", deployScriptTemplate, templateData)
@@ -226,6 +234,9 @@ func validateDeployScript(ds DeployScript) error {
 	if strings.TrimSpace(ds.OverlayNet) == "" {
 		return fmt.Errorf("overlay network is required")
 	}
+	if err := validateControlPlaneTarget(ds.ControlPlane); err != nil {
+		return err
+	}
 
 	if _, err := netip.ParseAddr(ds.OverlayIP); err != nil {
 		return fmt.Errorf("invalid overlay IP %q: %w", ds.OverlayIP, err)
@@ -234,6 +245,26 @@ func validateDeployScript(ds DeployScript) error {
 		return fmt.Errorf("invalid overlay network %q: %w", ds.OverlayNet, err)
 	}
 
+	return nil
+}
+
+func validateControlPlaneTarget(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) != 1 || !strings.Contains(trimmed, ":") {
+		return fmt.Errorf("control-plane must be a single-line host:port value")
+	}
+	host, port, err := net.SplitHostPort(trimmed)
+	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return fmt.Errorf("control-plane must be a single-line host:port value")
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNumber == 0 {
+		return fmt.Errorf("control-plane must be a single-line host:port value")
+	}
 	return nil
 }
 

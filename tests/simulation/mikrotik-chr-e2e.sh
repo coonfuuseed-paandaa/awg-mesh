@@ -2,20 +2,21 @@
 # mikrotik-chr-e2e.sh — full E2E sim against REAL RouterOS CHR.
 #
 # Replaces alpine-based mikrotik-onboard.sh with honest emulation: real CHR
-# in Docker QEMU, real v2 control-plane registration, and real RouterOS
-# container import/start flow for awg-mesh-client.
+# in Docker QEMU, real v2 coordination registration through the documented
+# compatibility proxy, and real RouterOS container import/start flow for
+# awg-mesh-client.
 #
 # Architecture:
 #   Docker network: chr-e2e-net-${SUFFIX} plus docker-routeros hostfwd.
-#   ├── control-plane  (Docker Linux) — v2 registry/control-plane daemon
-#   └── chr-mikrotik   (Docker QEMU)  — real RouterOS CHR using 10.0.2.2 hostfwd
+#   ├── coordination-proxy (Docker Linux) - v2.0.1 compatibility wrapper
+#   └── chr-mikrotik      (Docker QEMU)  - real RouterOS CHR using 10.0.2.2 hostfwd
 #       inside CHR userspace:
 #         /interface/veth/add + /container/add for awg-mesh-client
 #         awg-mesh-client starts with clientd args from generated .rsc
 #
 # Pre-conditions (run build-chr-baseline.sh first):
 #   - awg-mesh-chr-baseline:${CHR_VERSION} Docker image exists
-#   - awg-mesh-node:local image (Linux control-plane node)
+#   - awg-mesh-node:local image (Linux compatibility coordination proxy)
 #   - awg-mesh-client:local image (exported to CHR as a local image tar)
 #   - mesh-ctl in PATH or at <repo>/bin/mesh-ctl
 #   - sshpass + ssh + scp on PATH
@@ -506,8 +507,8 @@ echo ""
 echo "[T1] Creating Docker network ${NET_NAME}..."
 create_docker_network
 pass "T1: network created (${NET_SUBNET})"
-info "Control-plane bridge IP: ${CP_BRIDGE_IP}"
-info "RouterOS control-plane:  ${CP_ROUTEROS_ADDR}"
+info "Coordination bridge IP:  ${CP_BRIDGE_IP}"
+info "RouterOS coordination:   ${CP_ROUTEROS_ADDR}"
 info "CHR bridge IP:          ${CHR_HOST_BRIDGE_IP} (Docker IPAM)"
 
 # docker-routeros enables QEMU user-mode hostfwd only when eth1 exists.
@@ -558,7 +559,7 @@ if ! docker_chr exec "${CTR_CHR}" sh -lc "ip route | grep -q '^default .* dev et
     exit 3
 fi
 if ! start_chr_control_plane_proxy; then
-    fail "T1.b: CHR slirp control-plane proxy did not start"
+    fail "T1.b: CHR slirp coordination proxy did not start"
     docker_chr exec "${CTR_CHR}" sh -lc "ps -ef | grep CP_PROXY | grep -v grep || true" >&2 || true
     exit 3
 fi
@@ -566,8 +567,9 @@ pass "T1.b: CHR booted + SSH ready"
 
 # ---------------------------------------------------------------------------
 # T2: Generate v2 topology + prepare node artifacts
-#     This is a minimal v2 operator topology: one Linux control-plane
-#     registration target and one RouterOS client container deployment.
+#     This is a minimal v2 operator topology: one responsible master and one
+#     RouterOS client container deployment. The local Linux process below is a
+#     v2.0.1 compatibility proxy for the same coordination primitives.
 # ---------------------------------------------------------------------------
 echo ""
 echo "[T2] Writing topology + preparing node artifacts..."
@@ -623,10 +625,10 @@ fi
 pass "T2.c: mikrotik client certificate material exists"
 
 # ---------------------------------------------------------------------------
-# T3: Start v2 control-plane and register prepared nodes
+# T3: Start v2 compatibility coordination proxy and register prepared nodes
 # ---------------------------------------------------------------------------
 echo ""
-echo "[T3] Starting v2 control-plane and registering prepared nodes..."
+echo "[T3] Starting v2 compatibility coordination proxy and registering prepared nodes..."
 
 docker_chr run -d \
     --name "${CTR_CP}" \
@@ -650,15 +652,15 @@ for _attempt in $(seq 1 30); do
     sleep 1
 done
 if [[ "${CP_READY}" -ne 1 ]]; then
-    fail "T3.a: control-plane did not become ready"
+    fail "T3.a: compatibility coordination proxy did not become ready"
     docker_chr logs --tail 30 "${CTR_CP}" >&2 || true
     exit 1
 fi
-pass "T3.a: control-plane listening"
+pass "T3.a: compatibility coordination proxy listening"
 
 meshctl node init "${MASTER_01}" --control-plane "127.0.0.1:${CP_GRPC_HOST_PORT}" > /dev/null
 meshctl node init "${CLIENT_NAME}" --control-plane "127.0.0.1:${CP_GRPC_HOST_PORT}" > /dev/null
-pass "T3.b: master + mikrotik client registered with control-plane"
+pass "T3.b: master + mikrotik client registered with coordination target"
 CLIENT_RUNTIME_SINCE_UNIX="$(($(date +%s) + 1))"
 sleep 1
 
@@ -750,9 +752,9 @@ fi
 CP_FETCH_OUT=$(sshpass -p "${CHR_PASS}" ssh "${SSH_OPTS[@]}" -p "${SSH_HOST_PORT}" admin@127.0.0.1 \
     "/tool/fetch url=http://${CP_ROUTEROS_ADDR} keep-result=no" 2>&1) && CP_FETCH_RC=0 || CP_FETCH_RC=$?
 if [[ "${CP_FETCH_RC}" -eq 0 ]] || echo "${CP_FETCH_OUT}" | grep -qiE "connection reset by peer|remote disconnected|handshake|tls|ssl"; then
-    pass "T5.c: CHR reaches slirp-proxied control-plane port"
+    pass "T5.c: CHR reaches slirp-proxied coordination port"
 else
-    fail "T5.c: CHR cannot reach slirp-proxied control-plane port"
+    fail "T5.c: CHR cannot reach slirp-proxied coordination port"
     indent_stderr <<< "${CP_FETCH_OUT}"
     exit 3
 fi
@@ -860,11 +862,11 @@ for _attempt in $(seq 1 12); do
 done
 
 if [[ "${CLIENT_REGISTERED}" -eq 1 ]]; then
-    pass "T6.h: awg-mesh-client registered with control-plane from RouterOS container"
+    pass "T6.h: awg-mesh-client registered with coordination target from RouterOS container"
 else
     fail "T6.h: no post-import clientd registration audit event from RouterOS container"
     while IFS= read -r line; do printf '    audit: %s\n' "${line}"; done <<< "${CLIENT_AUDIT_OUT}" >&2
-    docker_chr logs --tail 50 "${CTR_CP}" | sed 's/^/    control-plane: /' >&2 || true
+    docker_chr logs --tail 50 "${CTR_CP}" | sed 's/^/    coordination-proxy: /' >&2 || true
     while IFS= read -r line; do printf '    routeros-container: %s\n' "${line}"; done <<< "${CONTAINER_OUT}" >&2
     exit 5
 fi

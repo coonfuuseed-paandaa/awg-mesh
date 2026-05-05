@@ -59,7 +59,7 @@ func TestValidateRotateOptionsMeshWideBoundaries(t *testing.T) {
 		{
 			name: "mesh-wide requires control plane",
 			opts: rotateOptions{tier: 1, preset: defaultRotatePreset, meshWide: true, applyDelay: time.Second},
-			want: "--control-plane is required",
+			want: "coordination target",
 		},
 		{
 			name: "mesh-wide rejects endpoint",
@@ -74,7 +74,7 @@ func TestValidateRotateOptionsMeshWideBoundaries(t *testing.T) {
 		{
 			name: "legacy rejects control plane",
 			opts: rotateOptions{tier: 1, endpoint: "endpoint-01", preset: defaultRotatePreset, controlPlane: "127.0.0.1:1"},
-			want: "--control-plane requires --mesh-wide",
+			want: "coordination target requires --mesh-wide",
 		},
 		{
 			name: "legacy still requires endpoint",

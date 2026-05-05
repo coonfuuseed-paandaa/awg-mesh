@@ -112,7 +112,7 @@ data-plane regressions.
 7. G3 / G7 / G14 / Golden-fixture unit gates — STATUS: legacy v1.x targets removed alongside their parent code in CR-001. CR-011 critical-suite v2 now provides architecture-aligned unit and smoke gates under `tests/critical/`.
 8. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 
-> **F-009 release gate scope:** CR-001 foundation smoke proves the base binary/schema/role substrate. CR-011 critical-suite v2 ties landed CR-002..CR-010 contracts into `tests/critical/run-all.sh`. CR-012 adds the customer-mode emulation playbook gate. v2.0.0 release remains blocked until strict critical-suite mode clears every skip and release-readiness blocker.
+> **F-009 / F-010 release gate scope:** CR-001 foundation smoke proves the base binary/schema/role substrate. CR-011 critical-suite v2 ties landed CR-002..CR-010 contracts into `tests/critical/run-all.sh`. CR-012 adds the customer-mode emulation playbook gate. v2.0.0 remains immutable after publication; the v2.0.1 corrective release remains blocked until F-010 CR-001 and CR-002 complete and the full release gates pass on the exact release commit.
 
 **If e2e fails:** investigate root cause, fix, re-run sim — do NOT ship.
 "Tests pass + lint clean" without e2e proves only that the code compiles,

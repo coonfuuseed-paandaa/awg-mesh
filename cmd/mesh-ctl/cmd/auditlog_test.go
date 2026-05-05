@@ -132,6 +132,18 @@ func TestRunAuditLogQueryCommandOutputsPromTextfile(t *testing.T) {
 	}
 }
 
+func TestValidateAuditLogQueryOptionsRequiresResponsibleMasterCoordinationTarget(t *testing.T) {
+	_, err := validateAuditLogQueryOptions(auditLogQueryOptions{output: "human", timeout: 2 * time.Second})
+	if err == nil {
+		t.Fatal("expected missing coordination target error")
+	}
+	for _, want := range []string{"--control-plane", "coordination target", "responsible master"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+}
+
 type capturingAuditServer struct {
 	controlpb.UnimplementedControlPlaneServer
 	mu      sync.Mutex

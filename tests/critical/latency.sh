@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/critical/latency.sh - fast-path runtime latency smoke.
 #
-# This is not a WAN benchmark. It guards the local v2 control/runtime paths that
+# This is not a WAN benchmark. It guards the local v2 coordination/runtime paths that
 # must remain quick enough for the heavier CR-011 simulation suite to be useful.
 set -euo pipefail
 
@@ -35,4 +35,4 @@ if [[ "${elapsed}" -gt 30 ]]; then
     exit 1
 fi
 
-echo "PASS - latency.sh: local runtime/control-plane smoke completed in ${elapsed}s"
+echo "PASS - latency.sh: local runtime/coordination smoke completed in ${elapsed}s"

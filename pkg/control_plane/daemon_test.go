@@ -68,6 +68,21 @@ func TestNewDaemon_ConfiguresCertLifecycleFromCADir(t *testing.T) {
 	}
 }
 
+func TestDaemonListenerAddrBeforeRunIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	d, err := NewDaemon(Config{
+		ListenAddr: "127.0.0.1:0",
+		StateDir:   t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+	if got := d.ListenerAddr(); got != "" {
+		t.Fatalf("ListenerAddr before Run = %q, want empty", got)
+	}
+}
+
 func TestNewDaemon_RejectsExplicitBadCADir(t *testing.T) {
 	_, err := NewDaemon(Config{
 		ListenAddr: "127.0.0.1:0",

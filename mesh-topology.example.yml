@@ -6,7 +6,7 @@ mesh:
   tenants: [default]
 
 nodes:
-  - name: control-plane-01
+  - name: master-core
     roles: [master, balancer]
     overlay_ip: 172.21.92.1
     bridge_ip: 192.168.93.1

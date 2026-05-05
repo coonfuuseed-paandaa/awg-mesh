@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/critical/control-plane-dr.sh - backup/restore and control-plane restart gate.
+# tests/critical/control-plane-dr.sh - backup/restore and compatibility coordination restart gate.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,4 +26,4 @@ critical_run_go_tests_required "$test_output" \
     TestRunRestoreCommandValidatesManifestBeforeOverwrite \
     TestDaemon_LifecycleAndAcceptsRegister
 
-echo "PASS - control-plane-dr.sh: backup archive, restore validation, and daemon restart lifecycle verified"
+echo "PASS - control-plane-dr.sh: backup archive, restore validation, and compatibility coordination restart lifecycle verified"

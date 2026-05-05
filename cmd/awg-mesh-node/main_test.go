@@ -61,6 +61,68 @@ func TestRunMasterDryRunUsesCustomPorts(t *testing.T) {
 	}
 }
 
+func TestRunMasterDryRunAcceptsCoordinationListenerFlags(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--coordination-listen", "127.0.0.1:0",
+		"--coordination-state-dir", stateDir,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"master dry-run node=master-01",
+		"coordination=127.0.0.1:0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestRunMasterRejectsCoordinationOptionsWithoutListener(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--coordination-state-dir", t.TempDir(),
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit when coordination options omit listener; stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--coordination-listen is required") {
+		t.Fatalf("expected coordination-listen error, got stderr=%s", stderr.String())
+	}
+}
+
+func TestControlPlaneModeRemainsCompatibilitySurface(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := supportedModes["control-plane"]; !ok {
+		t.Fatal("--mode control-plane must remain accepted in v2.0.1 compatibility surface")
+	}
+	var stderr strings.Builder
+	warnDeprecatedMode("control-plane", &stderr)
+	msg := stderr.String()
+	for _, want := range []string{"compatibility", "deprecated", "master-owned coordination"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("control-plane compatibility warning missing %q: %s", want, msg)
+		}
+	}
+}
+
 func TestRunMasterDryRunAcceptsClientPrivateKeyFile(t *testing.T) {
 	t.Parallel()
 
@@ -499,7 +561,7 @@ func TestRunClientModeAcceptsCACertFlag(t *testing.T) {
 	if strings.Contains(stderr.String(), "flag provided but not defined") {
 		t.Fatalf("--ca-cert was not accepted by awg-mesh-node: %s", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "load control-plane CA cert") {
+	if !strings.Contains(stderr.String(), "load coordination target CA cert") {
 		t.Fatalf("--ca-cert was not passed to clientd, stderr=%s", stderr.String())
 	}
 }

@@ -61,6 +61,9 @@ require_file "pkg/mikrotik/v2/templates.go" "CR-014-mikrotik-v2"
 require_no_placeholder "pkg/control_plane/cert_lifecycle.go" "CR-015-cert-lifecycle"
 require_no_placeholder "pkg/clientd/cert_update.go" "CR-015-cert-lifecycle"
 
+# Future-management RPCs classified by CR-002 (SignalExchange,
+# StreamServiceRegistry) are not release blockers for the current customer path.
+# Current-scope unimplemented RPCs still block release readiness.
 if awk '/func \(s \*Server\) StreamCertUpdate/ { in_func = 1 } in_func { print; if ($0 == "}") exit }' pkg/control_plane/server.go | grep -q 'codes.Unimplemented'; then
     blockers+=("CR-015-cert-lifecycle: StreamCertUpdate still returns Unimplemented")
 fi

@@ -2,7 +2,7 @@
 //
 // Implemented modes:
 //
-//	control-plane → CR-002 (mesh-ctl daemon, ledger, peer-list distribution)
+//	control-plane → CR-002 compatibility/deprecated wrapper around coordination primitives
 //	master        → CR-004 (vanilla-WG + AmneziaWG dual listener)
 //	clientd       → CR-003 (self-config agent on every non-Mikrotik node)
 //	egress        → CR-005 (clientd + MASQUERADE on internet-bound iface)
@@ -85,6 +85,8 @@ func warnDeprecatedMode(mode string, stderr io.Writer) {
 		writeLine(stderr, "warning: --mode client is deprecated for v2.0; use --mode clientd")
 	case "endpoint":
 		writeLine(stderr, "warning: --mode endpoint is deprecated for v2.0; use --mode egress")
+	case "control-plane":
+		writeLine(stderr, "warning: --mode control-plane is retained for v2.0.1 compatibility and deprecated for the current happy path; use --mode master with master-owned coordination")
 	}
 }
 
@@ -113,6 +115,13 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	certRotationDays := fs.Int("cert-rotation-days", 90, "control-plane: mTLS cert rotation interval in days")
 	auditCap := fs.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
 	allowInsecurePublicBind := fs.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
+	masterCoordinationListen := fs.String("coordination-listen", "", "master: coordination gRPC listen addr; enables master-owned coordination")
+	masterCoordinationStateDir := fs.String("coordination-state-dir", "", "master: coordination state directory")
+	masterCoordinationCADir := fs.String("coordination-ca-dir", "", "master: CA material directory containing ca.crt and ca.key for coordination mTLS")
+	masterCoordinationCertHosts := fs.String("coordination-cert-hosts", "", "master: comma-separated additional DNS names/IPs for generated coordination server certificate")
+	masterCoordinationCertRotationDays := fs.Int("coordination-cert-rotation-days", 0, "master: coordination mTLS cert rotation interval in days")
+	masterCoordinationAuditCap := fs.Int("coordination-audit-cap", 0, "master: coordination in-memory audit ring capacity")
+	allowInsecureCoordinationBind := fs.Bool("allow-insecure-coordination-bind", false, "master: allow binding insecure coordination gRPC to non-loopback or wildcard addresses")
 	controlPlaneAddr := fs.String("control-plane", "", "clientd: control-plane gRPC addr")
 	nodeName := fs.String("name", "", "node name")
 	overlayIP := fs.String("overlay-ip", "", "assigned overlay IP")
@@ -200,6 +209,19 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			writef(stderr, "master: %v\n", err)
 			return 2
 		}
+		coordination, err := buildMasterCoordinationConfig(
+			*masterCoordinationListen,
+			*masterCoordinationStateDir,
+			*masterCoordinationCADir,
+			parseCSV(*masterCoordinationCertHosts),
+			*masterCoordinationCertRotationDays,
+			*masterCoordinationAuditCap,
+			*allowInsecureCoordinationBind,
+		)
+		if err != nil {
+			writef(stderr, "master: %v\n", err)
+			return 2
+		}
 		return runMaster(context.Background(), node.MasterConfig{
 			Name:      *nodeName,
 			OverlayIP: *overlayIP,
@@ -211,6 +233,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 				ClientPrivateKey:    clientPrivateKey,
 				ClientPeers:         clientPeers,
 			},
+			Coordination: coordination,
 		}, *dryRun, stdout, stderr)
 	case "endpoint", "egress":
 		clientdCfg := clientd.CommandConfig{
@@ -375,6 +398,34 @@ func parseCSV(value string) []string {
 	return out
 }
 
+func buildMasterCoordinationConfig(listenAddr, stateDir, caDir string, certHosts []string, certRotationDays, auditCap int, allowInsecureBind bool) (*node.MasterCoordinationConfig, error) {
+	listenAddr = strings.TrimSpace(listenAddr)
+	if listenAddr == "" {
+		if strings.TrimSpace(stateDir) != "" ||
+			strings.TrimSpace(caDir) != "" ||
+			len(certHosts) > 0 ||
+			certRotationDays != 0 ||
+			auditCap != 0 ||
+			allowInsecureBind {
+			return nil, errors.New("--coordination-listen is required when any other --coordination-* flag is set")
+		}
+		return nil, nil
+	}
+	stateDir = strings.TrimSpace(stateDir)
+	if stateDir == "" {
+		return nil, errors.New("--coordination-state-dir is required when --coordination-listen is set")
+	}
+	return &node.MasterCoordinationConfig{
+		ListenAddr:              listenAddr,
+		StateDir:                stateDir,
+		CADir:                   strings.TrimSpace(caDir),
+		CertHosts:               append([]string(nil), certHosts...),
+		CertRotationDays:        certRotationDays,
+		AuditCap:                auditCap,
+		AllowInsecurePublicBind: allowInsecureBind,
+	}, nil
+}
+
 func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, stderr io.Writer) int {
 	master, err := node.NewMaster(cfg)
 	if err != nil {
@@ -382,8 +433,12 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 		return 2
 	}
 	status := master.Status()
+	coordination := " coordination=disabled"
+	if status.Coordination.Enabled {
+		coordination = fmt.Sprintf(" coordination=%s", status.Coordination.ListenAddr)
+	}
 	if dryRun {
-		writef(stdout, "master dry-run node=%s overlay=%s client=%s:%d/%s mesh=%s:%d/%s\n",
+		writef(stdout, "master dry-run node=%s overlay=%s client=%s:%d/%s mesh=%s:%d/%s%s\n",
 			status.Name,
 			status.OverlayIP,
 			status.Listeners.ClientInterfaceName,
@@ -392,10 +447,11 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 			status.Listeners.MeshInterfaceName,
 			status.Listeners.MeshListenPort,
 			status.Listeners.MeshProtocol,
+			coordination,
 		)
 		return 0
 	}
-	writef(stdout, "awg-mesh-node %s — mode=master — node=%s overlay=%s client=%s:%d mesh=%s:%d\n",
+	writef(stdout, "awg-mesh-node %s — mode=master — node=%s overlay=%s client=%s:%d mesh=%s:%d%s\n",
 		versionString(),
 		status.Name,
 		status.OverlayIP,
@@ -403,6 +459,7 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 		status.Listeners.ClientListenPort,
 		status.Listeners.MeshInterfaceName,
 		status.Listeners.MeshListenPort,
+		coordination,
 	)
 	if err := master.Run(ctx); err != nil {
 		writef(stderr, "master: %v\n", err)

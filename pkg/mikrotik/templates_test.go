@@ -127,6 +127,9 @@ func TestGenerateDeployRSCClientCommandUsesMTLS(t *testing.T) {
 	if !strings.Contains(script, "--ca-cert /config/ca.crt") {
 		t.Fatalf("client command missing CA cert flag:\n%s", script)
 	}
+	if !strings.Contains(script, "Responsible master coordination target: 192.0.2.5:9090") {
+		t.Fatalf("script does not label the responsible master coordination target:\n%s", script)
+	}
 	if strings.Contains(script, "--allow-insecure-control-plane") {
 		t.Fatalf("client command must not force insecure control-plane transport:\n%s", script)
 	}
@@ -211,6 +214,13 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 		{name: "missing token hash", mutate: func(ds *DeployScript) { ds.TokenHash = "" }, expectError: "token hash is required"},
 		{name: "invalid overlay ip", mutate: func(ds *DeployScript) { ds.OverlayIP = "bad-ip" }, expectError: "invalid overlay IP"},
 		{name: "invalid overlay net", mutate: func(ds *DeployScript) { ds.OverlayNet = "bad-cidr" }, expectError: "invalid overlay network"},
+		{name: "multiline coordination target", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5:9090\n/system reboot" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "whitespace coordination target", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5:9090 --debug" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "missing coordination target host", mutate: func(ds *DeployScript) { ds.ControlPlane = ":9090" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "missing coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "non-numeric coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:http" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "zero coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:0" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "overflow coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:65536" }, expectError: "control-plane must be a single-line host:port value"},
 	}
 
 	for _, tt := range tests {

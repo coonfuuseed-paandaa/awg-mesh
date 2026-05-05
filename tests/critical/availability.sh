@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/critical/availability.sh - control-plane availability primitives gate.
+# tests/critical/availability.sh - master-owned coordination availability primitives gate.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -27,4 +27,4 @@ critical_run_go_tests_required "$test_output" \
     TestHealthTrackerProbeOnceUpdatesTargets \
     TestRuntimeStartsAndStops
 
-echo "PASS - availability.sh: ownership failover stream, decommission recovery, health tracking, and ingress runtime verified"
+echo "PASS - availability.sh: master-owned ownership stream, decommission recovery, health tracking, and ingress runtime verified"

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,24 @@ func writeControlPlaneMTLSConfig(t *testing.T) string {
 		t.Fatalf("create mesh CA: %v", err)
 	}
 	return configDir
+}
+
+func TestControlPlaneAdminCredentialErrorsUseCoordinationTargetWording(t *testing.T) {
+	_, err := controlPlaneAdminTransportCredentials("master-01.example:9090", "")
+	if err == nil {
+		t.Fatal("expected config-dir error")
+	}
+	for _, want := range []string{"coordination target", "mTLS"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestControlPlaneServerNameAcceptsResponsibleMasterAddress(t *testing.T) {
+	if got := controlPlaneServerName("master-01.example:9090"); got != "master-01.example" {
+		t.Fatalf("server name = %q, want responsible master DNS name", got)
+	}
 }
 
 func startMTLSControlPlaneTestServer(t *testing.T, configDir string, server controlpb.ControlPlaneServer) (string, controlpb.ControlPlaneClient, func()) {

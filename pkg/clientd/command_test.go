@@ -113,7 +113,7 @@ func TestValidateCommandConfigInsecureControlPlaneGate(t *testing.T) {
 
 	cfg := validCommandConfig(t)
 	cfg.ControlPlane = "192.0.2.10:51820"
-	if _, err := ValidateCommandConfig(cfg); err == nil || !strings.Contains(err.Error(), "--allow-insecure-control-plane") {
+	if _, err := ValidateCommandConfig(cfg); err == nil || !strings.Contains(err.Error(), "--allow-insecure-control-plane") || !strings.Contains(err.Error(), "coordination target") {
 		t.Fatalf("expected non-loopback rejection, got %v", err)
 	}
 
@@ -126,6 +126,17 @@ func TestValidateCommandConfigInsecureControlPlaneGate(t *testing.T) {
 	cfg.AllowInsecureControlPlane = true
 	if _, err := ValidateCommandConfig(cfg); err != nil {
 		t.Fatalf("override should allow non-loopback target: %v", err)
+	}
+
+	cfg = validCommandConfig(t)
+	cfg.ControlPlane = "master-01.example:9090"
+	cfg.CACertPath = "mesh-ca.crt"
+	validated, err := ValidateCommandConfig(cfg)
+	if err != nil {
+		t.Fatalf("responsible master coordination target rejected: %v", err)
+	}
+	if validated.ControlPlane != "master-01.example:9090" {
+		t.Fatalf("coordination target not preserved: %#v", validated)
 	}
 }
 

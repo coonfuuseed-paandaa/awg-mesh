@@ -1,4 +1,4 @@
-<!-- synced: 2026-05-05 source-commit: 2f22776a64f7c24bab9d2bc265a0a1458fa230e3 -->
+<!-- synced: 2026-05-05 source-commit: 2ac88340119bf7f2a5f55fcdf994a8709b8f11f1 -->
 [English](README.md) | **Русский** | [中文](README.zh-CN.md)
 
 [![CI](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml)
@@ -11,10 +11,10 @@
 # awg-mesh
 
 Docker-native зашифрованная overlay-сеть на базе AmneziaWG. awg-mesh v2
-использует плоскую role-tagged топологию, регистрацию через control plane,
-локальный backup/restore, развёртывание MikroTik RouterOS через `/container`
-и release gates, которые доказывают корректность кодовых контрактов и
-поведение продукта до публикации тега.
+использует плоскую role-tagged топологию, master-owned runtime zones,
+локальный backup/restore, развертывание MikroTik RouterOS через `/container`
+и release gates, которые доказывают кодовые контракты и поведение продукта до
+публикации тега.
 
 ## Обзор архитектуры
 
@@ -22,31 +22,36 @@ Docker-native зашифрованная overlay-сеть на базе AmneziaW
 graph TB
     subgraph Admin["Admin workstation"]
         ctl["mesh-ctl"]
+        topo["mesh-topology.yml\nsource of truth"]
     end
 
-    subgraph Control["Control plane"]
-        cp["awg-mesh-node\n--mode control-plane"]
-    end
-
-    subgraph Mesh["v2 mesh nodes"]
-        master["master + balancer"]
-        egress["egress"]
-        ingress["ingress"]
-        client["client"]
+    subgraph ZoneA["Master-owned zone"]
+        master["master-01\nmaster + balancer + ingress"]
+        coord["runtime coordination endpoint\nhosted by responsible master"]
+        egress["egress-01"]
+        ingress["ingress role"]
+        client["client / home server"]
         mt["MikroTik\n/container client"]
+    end
+
+    subgraph Failover["Optional failover zone"]
+        master2["master-02\nindependent master"]
     end
 
     user["Users / apps"]
     internet["Internet"]
 
-    ctl -- "mTLS admin gRPC" --> cp
-    ctl -- "prepare local certs/tokens" --> client
-    ctl -- "prepare local certs/tokens" --> master
-    cp -- "registered identity\npeer/control data" --> master
-    cp -- "registered identity\npeer/control data" --> egress
-    cp -- "registered identity\npeer/control data" --> ingress
-    cp -- "registered identity\npeer/control data" --> client
-    cp -- "registered identity\npeer/control data" --> mt
+    ctl -- "validate / generate / prepare" --> topo
+    topo -- "desired state" --> master
+    topo -- "responsible master targets" --> egress
+    topo -- "responsible master targets" --> ingress
+    topo -- "responsible master targets" --> client
+    topo -- "failover targets" --> master2
+    master -- "hosts" --> coord
+    egress -- "mTLS registration / peer updates" --> coord
+    ingress -- "mTLS registration / peer updates" --> coord
+    client -- "mTLS registration / peer updates" --> coord
+    mt -- "mTLS registration / peer updates" --> coord
     client -- "vanilla WG to master" --> master
     mt -- "vanilla WG to master" --> master
     master -- "mesh-internal AWG" --> egress
@@ -55,34 +60,47 @@ graph TB
     user --> ingress
 ```
 
-Файл топологии v2 объявляет узлы один раз в разделе `nodes:` и назначает
-каждому узлу одну или несколько ролей:
+`mesh-ctl` - это desired-state tool: он читает `mesh-topology.yml`, проверяет
+intent, готовит node material и выполняет явные действия оператора. Data plane
+работает на экземплярах `awg-mesh-node`. В текущей модели v2.x masters владеют
+runtime responsibility своих zones; отдельный standalone daemon не требуется в
+happy path, и masters не разделяют runtime state друг с другом.
+
+Файл топологии v2 объявляет узлы один раз в `nodes:` и назначает каждому узлу
+одну или несколько ролей:
 
 | Роль | Назначение |
 |---|---|
 | `client` | Пользовательское устройство или домашний сервер. Эта роль эксклюзивна. |
-| `master` | Принимает client links и мостит их в mesh. |
-| `balancer` | Выбирает активный egress/mesh path для flow. |
+| `master` | Принимает client links и соединяет их с mesh. |
+| `balancer` | Выбирает активный egress/mesh path для flows. |
 | `egress` | Выполняет internet-bound masquerade на границе. |
 | `ingress` | Публикует сервисы mesh clients через публичные hostnames или ports. |
 
-Полное обоснование архитектуры v2 и инварианты смотрите в
-[docs/architecture/F-009-overview.md](docs/architecture/F-009-overview.md).
+Egress, ingress, balancer и client nodes используют responsible master,
+сгенерированный из topology. Peering каждой non-client role с каждым master -
+это deployment choice, а не default invariant.
 
-## Что нового в v2.0
+Смотрите [docs/architecture/F-009-overview.md](docs/architecture/F-009-overview.md)
+для исторического контекста F-009. Release path v2.0.1, описанный здесь, является
+текущим master-owned-zone contract.
 
-- **Топология schema v2** с `schema_version: 2`, role-tagged `nodes:` и
+## Что нового в v2.0.1
+
+- **Schema v2 topology** с `schema_version: 2`, role-tagged `nodes:` и
   объявлениями service ingress.
 - **Role-agnostic CLI**: текущий onboarding использует `mesh-ctl node prepare`,
   `mesh-ctl node init`, `mesh-ctl node list` и `mesh-ctl node remove`.
-  Legacy role subcommands `master`, `endpoint` и `client` удалены из v2 operator path.
-- **Регистрация через control plane** с CA-backed mTLS и локальными admin
-  certificates. Insecure control-plane admin paths не входят в release flow.
-- **Локальный backup/restore** для admin state, topology и опциональных архивов
-  control-plane state.
-- **Развёртывание MikroTik RouterOS через `/container`** с помощью
+  Legacy role subcommands `master`, `endpoint` и `client` удалены из v2
+  operator path.
+- **Master-owned coordination** с CA-backed mTLS и локальными admin
+  certificates. Insecure coordination/admin paths не входят в release flow.
+- **Локальный backup/restore** для admin state, topology и опциональных
+  coordination state archives.
+- **Развертывание MikroTik RouterOS `/container`** через
   `mesh-ctl node prepare --platform mikrotik`. Runtime release validation
-  целится в RouterOS 7.21+; generator syntax tests также покрывают 7.16.2 и 7.20.8.
+  нацелен на RouterOS 7.21+; generator syntax tests также покрывают 7.16.2 и
+  7.20.8.
 - **Critical suite + product emulation playbook** как release blockers.
   Перед tagging требуется `PRODUCT_WORKS`.
 - **Go module v2 path**:
@@ -90,10 +108,10 @@ graph TB
 
 ## Быстрый старт
 
-Этот локальный walkthrough собирает инструменты, валидирует пример топологии v2
-и подготавливает локальные node credentials. Сам по себе он не разворачивает
-production mesh; для развёртывания нужны реальные hosts, Docker, доступная сеть
-до control plane и node-specific firewall rules.
+Этот локальный walkthrough собирает инструменты, проверяет пример топологии v2
+и готовит локальные node credentials. Сам по себе он не разворачивает
+production mesh; для развертывания нужны реальные hosts, Docker, доступный
+responsible-master coordination endpoint и node-specific firewall rules.
 
 ### Требования
 
@@ -104,10 +122,10 @@ production mesh; для развёртывания нужны реальные h
 
 ### Установка mesh-ctl
 
-Для текущей release line v2:
+Для текущей v2 release line:
 
 ```bash
-go install github.com/coonfuuseed-paandaa/awg-mesh/v2/cmd/mesh-ctl@v2.0.0
+go install github.com/coonfuuseed-paandaa/awg-mesh/v2/cmd/mesh-ctl@v2.0.1
 ```
 
 Для локальной разработки из clone:
@@ -117,14 +135,14 @@ CGO_ENABLED=1 go build -trimpath -o bin/mesh-ctl ./cmd/mesh-ctl
 CGO_ENABLED=1 go build -trimpath -o bin/awg-mesh-node ./cmd/awg-mesh-node
 ```
 
-Добавьте директорию с binary в `PATH`, затем проверьте версию:
+Добавьте binary directory в `PATH`, затем проверьте версию:
 
 ```bash
 export PATH="$PATH:$(go env GOPATH)/bin"
 mesh-ctl version
 ```
 
-### Создание и валидация топологии
+### Создание и проверка топологии
 
 ```bash
 mkdir -p .mesh-local
@@ -133,7 +151,7 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml topology validate
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node list
 ```
 
-Ожидаемая форма:
+Ожидаемый вид:
 
 ```text
 topology "mesh-topology.yml" valid: schema_version=2 ...
@@ -141,14 +159,14 @@ topology "mesh-topology.yml" valid: schema_version=2 ...
 
 ### Подготовка node material
 
-`node prepare` пишет локальный admin-side state в `--config-dir`:
+`node prepare` записывает локальный admin-side state в `--config-dir`:
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node prepare master-01
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node prepare home-server-01
 ```
 
-Созданные для каждого узла артефакты включают:
+Сгенерированные per-node artifacts включают:
 
 ```text
 .mesh-local/ca.crt
@@ -158,7 +176,9 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node prepare home
 .mesh-local/nodes/<name>/node.key
 ```
 
-Для развёртывания MikroTik RouterOS container укажите reachable control-plane address:
+Для развертывания MikroTik RouterOS container укажите доступный responsible
+master coordination address. Текущее имя CLI-флага остается `--control-plane`
+для совместимости v2.0.1:
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
@@ -171,10 +191,11 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
 Контракт совместимости RouterOS описан в
 [docs/MIKROTIK-VERSION-COMPAT.md](docs/MIKROTIK-VERSION-COMPAT.md).
 
-### Регистрация узлов в control plane
+### Регистрация узлов через responsible master
 
-Запустите control-plane node в deployment environment, затем зарегистрируйте
-подготовленные nodes:
+Запустите responsible master node в deployment environment, затем
+зарегистрируйте подготовленные nodes через coordination endpoint этого master.
+Флаг `--control-plane` сохранен как compatibility name для этой цели:
 
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
@@ -185,7 +206,7 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml \
 ```
 
 `node init` использует локальный CA и подготовленный node certificate.
-Отклонённая регистрация — blocker для deployment, а не warning.
+Отклоненная registration - deployment blocker, а не warning.
 
 ## Пример топологии
 
@@ -229,17 +250,17 @@ services:
 Используйте [mesh-topology.example.yml](mesh-topology.example.yml) как
 поддерживаемую отправную точку.
 
-## Docker-образы
+## Docker Images
 
-Release images публикуются и в GHCR, и в Docker Hub.
+Release images публикуются в GHCR и Docker Hub.
 
 ```text
-ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v2.0.0
-ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v2.0.0
-ghcr.io/coonfuuseed-paandaa/awg-mesh:v2.0.0          # GHCR-only legacy node alias
+ghcr.io/coonfuuseed-paandaa/awg-mesh-node:v2.0.1
+ghcr.io/coonfuuseed-paandaa/awg-mesh-client:v2.0.1
+ghcr.io/coonfuuseed-paandaa/awg-mesh:v2.0.1          # GHCR-only legacy node alias
 
-docker.io/coonfuuseedpaandaa/awg-mesh-node:v2.0.0
-docker.io/coonfuuseedpaandaa/awg-mesh-client:v2.0.0
+docker.io/coonfuuseedpaandaa/awg-mesh-node:v2.0.1
+docker.io/coonfuuseedpaandaa/awg-mesh-client:v2.0.1
 ```
 
 CI workflow публикует multi-arch manifests для:
@@ -252,9 +273,9 @@ linux/arm/v7
 linux/arm/v6
 ```
 
-При release tag workflow публикует теги `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X` и
-commit-SHA, где major alias включён для non-v0 releases. Для production
-фиксируйте `:vX.Y.Z`; используйте `:latest` только для preview environments.
+На release tag workflow публикует `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X` и commit-SHA
+tags, где major alias включается для non-v0 releases. Для production
+закрепляйте `:vX.Y.Z`; используйте `:latest` только для preview environments.
 
 ## Команды
 
@@ -269,6 +290,9 @@ mesh-ctl migrate --from old-v1-topology.yml --to mesh-topology.yml
 
 ### Жизненный цикл node
 
+Имя флага `--control-plane` сохранено для совместимости CLI v2.0.1. В текущей
+master-owned-zone модели передавайте responsible master coordination address.
+
 ```bash
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node list
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node prepare <name>
@@ -276,7 +300,7 @@ mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node init <name> 
 mesh-ctl --config-dir .mesh-local --topology mesh-topology.yml node remove <name> --control-plane <host:port>
 ```
 
-### Резервное копирование и восстановление
+### Backup and restore
 
 ```bash
 mesh-ctl --topology mesh-topology.yml --config-dir ~/.mesh-ctl backup awg-mesh-backup.zip
@@ -292,11 +316,15 @@ mesh-ctl upgrade pause
 mesh-ctl upgrade resume
 ```
 
-Выполнение v2 upgrade намеренно заблокировано, пока не появится v2 deploy executor.
-Текущая поддержка upgrade — это поверхность plan/state management, а не
+Выполнение v2 upgrade намеренно заблокировано до появления v2 deploy executor.
+Текущая поддержка upgrade - это поверхность plan/state-management, а не
 автоматический production rollout.
 
 ### Ротация и аудит
+
+Mesh-wide rotation и audit queries направляются в responsible master
+coordination endpoint. Имя флага остается `--control-plane` для совместимости
+с command surface v2.0.0.
 
 ```bash
 mesh-ctl rotate --mesh-wide --tier 1 --control-plane <host:port>
@@ -305,8 +333,19 @@ mesh-ctl rotate --mesh-wide --tier 3 --control-plane <host:port>
 mesh-ctl audit-log query --control-plane <host:port>
 ```
 
-Старые endpoint-targeted rotation flags остаются для legacy paths, но v2
-mesh-wide rotation проходит через control plane.
+Старые endpoint-targeted rotation flags остаются для legacy paths.
+
+## Compatibility and Future Management Plane
+
+`awg-mesh-node --mode control-plane` остается compatibility/deprecated surface
+v2.0.1 для deployment, которые приняли standalone path v2.0.0. Это не текущий
+Quick Start path, не требование customer-mode release gates и не замена
+`mesh-ctl` как desired-state tool.
+
+Более широкий management plane и WebUI могут быть спроектированы позже для
+крупных инсталляций. Этот будущий layer отделен от текущей data-plane runtime
+model и не должен добавлять master-to-master gossip, consensus или shared state
+в happy path v2.x.
 
 ## Релизные проверки
 
@@ -320,13 +359,14 @@ docker build -t awg-mesh-client:local -f deploy/Dockerfile.client .
 bash tests/critical/run-all.sh --strict
 bash tests/simulation/F-009-CR-001-foundation-smoke.sh
 bash tests/emulation-playbook/run.sh
+go test -count=1 ./pkg/mikrotik ./pkg/mikrotik/v2
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-chr-baseline-runtime.sh
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-version-matrix.sh
 ```
 
-Release не завершён, пока annotated git tag не появился на origin и оба
-реестра, GHCR и Docker Hub, не отдают matching `:vX.Y.Z` image tags. Полная
-release policy описана в [AGENTS.md](AGENTS.md).
+Release не завершен, пока annotated git tag не существует на origin и GHCR
+и Docker Hub не отдают matching `:vX.Y.Z` image tags. Полная release policy
+описана в [AGENTS.md](AGENTS.md).
 
 ## Карта документации
 

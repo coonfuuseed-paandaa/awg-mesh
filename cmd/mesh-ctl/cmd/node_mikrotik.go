@@ -55,7 +55,7 @@ func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, co
 		return mikrotikPrepareArtifacts{}, fmt.Errorf("node %q must have role client for --platform mikrotik", node.Name)
 	}
 	if strings.TrimSpace(controlPlane) == "" {
-		return mikrotikPrepareArtifacts{}, fmt.Errorf("--control-plane is required for --platform mikrotik")
+		return mikrotikPrepareArtifacts{}, fmt.Errorf("--control-plane is required as the responsible master coordination target for --platform mikrotik")
 	}
 	certB64, err := readBase64File(filepath.Join(nodeDir, "node.crt"))
 	if err != nil {
