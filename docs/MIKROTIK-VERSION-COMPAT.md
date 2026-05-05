@@ -330,15 +330,18 @@ hard data-plane proof for the shared-network path.
    one MikroTik client node.
 5. Run `mesh-ctl node prepare master-01`.
 6. Run `mesh-ctl node prepare --platform mikrotik --control-plane <docker-gateway-ip>:<published-grpc-port> mtk-home`.
-7. Start a Linux `awg-mesh-node --mode control-plane` container and register
-   both prepared nodes with `mesh-ctl node init`.
-8. Assert the generated `.rsc` defines `/container/add` for `awg-mesh-client`
-   and does not contain `/interface/wireguard`.
-9. Build a RouterOS-compatible single-platform client image archive via
+7. Start a Linux `awg-mesh-node --mode control-plane` container with the
+   prepared mesh CA mounted read-only via `--ca-dir` and with `--cert-hosts`
+   covering the Docker gateway address that RouterOS uses.
+8. Register both prepared nodes with `mesh-ctl node init` over CA-backed mTLS.
+9. Assert the generated `.rsc` defines `/container/add` for `awg-mesh-client`,
+   includes `--ca-cert /config/ca.crt`, and does not contain
+   `/interface/wireguard` or `--allow-insecure-control-plane`.
+10. Build a RouterOS-compatible single-platform client image archive via
    `docker buildx build --platform linux/amd64 --provenance=false --output type=docker,dest=...`,
    upload the tarball to CHR, and rewrite the generated script from
    `remote-image=...` to `file=awg-mesh-client.tar` for the local import test.
-10. Bring up CHR from baseline. The container is created on Docker's default
+11. Bring up CHR from baseline. The container is created on Docker's default
    bridge and connected to the test network before start; this gives
    `evilfreelancer/docker-routeros` both `eth0` for QEMU `hostfwd` SSH/API
    and `eth1` for the RouterOS data-plane NIC. The harness pins
@@ -352,18 +355,18 @@ hard data-plane proof for the shared-network path.
                              --driver-opt com.docker.network.endpoint.ifname=eth1 \
                              chr-e2e-net-<suffix> chr-mikrotik
       docker start chr-mikrotik
-11. Verify the docker-routeros container still has `default ... dev eth0`;
+12. Verify the docker-routeros container still has `default ... dev eth0`;
     `eth1` is flushed and bridged into QEMU, so making the mesh network the
     default route breaks CHR host-forwarded SSH before RouterOS is reachable.
     Let Docker IPAM assign the `eth1` address; pinning a static secondary IP can
     leave RouterOS stuck during CHR boot on Docker Desktop/WSL.
-12. Wait CHR SSH ready (~15s on a warm baseline).
-13. Verify CHR reports `/system/device-mode container=yes` and the RouterOS
+13. Wait CHR SSH ready (~15s on a warm baseline).
+14. Verify CHR reports `/system/device-mode container=yes` and the RouterOS
    `container` package is installed.
-14. Verify CHR reaches the Linux control-plane through Docker gateway port publishing.
-15. Upload `awg-mesh-client.tar` and the rewritten `deploy.rsc`.
-16. ssh admin@chr '/import file-name=deploy.rsc verbose=yes'
-17. Verify (HOST):
+15. Verify CHR reaches the Linux control-plane through Docker gateway port publishing.
+16. Upload `awg-mesh-client.tar` and the rewritten `deploy.rsc`.
+17. ssh admin@chr '/import file-name=deploy.rsc verbose=yes'
+18. Verify (HOST):
     - ssh admin@chr '/container/print where name=AWG_MESH_MIKROTIK_HOME' → status=running
 18. Cleanup (or NO_CLEANUP=1 for inspection)
 ```

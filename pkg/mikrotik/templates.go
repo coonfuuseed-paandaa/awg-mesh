@@ -281,10 +281,10 @@ func buildClientCommand(ds DeployScript) string {
 		"--region", region,
 		"--cert", "/config/node.crt",
 		"--key", "/config/node.key",
+		"--ca-cert", "/config/ca.crt",
 		"--state-dir", "/config",
 		"--iface", iface,
 		"--protocol", protocol,
-		"--allow-insecure-control-plane",
 	}
 	return strings.Join(args, " ")
 }

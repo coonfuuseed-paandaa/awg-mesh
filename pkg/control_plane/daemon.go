@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +28,7 @@ type Config struct {
 	ListenAddr              string        // e.g. "127.0.0.1:51820" — control-plane gRPC port
 	StateDir                string        // dir for audit log + persisted ledger
 	CADir                   string        // dir containing ca.crt + ca.key for cert lifecycle; defaults to StateDir when present
+	CertHosts               []string      // additional DNS names/IPs for the generated control-plane server cert
 	CertRotationDays        int           // FR-16 rotation interval; defaults to 90
 	AuditCap                int           // ring-buffer capacity (default 8192)
 	StartupGrace            time.Duration // delay before declaring readiness (test hook)
@@ -56,7 +58,11 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 	if cfg.StateDir == "" {
 		return nil, errors.New("daemon: StateDir required")
 	}
-	if err := validateListenAddr(cfg.ListenAddr, cfg.AllowInsecurePublicBind); err != nil {
+	securedPublicBind, err := hasCompleteCAMaterial(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateListenAddr(cfg.ListenAddr, cfg.AllowInsecurePublicBind || securedPublicBind); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
@@ -116,7 +122,7 @@ func configureDaemonCertLifecycle(cfg Config, server *Server) ([]grpc.ServerOpti
 }
 
 func controlPlaneTLSConfig(cfg Config, caCert *x509.Certificate, caKey crypto.PrivateKey) (*tls.Config, error) {
-	certPEM, keyPEM, err := pkgtls.IssueCertWithValidity(caCert, caKey, "awg-mesh-control-plane", serverCertHosts(cfg.ListenAddr), time.Duration(defaultCertRotationDays)*24*time.Hour)
+	certPEM, keyPEM, err := pkgtls.IssueCertWithValidity(caCert, caKey, "awg-mesh-control-plane", serverCertHosts(cfg.ListenAddr, cfg.CertHosts), time.Duration(defaultCertRotationDays)*24*time.Hour)
 	if err != nil {
 		return nil, err
 	}
@@ -134,16 +140,44 @@ func controlPlaneTLSConfig(cfg Config, caCert *x509.Certificate, caKey crypto.Pr
 	}, nil
 }
 
-func serverCertHosts(listenAddr string) []string {
+func serverCertHosts(listenAddr string, extraHosts []string) []string {
 	hosts := []string{"localhost", "127.0.0.1", "::1"}
 	host, _, err := net.SplitHostPort(listenAddr)
 	if err != nil || host == "" {
-		return hosts
+		return appendCertHosts(hosts, extraHosts)
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
-		return hosts
+		return appendCertHosts(hosts, extraHosts)
 	}
-	return append(hosts, host)
+	return appendCertHosts(append(hosts, host), extraHosts)
+}
+
+func appendCertHosts(hosts []string, extraHosts []string) []string {
+	seen := make(map[string]struct{}, len(hosts)+len(extraHosts))
+	out := make([]string, 0, len(hosts)+len(extraHosts))
+	for _, host := range append(hosts, extraHosts...) {
+		normalized := normalizeCertHost(host)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func normalizeCertHost(host string) string {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return ""
+	}
+	if splitHost, _, err := net.SplitHostPort(trimmed); err == nil {
+		trimmed = splitHost
+	}
+	return strings.Trim(trimmed, "[]")
 }
 
 func caMaterialState(dir string) (bool, bool, error) {
@@ -156,6 +190,18 @@ func caMaterialState(dir string) (bool, bool, error) {
 		return false, false, err
 	}
 	return certExists || keyExists, certExists && keyExists, nil
+}
+
+func hasCompleteCAMaterial(cfg Config) (bool, error) {
+	caDir := cfg.CADir
+	if caDir == "" {
+		caDir = cfg.StateDir
+	}
+	_, hasCompleteCA, err := caMaterialState(caDir)
+	if err != nil {
+		return false, fmt.Errorf("daemon: inspect CA material for public bind: %w", err)
+	}
+	return hasCompleteCA, nil
 }
 
 func regularFileExists(path string) (bool, error) {

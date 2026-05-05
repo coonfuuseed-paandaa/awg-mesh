@@ -580,7 +580,7 @@ pass "T2.b: master + mikrotik node artifacts prepared"
 
 CLIENT_CERT="${CTL_CONFIG_DIR}/nodes/${CLIENT_NAME}/node.crt"
 CLIENT_KEY="${CTL_CONFIG_DIR}/nodes/${CLIENT_NAME}/node.key"
-if [[ ! -s "${CLIENT_CERT}" || ! -s "${CLIENT_KEY}" ]]; then
+if [[ ! -s "${CLIENT_CERT}" || ! -s "${CLIENT_KEY}" || ! -s "${CTL_CONFIG_DIR}/ca.crt" || ! -s "${CTL_CONFIG_DIR}/ca.key" ]]; then
     fail "T2.c: mikrotik client certificate material missing"
     exit 4
 fi
@@ -596,11 +596,13 @@ docker_chr run -d \
     --name "${CTR_CP}" \
     --network "${NET_NAME}" \
     -p "${CP_GRPC_HOST_PORT}:9090" \
+    -v "$(docker_host_path "${CTL_CONFIG_DIR}"):/config:ro" \
     --entrypoint /usr/local/bin/awg-mesh-node \
     "${NODE_IMAGE}" \
     --mode control-plane \
     --listen 0.0.0.0:9090 \
-    --allow-insecure-public-bind \
+    --ca-dir /config \
+    --cert-hosts "${CP_ROUTEROS_HOST}" \
     --state-dir /var/lib/awg-mesh > /dev/null
 
 CP_READY=0
@@ -641,7 +643,9 @@ pass "T4: .rsc fixture ready: ${RSC_FILE} (${RSC_LINES} lines)"
 
 if grep -q "/container/add interface=${ROUTEROS_CONTAINER_NAME}" "${RSC_FILE}" \
     && grep -Eq '(remote-image|image)=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:[^"[:space:]]+' "${RSC_FILE}" \
-    && grep -q "cmd=\"--mode client --control-plane ${CP_ROUTEROS_ADDR}" "${RSC_FILE}"; then
+    && grep -q "cmd=\"--mode client --control-plane ${CP_ROUTEROS_ADDR}" "${RSC_FILE}" \
+    && grep -q -- "--ca-cert /config/ca.crt" "${RSC_FILE}" \
+    && ! grep -q -- "--allow-insecure-control-plane" "${RSC_FILE}"; then
     pass "T4.a: generated .rsc defines awg-mesh-client container command"
 else
     fail "T4.a: generated .rsc does not define expected container command"
@@ -709,7 +713,7 @@ fi
 
 CP_FETCH_OUT=$(sshpass -p "${CHR_PASS}" ssh "${SSH_OPTS[@]}" -p "${SSH_HOST_PORT}" admin@127.0.0.1 \
     "/tool/fetch url=http://${CP_ROUTEROS_ADDR} keep-result=no" 2>&1) && CP_FETCH_RC=0 || CP_FETCH_RC=$?
-if [[ "${CP_FETCH_RC}" -eq 0 ]] || echo "${CP_FETCH_OUT}" | grep -qiE "connection reset by peer|remote disconnected"; then
+if [[ "${CP_FETCH_RC}" -eq 0 ]] || echo "${CP_FETCH_OUT}" | grep -qiE "connection reset by peer|remote disconnected|handshake|tls|ssl"; then
     pass "T5.c: CHR reaches slirp-proxied control-plane port"
 else
     fail "T5.c: CHR cannot reach slirp-proxied control-plane port"

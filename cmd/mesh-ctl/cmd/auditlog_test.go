@@ -20,6 +20,7 @@ import (
 )
 
 func TestRunAuditLogQueryCommandSendsFiltersAndOutputsJSON(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingAuditServer{
 		entries: []*controlpb.AuditEntry{
 			{
@@ -31,12 +32,13 @@ func TestRunAuditLogQueryCommandSendsFiltersAndOutputsJSON(t *testing.T) {
 			},
 		},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runAuditLogQueryCommand(auditLogQueryOptions{
 		controlPlane: addr,
+		configDir:    configDir,
 		sinceUnix:    10,
 		untilUnix:    200,
 		eventType:    "register",
@@ -68,6 +70,7 @@ func TestRunAuditLogQueryCommandSendsFiltersAndOutputsJSON(t *testing.T) {
 }
 
 func TestRunAuditLogQueryCommandOutputsHuman(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingAuditServer{
 		entries: []*controlpb.AuditEntry{{
 			TsUnix:    100,
@@ -77,12 +80,13 @@ func TestRunAuditLogQueryCommandOutputsHuman(t *testing.T) {
 			Actor:     "operator",
 		}},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runAuditLogQueryCommand(auditLogQueryOptions{
 		controlPlane: addr,
+		configDir:    configDir,
 		output:       "human",
 		timeout:      2 * time.Second,
 		stdout:       &out,
@@ -97,6 +101,7 @@ func TestRunAuditLogQueryCommandOutputsHuman(t *testing.T) {
 }
 
 func TestRunAuditLogQueryCommandOutputsPromTextfile(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingAuditServer{
 		entries: []*controlpb.AuditEntry{{
 			TsUnix:    100,
@@ -106,12 +111,13 @@ func TestRunAuditLogQueryCommandOutputsPromTextfile(t *testing.T) {
 			Actor:     "operator",
 		}},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runAuditLogQueryCommand(auditLogQueryOptions{
 		controlPlane: addr,
+		configDir:    configDir,
 		output:       "prom-textfile",
 		timeout:      2 * time.Second,
 		stdout:       &out,

@@ -29,6 +29,19 @@ func TestNewDaemon_RejectsInsecurePublicBind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explicit public bind opt-in should be accepted: %v", err)
 	}
+
+	caDir := t.TempDir()
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	if err := pkgtls.SaveCA(caDir, caCert, caKey); err != nil {
+		t.Fatalf("SaveCA: %v", err)
+	}
+	_, err = NewDaemon(Config{ListenAddr: "0.0.0.0:51820", StateDir: t.TempDir(), CADir: caDir})
+	if err != nil {
+		t.Fatalf("CA-backed public bind should be accepted without insecure opt-in: %v", err)
+	}
 }
 
 func TestNewDaemon_ConfiguresCertLifecycleFromCADir(t *testing.T) {
@@ -244,6 +257,86 @@ func TestDaemon_WithCAMaterialRequiresMTLSRegister(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("mTLS RegisterNode: %v", err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("mTLS registration rejected: %s", resp.GetRejectReason())
+	}
+}
+
+func TestDaemon_WithCAMaterialIncludesConfiguredCertHost(t *testing.T) {
+	caDir := t.TempDir()
+	caCert, caKey, err := pkgtls.GenerateCA("mesh-ca")
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	if err := pkgtls.SaveCA(caDir, caCert, caKey); err != nil {
+		t.Fatalf("SaveCA: %v", err)
+	}
+	clientCertPEM, clientKeyPEM, err := pkgtls.IssueCert(caCert, caKey, "n1", []string{"n1"})
+	if err != nil {
+		t.Fatalf("IssueCert client: %v", err)
+	}
+	clientCert, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair client: %v", err)
+	}
+
+	d, err := NewDaemon(Config{
+		ListenAddr: "127.0.0.1:0",
+		StateDir:   t.TempDir(),
+		CADir:      caDir,
+		CertHosts:  []string{"10.0.2.2"},
+	})
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-doneCh:
+			if err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("daemon did not shut down within 5s")
+		}
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for d.ListenerAddr() == "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	addr := d.ListenerAddr()
+	if addr == "" {
+		t.Fatal("daemon never bound listener")
+	}
+
+	rootCAs := x509.NewCertPool()
+	rootCAs.AddCert(caCert)
+	tlsConn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+		RootCAs:      rootCAs,
+		Certificates: []tls.Certificate{clientCert},
+		ServerName:   "10.0.2.2",
+		MinVersion:   tls.VersionTLS13,
+	})))
+	if err != nil {
+		t.Fatalf("TLS dial: %v", err)
+	}
+	defer func() { _ = tlsConn.Close() }()
+	tlsClient := pb.NewControlPlaneClient(tlsConn)
+	regCtx, regCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer regCancel()
+	resp, err := tlsClient.RegisterNode(regCtx, &pb.RegisterNodeRequest{
+		NodeName:    "n1",
+		Roles:       []string{"master"},
+		NodeCertPem: clientCertPEM,
+		OverlayIp:   "10.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("mTLS RegisterNode with configured cert host: %v", err)
 	}
 	if !resp.GetAccepted() {
 		t.Fatalf("mTLS registration rejected: %s", resp.GetRejectReason())

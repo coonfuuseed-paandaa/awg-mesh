@@ -464,3 +464,42 @@ func TestCompatibilityAliasesPreserved(t *testing.T) {
 		t.Fatalf("client alias missing required-flags error: %s", clientErr.String())
 	}
 }
+
+func TestRunClientModeAcceptsCACertFlag(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "node.crt")
+	keyPath := filepath.Join(dir, "node.key")
+	caPath := filepath.Join(dir, "ca.crt")
+	if err := os.WriteFile(certPath, []byte("not-a-real-cert"), 0o600); err != nil {
+		t.Fatalf("write cert fixture: %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte("not-a-real-key"), 0o600); err != nil {
+		t.Fatalf("write key fixture: %v", err)
+	}
+	if err := os.WriteFile(caPath, []byte("not-a-real-ca"), 0o600); err != nil {
+		t.Fatalf("write ca fixture: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "client",
+		"--control-plane", "127.0.0.1:1",
+		"--name", "client-a",
+		"--overlay-ip", "172.21.92.130",
+		"--region", "home",
+		"--cert", certPath,
+		"--key", keyPath,
+		"--ca-cert", caPath,
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected clientd runtime validation exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("--ca-cert was not accepted by awg-mesh-node: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "load control-plane CA cert") {
+		t.Fatalf("--ca-cert was not passed to clientd, stderr=%s", stderr.String())
+	}
+}

@@ -104,6 +104,34 @@ func TestGenerateDeployRSC(t *testing.T) {
 	}
 }
 
+func TestGenerateDeployRSCClientCommandUsesMTLS(t *testing.T) {
+	t.Parallel()
+
+	script, err := GenerateDeployRSC(DeployScript{
+		TopologyName:  "mikrotik-home",
+		ContainerName: "AWG_MESH_HOME",
+		Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Veth:          "AWG_MESH_HOME",
+		OverlayIP:     "10.10.0.10",
+		OverlayNet:    "10.10.0.0/16",
+		TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
+		NodeCertB64:   "bm9kZS1jZXJ0",
+		NodeKeyB64:    "bm9kZS1rZXk=",
+		CACertB64:     "Y2EtY2VydA==",
+		ControlPlane:  "192.0.2.5:9090",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployRSC returned error: %v", err)
+	}
+
+	if !strings.Contains(script, "--ca-cert /config/ca.crt") {
+		t.Fatalf("client command missing CA cert flag:\n%s", script)
+	}
+	if strings.Contains(script, "--allow-insecure-control-plane") {
+		t.Fatalf("client command must not force insecure control-plane transport:\n%s", script)
+	}
+}
+
 func TestGenerateDeployRSCStorageRoot(t *testing.T) {
 	t.Parallel()
 

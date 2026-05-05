@@ -19,8 +19,6 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -60,6 +58,7 @@ type nodeListOptions struct {
 
 type nodeRemoveOptions struct {
 	nodeName     string
+	configDir    string
 	controlPlane string
 	drain        time.Duration
 	output       string
@@ -199,6 +198,7 @@ func newNodeRemoveCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.nodeName = args[0]
+			options.configDir = configDir
 			options.stdout = cmd.OutOrStdout()
 			return runNodeRemoveCommand(options)
 		},
@@ -311,7 +311,7 @@ func runNodeInitCommand(options nodeInitOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), validated.timeout)
 	defer cancel()
 
-	conn, err := grpc.NewClient(validated.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
 		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
 	}
@@ -381,7 +381,7 @@ func runNodeRemoveCommand(options nodeRemoveOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), validated.timeout)
 	defer cancel()
 
-	conn, err := grpc.NewClient(validated.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
 		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
 	}
@@ -472,6 +472,7 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 	}
 	return nodeRemoveOptions{
 		nodeName:     nodeName,
+		configDir:    options.configDir,
 		controlPlane: controlPlane,
 		drain:        time.Duration(drainSec) * time.Second,
 		output:       output,

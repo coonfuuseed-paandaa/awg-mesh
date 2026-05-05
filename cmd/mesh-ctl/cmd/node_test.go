@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	controlplane "github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/protobuf/proto"
@@ -218,7 +219,7 @@ func TestRunNodePrepareCommandWritesMikrotikContainerRouterOSScript(t *testing.T
 		"key=MESH_NODE_CERT_B64",
 		"key=MESH_NODE_KEY_B64",
 		"key=MESH_CA_CERT_B64",
-		`cmd="--mode client --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --state-dir /config --iface awg-mesh0 --protocol amneziawg --allow-insecure-control-plane"`,
+		`cmd="--mode client --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --ca-cert /config/ca.crt --state-dir /config --iface awg-mesh0 --protocol amneziawg"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("RouterOS script missing %q:\n%s", want, redactRouterOSScript(script))
@@ -438,7 +439,7 @@ func TestRunNodeInitCommandRegistersPreparedNode(t *testing.T) {
 	server := &capturingRegisterServer{
 		response: &controlpb.RegisterNodeResponse{Accepted: true, RegisteredAtUnix: 123},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
@@ -483,6 +484,67 @@ func TestRunNodeInitCommandRegistersPreparedNode(t *testing.T) {
 	}
 }
 
+func TestRunNodeInitAndRemoveUsePreparedMTLS(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeClientLifecycleTopology(t, dir, "client-01")
+	configDir := filepath.Join(dir, "config")
+
+	if err := runNodePrepareCommand(nodePrepareOptions{
+		nodeName:     "client-01",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		output:       "human",
+		stdout:       &bytes.Buffer{},
+	}); err != nil {
+		t.Fatalf("prepare node: %v", err)
+	}
+
+	addr, teardown := startCAControlPlaneDaemon(t, configDir)
+	defer teardown()
+
+	var initOut bytes.Buffer
+	if err := runNodeInitCommand(nodeInitOptions{
+		nodeName:     "client-01",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		controlPlane: addr,
+		nodeVersion:  "test-build-version",
+		output:       "json",
+		timeout:      2 * time.Second,
+		stdout:       &initOut,
+	}); err != nil {
+		t.Fatalf("runNodeInitCommand against mTLS daemon: %v", err)
+	}
+
+	var initResult nodeInitJSONOutput
+	if err := json.Unmarshal(initOut.Bytes(), &initResult); err != nil {
+		t.Fatalf("decode init JSON: %v\n%s", err, initOut.String())
+	}
+	if initResult.NodeName != "client-01" || !initResult.Accepted {
+		t.Fatalf("unexpected init JSON: %+v", initResult)
+	}
+
+	var removeOut bytes.Buffer
+	if err := runNodeRemoveCommand(nodeRemoveOptions{
+		nodeName:     "client-01",
+		configDir:    configDir,
+		controlPlane: addr,
+		output:       "json",
+		timeout:      2 * time.Second,
+		stdout:       &removeOut,
+	}); err != nil {
+		t.Fatalf("runNodeRemoveCommand against mTLS daemon: %v", err)
+	}
+
+	var removeResult nodeRemoveJSONOutput
+	if err := json.Unmarshal(removeOut.Bytes(), &removeResult); err != nil {
+		t.Fatalf("decode remove JSON: %v\n%s", err, removeOut.String())
+	}
+	if removeResult.NodeName != "client-01" || !removeResult.Success {
+		t.Fatalf("unexpected remove JSON: %+v", removeResult)
+	}
+}
+
 func TestRunNodeInitCommandReportsRejectedRegistration(t *testing.T) {
 	dir := t.TempDir()
 	topologyPath := writeNodeLifecycleTopology(t, dir, "master-01")
@@ -501,7 +563,7 @@ func TestRunNodeInitCommandReportsRejectedRegistration(t *testing.T) {
 	server := &capturingRegisterServer{
 		response: &controlpb.RegisterNodeResponse{Accepted: false, RejectReason: "missing cert"},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	err := runNodeInitCommand(nodeInitOptions{
@@ -557,15 +619,17 @@ func TestRunNodeInitCommandRequiresPreparedKeyPair(t *testing.T) {
 }
 
 func TestRunNodeRemoveCommandSendsRequestAndOutputsJSON(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingDecommissionServer{
 		response: &controlpb.DecommissionResponse{Success: true, ReassignedOverlayCount: 3},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runNodeRemoveCommand(nodeRemoveOptions{
 		nodeName:     "master-01",
+		configDir:    configDir,
 		controlPlane: addr,
 		drain:        15 * time.Second,
 		output:       "json",
@@ -608,15 +672,17 @@ func TestValidateNodeRemoveOptionsRejectsSubSecondDrain(t *testing.T) {
 }
 
 func TestRunNodeRemoveCommandReportsServerFailure(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingDecommissionServer{
 		response: &controlpb.DecommissionResponse{Success: false, Error: "node not in registry"},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runNodeRemoveCommand(nodeRemoveOptions{
 		nodeName:     "missing-node",
+		configDir:    configDir,
 		controlPlane: addr,
 		output:       "human",
 		timeout:      2 * time.Second,
@@ -686,6 +752,43 @@ func (s *capturingDecommissionServer) capturedRequest(t *testing.T) *controlpb.D
 	return s.request
 }
 
+func startCAControlPlaneDaemon(t *testing.T, caDir string) (string, func()) {
+	t.Helper()
+	daemon, err := controlplane.NewDaemon(controlplane.Config{
+		ListenAddr: "127.0.0.1:0",
+		StateDir:   t.TempDir(),
+		CADir:      caDir,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- daemon.Run(ctx) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for daemon.ListenerAddr() == "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	addr := daemon.ListenerAddr()
+	if addr == "" {
+		cancel()
+		t.Fatal("control-plane daemon never bound listener")
+	}
+
+	return addr, func() {
+		cancel()
+		select {
+		case err := <-doneCh:
+			if err != nil {
+				t.Fatalf("control-plane daemon returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("control-plane daemon did not shut down within 5s")
+		}
+	}
+}
+
 func writeNodeLifecycleTopology(t *testing.T, dir, nodeName string) string {
 	t.Helper()
 	path := filepath.Join(dir, "topology.yml")
@@ -700,6 +803,26 @@ nodes:
     overlay_ip: 172.21.92.2
     bridge_ip: 192.168.93.2
     region: ru
+`, nodeName)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write topology fixture: %v", err)
+	}
+	return path
+}
+
+func writeClientLifecycleTopology(t *testing.T, dir, nodeName string) string {
+	t.Helper()
+	path := filepath.Join(dir, "topology.yml")
+	data := fmt.Sprintf(`
+schema_version: 2
+mesh:
+  name: lifecycle-test
+  overlay_supernet: 172.21.92.0/24
+nodes:
+  - name: %q
+    roles: [client]
+    overlay_ip: 172.21.92.130
+    region: home
 `, nodeName)
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatalf("write topology fixture: %v", err)
