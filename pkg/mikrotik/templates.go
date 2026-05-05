@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -258,6 +259,10 @@ func validateControlPlaneTarget(value string) error {
 	}
 	host, port, err := net.SplitHostPort(trimmed)
 	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return fmt.Errorf("control-plane must be a single-line host:port value")
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNumber == 0 {
 		return fmt.Errorf("control-plane must be a single-line host:port value")
 	}
 	return nil

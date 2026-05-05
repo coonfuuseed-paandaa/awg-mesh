@@ -218,6 +218,9 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 		{name: "whitespace coordination target", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5:9090 --debug" }, expectError: "control-plane must be a single-line host:port value"},
 		{name: "missing coordination target host", mutate: func(ds *DeployScript) { ds.ControlPlane = ":9090" }, expectError: "control-plane must be a single-line host:port value"},
 		{name: "missing coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "non-numeric coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:http" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "zero coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:0" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "overflow coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:65536" }, expectError: "control-plane must be a single-line host:port value"},
 	}
 
 	for _, tt := range tests {

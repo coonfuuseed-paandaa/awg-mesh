@@ -351,6 +351,7 @@ docker build -t awg-mesh-client:local -f deploy/Dockerfile.client .
 bash tests/critical/run-all.sh --strict
 bash tests/simulation/F-009-CR-001-foundation-smoke.sh
 bash tests/emulation-playbook/run.sh
+go test -count=1 ./pkg/mikrotik ./pkg/mikrotik/v2
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-chr-baseline-runtime.sh
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-version-matrix.sh
 ```
