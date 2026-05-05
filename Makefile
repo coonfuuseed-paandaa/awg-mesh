@@ -8,6 +8,7 @@
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
 BIN_DIR := bin
+MODULE_PATH := github.com/coonfuuseed-paandaa/awg-mesh/v2
 
 .PHONY: build install install-all test lint proto-gen docker clean
 
@@ -31,8 +32,8 @@ lint:
 
 proto-gen:
 	protoc --proto_path=proto \
-		--go_out=. --go_opt=module=github.com/coonfuuseed-paandaa/awg-mesh/v2 \
-		--go-grpc_out=. --go-grpc_opt=module=github.com/coonfuuseed-paandaa/awg-mesh/v2 \
+		--go_out=. --go_opt=module=$(MODULE_PATH) \
+		--go-grpc_out=. --go-grpc_opt=module=$(MODULE_PATH) \
 		proto/*.proto
 
 docker:
