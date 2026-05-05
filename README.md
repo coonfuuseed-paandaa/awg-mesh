@@ -83,7 +83,7 @@ See [docs/architecture/F-009-overview.md](docs/architecture/F-009-overview.md)
 for historical F-009 background. The v2.0.1 release path documented here is
 the current master-owned-zone contract.
 
-## What's New in v2.0
+## What's New in v2.0.1
 
 - **Schema v2 topology** with `schema_version: 2`, role-tagged `nodes:`, and
   service ingress declarations.

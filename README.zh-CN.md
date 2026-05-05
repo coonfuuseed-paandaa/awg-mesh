@@ -83,7 +83,7 @@ deployment choice，不是 default invariant。
 了解 F-009 的历史背景。本文档描述的 v2.0.1 release path 是当前
 master-owned-zone contract。
 
-## v2.0 新内容
+## v2.0.1 新内容
 
 - **Schema v2 topology**：包含 `schema_version: 2`、role-tagged `nodes:` 和
   service ingress declarations。

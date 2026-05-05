@@ -2,6 +2,7 @@ package mikrotik
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"strings"
 	"text/template"
@@ -232,8 +233,8 @@ func validateDeployScript(ds DeployScript) error {
 	if strings.TrimSpace(ds.OverlayNet) == "" {
 		return fmt.Errorf("overlay network is required")
 	}
-	if strings.ContainsAny(ds.ControlPlane, "\r\n") {
-		return fmt.Errorf("control-plane must be a single-line host:port value")
+	if err := validateControlPlaneTarget(ds.ControlPlane); err != nil {
+		return err
 	}
 
 	if _, err := netip.ParseAddr(ds.OverlayIP); err != nil {
@@ -243,6 +244,22 @@ func validateDeployScript(ds DeployScript) error {
 		return fmt.Errorf("invalid overlay network %q: %w", ds.OverlayNet, err)
 	}
 
+	return nil
+}
+
+func validateControlPlaneTarget(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) != 1 || !strings.Contains(trimmed, ":") {
+		return fmt.Errorf("control-plane must be a single-line host:port value")
+	}
+	host, port, err := net.SplitHostPort(trimmed)
+	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return fmt.Errorf("control-plane must be a single-line host:port value")
+	}
 	return nil
 }
 

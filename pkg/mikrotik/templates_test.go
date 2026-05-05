@@ -215,6 +215,9 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 		{name: "invalid overlay ip", mutate: func(ds *DeployScript) { ds.OverlayIP = "bad-ip" }, expectError: "invalid overlay IP"},
 		{name: "invalid overlay net", mutate: func(ds *DeployScript) { ds.OverlayNet = "bad-cidr" }, expectError: "invalid overlay network"},
 		{name: "multiline coordination target", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5:9090\n/system reboot" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "whitespace coordination target", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5:9090 --debug" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "missing coordination target host", mutate: func(ds *DeployScript) { ds.ControlPlane = ":9090" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "missing coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "192.0.2.5" }, expectError: "control-plane must be a single-line host:port value"},
 	}
 
 	for _, tt := range tests {

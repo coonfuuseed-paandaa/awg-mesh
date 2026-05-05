@@ -85,7 +85,7 @@ Egress, ingress, balancer и client nodes используют responsible maste
 для исторического контекста F-009. Release path v2.0.1, описанный здесь, является
 текущим master-owned-zone contract.
 
-## Что нового в v2.0
+## Что нового в v2.0.1
 
 - **Schema v2 topology** с `schema_version: 2`, role-tagged `nodes:` и
   объявлениями service ingress.
