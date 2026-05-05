@@ -15,19 +15,22 @@ type MasterConfig struct {
 	Name         string
 	OverlayIP    string
 	DualListener wg.DualListenerConfig
+	Coordination *MasterCoordinationConfig
 }
 
 // MasterStatus is the observable runtime state of the master protocol bridge.
 type MasterStatus struct {
-	Name      string
-	OverlayIP string
-	Listeners wg.DualListenerSnapshot
+	Name         string
+	OverlayIP    string
+	Listeners    wg.DualListenerSnapshot
+	Coordination MasterCoordinationSnapshot
 }
 
 // Master runs the vanilla-WG client listener and AmneziaWG mesh listener.
 type Master struct {
-	cfg      MasterConfig
-	listener *wg.DualListener
+	cfg          MasterConfig
+	listener     *wg.DualListener
+	coordination *MasterCoordination
 }
 
 // NewMaster validates config and builds the master runtime.
@@ -53,8 +56,17 @@ func NewMaster(cfg MasterConfig) (*Master, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build master dual listener: %w", err)
 	}
+	var coordination *MasterCoordination
+	if cfg.Coordination != nil {
+		coordinationCfg := cloneMasterCoordinationConfig(*cfg.Coordination)
+		coordination, err = NewMasterCoordination(coordinationCfg)
+		if err != nil {
+			return nil, fmt.Errorf("build master coordination: %w", err)
+		}
+		cfg.Coordination = &coordinationCfg
+	}
 	cfg.DualListener = listenerCfg
-	return &Master{cfg: cfg, listener: listener}, nil
+	return &Master{cfg: cfg, listener: listener, coordination: coordination}, nil
 }
 
 // Run starts both master listeners and blocks until context cancellation.
@@ -68,7 +80,24 @@ func (m *Master) Run(ctx context.Context) error {
 	if err := m.listener.Start(ctx); err != nil {
 		return err
 	}
-	<-ctx.Done()
+	var coordinationDone <-chan error
+	if m.coordination != nil {
+		if err := m.coordination.Start(ctx); err != nil {
+			closeErr := m.listener.Close()
+			return errors.Join(fmt.Errorf("start master coordination: %w", err), closeErr)
+		}
+		coordinationDone = m.coordination.Done()
+	}
+	select {
+	case <-ctx.Done():
+	case err := <-coordinationDone:
+		if err != nil {
+			closeErr := m.Close()
+			return errors.Join(fmt.Errorf("master coordination stopped: %w", err), closeErr)
+		}
+		closeErr := m.Close()
+		return errors.Join(errors.New("master coordination stopped unexpectedly"), closeErr)
+	}
 	if err := m.Close(); err != nil {
 		return err
 	}
@@ -77,7 +106,13 @@ func (m *Master) Run(ctx context.Context) error {
 
 // Close tears down the master listeners.
 func (m *Master) Close() error {
-	if m == nil || m.listener == nil {
+	if m == nil {
+		return nil
+	}
+	if m.coordination != nil {
+		m.coordination.Stop()
+	}
+	if m.listener == nil {
 		return nil
 	}
 	return m.listener.Close()
@@ -89,8 +124,9 @@ func (m *Master) Status() MasterStatus {
 		return MasterStatus{}
 	}
 	return MasterStatus{
-		Name:      m.cfg.Name,
-		OverlayIP: m.cfg.OverlayIP,
-		Listeners: m.listener.Snapshot(),
+		Name:         m.cfg.Name,
+		OverlayIP:    m.cfg.OverlayIP,
+		Listeners:    m.listener.Snapshot(),
+		Coordination: m.coordination.Snapshot(),
 	}
 }
