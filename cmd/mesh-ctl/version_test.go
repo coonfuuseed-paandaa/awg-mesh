@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awgmesh"
 )
 
 func TestVersionFromBuildOverride(t *testing.T) {

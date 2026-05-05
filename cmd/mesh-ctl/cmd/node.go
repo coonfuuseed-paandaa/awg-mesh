@@ -14,10 +14,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"github.com/spf13/cobra"
 )
 

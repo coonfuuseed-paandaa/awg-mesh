@@ -6,8 +6,8 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/cmd"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/cmd/mesh-ctl/cmd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awgmesh"
 )
 
 func main() {

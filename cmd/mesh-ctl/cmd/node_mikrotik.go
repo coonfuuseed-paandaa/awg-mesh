@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik"
-	mikrotikv2 "github.com/coonfuuseed-paandaa/awg-mesh/pkg/mikrotik/v2"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/mikrotik"
+	mikrotikv2 "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/mikrotik/v2"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
 const (

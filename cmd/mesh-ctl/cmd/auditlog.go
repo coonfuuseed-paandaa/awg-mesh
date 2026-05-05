@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"github.com/spf13/cobra"
 )
 

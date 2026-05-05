@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	meshnft "github.com/coonfuuseed-paandaa/awg-mesh/pkg/nftables"
+	meshnft "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/nftables"
 )
 
 // EgressMasqueradeInstaller applies the egress boundary NAT rule.

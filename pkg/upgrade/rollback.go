@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
-	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/grpc"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
 )
 
 // rollbackNode restores a node to its pre-upgrade state after a failed verify.

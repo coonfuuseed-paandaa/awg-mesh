@@ -8,8 +8,8 @@ import (
 	"net"
 	"time"
 
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 )
 
 const (

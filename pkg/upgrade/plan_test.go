@@ -3,7 +3,7 @@ package upgrade
 import (
 	"testing"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
 )
 
 // ─── helpers ────────────────────────────────────────────────────────────────

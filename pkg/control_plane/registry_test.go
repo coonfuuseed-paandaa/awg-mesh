@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 )
 
 var fakeCert = []byte("-----BEGIN CERTIFICATE-----\nMIIfake\n-----END CERTIFICATE-----\n")

@@ -34,7 +34,7 @@ trap 'rm -rf "${TMP}"' EXIT
 cat >"${TMP}/check.go" <<'GOEOF'
 package main
 
-import "github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+import "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 
 func main() {
 	var vanillaFactory func(string) (wg.Transport, error) = wg.NewVanillaTransport

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	meshnft "github.com/coonfuuseed-paandaa/awg-mesh/pkg/nftables"
+	meshnft "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/nftables"
 )
 
 type fakeEgressInstaller struct {

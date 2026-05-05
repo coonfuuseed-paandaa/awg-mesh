@@ -23,14 +23,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/balancer"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/clientd"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/ingress"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/node"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awgmesh"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/balancer"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/clientd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/ingress"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/node"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 	"github.com/rs/zerolog"
 )
 

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	controlplane "github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
-	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	controlplane "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/rotation"
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 )
 
 func TestRunRotateCommandMeshWideSendsRequestAndPrintsRows(t *testing.T) {

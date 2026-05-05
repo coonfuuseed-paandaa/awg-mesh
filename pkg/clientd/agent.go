@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
-	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 )
 
 // Config describes the node identity and local clientd runtime settings.

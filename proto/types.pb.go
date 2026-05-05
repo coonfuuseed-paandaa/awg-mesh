@@ -620,7 +620,7 @@ type AddTunnelRequest struct {
 	TransportSubnet     string                 `protobuf:"bytes,10,opt,name=transport_subnet,json=transportSubnet,proto3" json:"transport_subnet,omitempty"`
 	MasterTransportIp   string                 `protobuf:"bytes,11,opt,name=master_transport_ip,json=masterTransportIp,proto3" json:"master_transport_ip,omitempty"`
 	EndpointTransportIp string                 `protobuf:"bytes,12,opt,name=endpoint_transport_ip,json=endpointTransportIp,proto3" json:"endpoint_transport_ip,omitempty"`
-	AllowedIps          []string               `protobuf:"bytes,13,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
+	AllowedIps          []string               `protobuf:"bytes,13,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"` // v1.12.8: admin-source-of-truth AllowedIPs for master-side peer
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -2487,7 +2487,8 @@ const file_types_proto_rawDesc = "" +
 	" \x01(\tR\x0ftransportSubnet\x12.\n" +
 	"\x13master_transport_ip\x18\v \x01(\tR\x11masterTransportIp\x122\n" +
 	"\x15endpoint_transport_ip\x18\f \x01(\tR\x13endpointTransportIp\x12\x1f\n" +
-	"\vallowed_ips\x18\r \x03(\tR\nallowedIps\"\xa1\x01\n" +
+	"\vallowed_ips\x18\r \x03(\tR\n" +
+	"allowedIps\"\xa1\x01\n" +
 	"\x11AddTunnelResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12*\n" +
 	"\x11master_public_key\x18\x02 \x01(\fR\x0fmasterPublicKey\x12%\n" +
@@ -2625,7 +2626,7 @@ const file_types_proto_rawDesc = "" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x1d\n" +
 	"\n" +
 	"overlay_ip\x18\x03 \x01(\tR\toverlayIp\x121\n" +
-	"\x05peers\x18\x04 \x03(\v2\x1b.awgmesh.TransportPeerStateR\x05peersB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
+	"\x05peers\x18\x04 \x03(\v2\x1b.awgmesh.TransportPeerStateR\x05peersB2Z0github.com/coonfuuseed-paandaa/awg-mesh/v2/protob\x06proto3"
 
 var (
 	file_types_proto_rawDescOnce sync.Once

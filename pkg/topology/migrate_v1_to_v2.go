@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	"gopkg.in/yaml.v3"
 )
 

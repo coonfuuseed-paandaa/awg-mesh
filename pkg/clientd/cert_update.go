@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 )
 
 // ApplyCertUpdate validates and persists replacement node credentials.

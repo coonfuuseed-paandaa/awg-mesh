@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
-	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/grpc"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )

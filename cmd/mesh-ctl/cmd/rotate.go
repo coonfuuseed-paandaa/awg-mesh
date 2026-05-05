@@ -15,14 +15,14 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/internal/adminstate"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awggen"
-	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/pkg/grpc"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
-	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
-	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/cmd/mesh-ctl/internal/adminstate"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awggen"
+	grpcclient "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/grpc"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/rotation"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
+	proto "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
+	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"github.com/spf13/cobra"
 )
 

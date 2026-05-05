@@ -1,90 +1,54 @@
-# Mesh Simulation
+# Simulation Gates
 
-Local Docker simulation of a production-like mesh: 2 masters, 5 endpoints.
+This directory contains local simulation and release-gate harnesses for
+awg-mesh. The current v2.0 release path is not the old role-command Docker
+walkthrough; use the scripts below from the repository root.
 
-## Prerequisites
+## Required Release Simulations
 
-- Docker Desktop running
-- `awg-mesh-node:transport` image built: `docker build -f deploy/Dockerfile -t awg-mesh-node:transport .`
-- `mesh-ctl` installed: `go install ./cmd/mesh-ctl`
-
-## Start
-
-```bash
-docker compose -f tests/simulation/docker-compose.yml up -d
-```
-
-All 7 containers start with gRPC listening + AWG interfaces + overlay IPs on loopback.
-
-## Initialize mesh
+Run these after unit tests, Docker image builds, the critical suite, and the
+emulation playbook:
 
 ```bash
-# Prepare all nodes (generates tokens + docker-compose snippets)
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-asia-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-asia-02
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-asia-03
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-eu-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint prepare --name node-us-01
-mesh-ctl -t tests/simulation/mesh-topology.yml master prepare --name master-01
-mesh-ctl -t tests/simulation/mesh-topology.yml master prepare --name master-02
-
-# Initialize endpoints (exchange certs, allocate transport, set up tunnels)
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-asia-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-asia-02
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-asia-03
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-eu-01
-mesh-ctl -t tests/simulation/mesh-topology.yml endpoint init --name node-us-01
-
-# Initialize masters (exchange certs, create tunnels to all endpoints)
-mesh-ctl -t tests/simulation/mesh-topology.yml master init --name master-01
-mesh-ctl -t tests/simulation/mesh-topology.yml master init --name master-02
+bash tests/simulation/F-009-CR-001-foundation-smoke.sh
+BUILDX_BUILDER=default bash tests/simulation/mikrotik-chr-baseline-runtime.sh
+BUILDX_BUILDER=default bash tests/simulation/mikrotik-version-matrix.sh
 ```
 
-## Verify
+`BUILDX_BUILDER=default` keeps the CHR gates on the local Docker builder. Some
+developer machines also have a remote or multi-arch builder selected by
+default; that is fine for image publishing, but it can break the local CHR
+runtime path with unrelated registry or network errors.
 
-```bash
-# Check mesh status
-mesh-ctl -t tests/simulation/mesh-topology.yml status
+## What Each Gate Proves
 
-# Check transport allocations
-mesh-ctl config show
+| Script | Purpose |
+|---|---|
+| `F-009-CR-001-foundation-smoke.sh` | Foundation smoke: tracked Go files are formatted, build/vet/test gates pass, binary modes start, schema v1 is rejected, schema v2 is accepted, and the critical-suite runner is present. |
+| `mikrotik-chr-baseline-runtime.sh` | Bare RouterOS `/container` baseline: veth, bridge, NAT, firewall counters, container logs, and container-originated reachability work before the product is deployed. |
+| `mikrotik-version-matrix.sh` | Product CHR E2E on RouterOS 7.21+ targets. The default is 7.21.4. Generator syntax coverage for 7.16.2 and 7.20.8 is handled by Go tests, not by this runtime gate. |
 
-# Ping overlay IPs from master to endpoint (inside container)
-docker exec master-01 ping -c 3 172.20.70.34    # master → node-asia-01
-docker exec master-01 ping -c 3 172.20.70.37    # master → node-eu-01
+## Extended Harnesses
 
-# Check WireGuard interfaces on master
-docker exec master-01 cat /proc/net/dev | grep wg
+The following scripts remain useful for targeted investigation, but they are not
+the v2.0 release gate:
 
-# Check loopback overlay IP
-docker exec node-asia-01 ip addr show lo | grep 172.20
-
-# Check ECMP routes on master
-docker exec master-01 ip route show | grep 172.20.70
+```text
+data-plane-extended.sh
+modules/fr*.sh
+issue-93-upgrade.sh
+issue-99-allowedips.sh
+issue-100-scp-compose.sh
+mikrotik-onboard.sh
+mikrotik-chr-import.sh
 ```
+
+Run them only when working on the corresponding legacy behavior, migration
+path, or diagnostic scenario.
 
 ## Cleanup
 
-```bash
-docker compose -f tests/simulation/docker-compose.yml down -v
-```
-
-## Topology
-
-```
-                    ┌──────────┐    ┌──────────┐
-                    │  master-01   │    │  master-02   │
-                    │ .50.10   │    │ .50.11   │
-                    │ master   │    │ master   │
-                    └────┬─────┘    └────┬─────┘
-                         │               │
-        ┌────────┬───────┼───────┬───────┼───────┐
-        ▼        ▼       ▼       ▼       ▼       ▼
-   ┌────────┐┌────────┐┌────────┐┌────────┐┌────────┐
-   │ node-asia-01  ││ node-asia-02  ││ node-asia-03  ││ node-eu-01  ││ node-us-01  │
-   │ .50.20 ││ .50.21 ││ .50.22 ││ .50.30 ││ .50.31 │
-   │endpoint││endpoint││endpoint││endpoint││endpoint│
-   └────────┘└────────┘└────────┘└────────┘└────────┘
-```
-
-All on Docker network `mesh-sim` (192.168.50.0/24).
+Most harnesses create temporary Docker networks, containers, images, and
+directories under `.agent/tmp/`. Re-running a gate normally cleans its own
+state. If a run is interrupted, inspect the script header for the exact cleanup
+labels before removing resources manually.

@@ -43,7 +43,7 @@ const file_agent_proto_rawDesc = "" +
 	"\tGetStatus\x12\x0e.awgmesh.Empty\x1a\x13.awgmesh.NodeStatus\x120\n" +
 	"\tGetRoutes\x12\x0e.awgmesh.Empty\x1a\x13.awgmesh.RouteTable\x124\n" +
 	"\tGetHealth\x12\x0e.awgmesh.Empty\x1a\x17.awgmesh.HealthResponse\x12D\n" +
-	"\x11GetTransportState\x12\x0e.awgmesh.Empty\x1a\x1f.awgmesh.TransportStateResponseB/Z-github.com/coonfuuseed-paandaa/awg-mesh/protob\x06proto3"
+	"\x11GetTransportState\x12\x0e.awgmesh.Empty\x1a\x1f.awgmesh.TransportStateResponseB2Z0github.com/coonfuuseed-paandaa/awg-mesh/v2/protob\x06proto3"
 
 var file_agent_proto_goTypes = []any{
 	(*InitRequest)(nil),              // 0: awgmesh.InitRequest

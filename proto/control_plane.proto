@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package awgmesh.control_plane.v1;
 
-option go_package = "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane";
+option go_package = "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane";
 
 // F-009 control plane gRPC service.
 //

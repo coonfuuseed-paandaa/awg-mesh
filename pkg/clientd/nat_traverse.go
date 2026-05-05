@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	pb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

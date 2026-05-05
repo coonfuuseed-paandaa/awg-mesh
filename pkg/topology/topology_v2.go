@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 )
 
 // SchemaVersion identifies the topology.yml schema generation.

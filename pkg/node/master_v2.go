@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
 // MasterConfig describes the v2.0 master role runtime.

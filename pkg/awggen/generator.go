@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 
-	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/wg"
-	"github.com/coonfuuseed-paandaa/awg-mesh/proto"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/proto"
 )
 
 const (
