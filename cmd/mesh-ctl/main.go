@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/cmd/mesh-ctl/cmd"
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 )
 
 func main() {
@@ -31,14 +32,12 @@ func version() string {
 		return versionFromBuild
 	}
 	info, ok := debug.ReadBuildInfo()
+	return versionFromBuildInfo(info, ok)
+}
+
+func versionFromBuildInfo(info *debug.BuildInfo, ok bool) string {
 	if !ok {
 		return "dev"
-	}
-
-	// go install ...@v0.2.0 → "v0.2.0" (clean release tag)
-	modVer := info.Main.Version
-	if modVer != "" && modVer != "(devel)" && !strings.Contains(modVer, "-0.") {
-		return modVer
 	}
 
 	// Extract VCS info for local builds
@@ -52,26 +51,29 @@ func version() string {
 		}
 	}
 
-	// Base version: strip pseudo-version to base tag, or "dev"
-	base := "dev"
+	if revision != "" {
+		short := revision
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		if modified == "true" {
+			return awgmesh.Version + " (" + short + ", dirty)"
+		}
+		return awgmesh.Version + " (" + short + ")"
+	}
+
+	// go install ...@v0.2.0 → "v0.2.0" (clean release tag)
+	modVer := info.Main.Version
+	if modVer != "" && modVer != "(devel)" && !strings.Contains(modVer, "-0.") {
+		return modVer
+	}
+
 	if modVer != "" && modVer != "(devel)" && strings.Contains(modVer, "-0.") {
 		// "v0.2.1-0.20260327..." → "v0.2.1"
 		if idx := strings.Index(modVer, "-0."); idx > 0 {
-			base = modVer[:idx]
+			return modVer[:idx]
 		}
 	}
 
-	if revision == "" {
-		return base
-	}
-
-	short := revision
-	if len(short) > 8 {
-		short = short[:8]
-	}
-
-	if modified == "true" {
-		return base + " (" + short + ", dirty)"
-	}
-	return base + " (" + short + ")"
+	return awgmesh.Version
 }

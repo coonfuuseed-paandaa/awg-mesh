@@ -81,6 +81,45 @@ func TestRunMasterDryRunAcceptsClientPrivateKeyFile(t *testing.T) {
 	}
 }
 
+func TestRunMasterDryRunAcceptsClientPeer(t *testing.T) {
+	t.Parallel()
+
+	privateKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--client-peer", privateKey.PublicKey().String() + "=172.21.92.130/32",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestRunMasterDryRunRejectsInvalidClientPeer(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--client-peer", "not-a-key=172.21.92.130/32",
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid public key") {
+		t.Fatalf("expected public key parse error, got %s", stderr.String())
+	}
+}
+
 func TestRunMasterDryRunRejectsInvalidClientPrivateKeyFile(t *testing.T) {
 	t.Parallel()
 
@@ -423,5 +462,44 @@ func TestCompatibilityAliasesPreserved(t *testing.T) {
 	}
 	if !strings.Contains(clientErr.String(), "missing required flags") {
 		t.Fatalf("client alias missing required-flags error: %s", clientErr.String())
+	}
+}
+
+func TestRunClientModeAcceptsCACertFlag(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "node.crt")
+	keyPath := filepath.Join(dir, "node.key")
+	caPath := filepath.Join(dir, "ca.crt")
+	if err := os.WriteFile(certPath, []byte("not-a-real-cert"), 0o600); err != nil {
+		t.Fatalf("write cert fixture: %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte("not-a-real-key"), 0o600); err != nil {
+		t.Fatalf("write key fixture: %v", err)
+	}
+	if err := os.WriteFile(caPath, []byte("not-a-real-ca"), 0o600); err != nil {
+		t.Fatalf("write ca fixture: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "client",
+		"--control-plane", "127.0.0.1:1",
+		"--name", "client-a",
+		"--overlay-ip", "172.21.92.130",
+		"--region", "home",
+		"--cert", certPath,
+		"--key", keyPath,
+		"--ca-cert", caPath,
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected clientd runtime validation exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("--ca-cert was not accepted by awg-mesh-node: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "load control-plane CA cert") {
+		t.Fatalf("--ca-cert was not passed to clientd, stderr=%s", stderr.String())
 	}
 }

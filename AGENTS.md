@@ -97,11 +97,10 @@ Tag is created on GitHub, then fetched locally. No manual `git tag` needed.
 ## RELEASE GATE — NON-NEGOTIABLE
 
 **Docker smoke + e2e tests are MANDATORY before tagging any version.** Every
-release (PATCH, MINOR, MAJOR) MUST pass `tests/simulation/issue-92-rotation.sh`
-on a real WSL2/Linux host with Docker. `go test -short ./...` and CI build
-green are NOT sufficient — they validated v1.12.0 which then failed e2e
-catastrophically (broken tier-3 rotation: idempotency check + master
-applyPeerKeyUpdate device-handle drift).
+release (PATCH, MINOR, MAJOR) MUST pass the current F-009 Docker gates on a
+real WSL2/Linux host with Docker. `go test -short ./...` and CI build green are
+NOT sufficient — v1.12.0 proved that compile-only gates can miss catastrophic
+data-plane regressions.
 
 **Process for every release:**
 1. `go test -race -count=1 ./...` — all packages green (race detector mandatory; v1.14.0 tag-build caught a real overlayRouterFn race that re-runs masked)
@@ -109,7 +108,7 @@ applyPeerKeyUpdate device-handle drift).
 3. **F-009 CR-001 foundation smoke:** `bash tests/simulation/F-009-CR-001-foundation-smoke.sh` — MUST exit 0 with all 12 checks (R1..R12) PASS. Replaces v1.x `issue-92-rotation.sh` which was removed in F-009 CR-001 along with the v1.x role daemons. The CR-001 smoke covers build/vet/gofmt/test green, binary smoke for every `--mode`, schema validation v1.x reject + v2.0 accept, role composability, and critical-suite runner.
 4. **F-009 v2 critical suite:** `bash tests/critical/run-all.sh` MUST exit 0 for developer-mode checks. Before tagging any v2.x release, run `bash tests/critical/run-all.sh --strict`; strict mode fails on any skipped critical script and on `release-readiness.sh` blockers. As of CR-013, strict mode intentionally remains blocked until CR-014 Mikrotik v2 generator and CR-015 cert lifecycle land.
 5. **F-009 v2 emulation playbook:** `bash tests/emulation-playbook/run.sh` MUST exit 0 and print `PRODUCT_WORKS`. The script executes the customer-mode walkthrough in `docs/PRODUCTION-TESTING-PLAYBOOK.md` and writes `.agent/reports/emulation-playbook-run-<timestamp>.md`.
-6. **(blocked until CR-014)** `bash tests/simulation/mikrotik-chr-e2e.sh CHR=7.16.2` — REWRITTEN in CR-014 against vanilla-WG client↔master listener (constraint 13). Original v1.x version preserved in `.agent/historical/` for reference.
+6. **F-009 MikroTik container gates:** generator syntax compatibility MUST cover the documented RouterOS pivots (`7.16.2` legacy, `7.20.8` transitional, `7.21.4` canonical) via `go test -count=1 ./pkg/mikrotik ./pkg/mikrotik/v2`. Runtime/data-plane CHR validation is split into two ordered gates on RouterOS `7.21+` targets only (default `7.21.4`): first `bash tests/simulation/mikrotik-chr-baseline-runtime.sh` MUST prove the bare RouterOS `/container` environment (veth, bridge, NAT, firewall counters, logs, container-originated reachability), then `bash tests/simulation/mikrotik-version-matrix.sh` MUST pass the awg-mesh-client product E2E. This is the v2 release gate for the RouterOS `/container` path; native RouterOS WireGuard remains deferred/unwired and is not a release blocker.
 7. G3 / G7 / G14 / Golden-fixture unit gates — STATUS: legacy v1.x targets removed alongside their parent code in CR-001. CR-011 critical-suite v2 now provides architecture-aligned unit and smoke gates under `tests/critical/`.
 8. ONLY THEN: tag, gh release create, verify GHCR + Docker Hub parity
 

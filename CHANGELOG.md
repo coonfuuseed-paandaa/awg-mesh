@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-05-03 — flat mesh architecture
+
 ### Added
-- **F-009 CR-015 certificate lifecycle** - the control-plane daemon can load mesh CA material, issue due replacement node certificates through `StreamCertUpdate`, allow bounded pending-cert rollover during the overlap window, and clientd can persist replacement `node.crt` / `node.key` files atomically enough for reconnect-based mTLS rollover. The critical cert-rotation gate now verifies server issuance, daemon CA wiring, clientd persistence, and release-readiness coverage.
-- **F-009 CR-014 Mikrotik v2 native WireGuard bridge** - `mesh-ctl node prepare --platform mikrotik` now writes real WireGuard key material and a deterministic RouterOS `.rsc` script for native vanilla-WG clients, while masters can consume the generated client-facing private key via `awg-mesh-node --mode master --client-private-key-file`.
+- **F-009 CR-015 certificate lifecycle** - the control-plane daemon can load mesh CA material, issue due replacement node certificates through `StreamCertUpdate`, allow bounded pending-cert rollover during the overlap window, and clientd can persist replacement `node.crt` / `node.key` files atomically enough for reconnect-based mTLS rollover. `mesh-ctl` lifecycle, audit-log, and mesh-wide rotation RPCs now use a local CA-signed admin mTLS certificate instead of insecure gRPC when talking to the v2 control-plane. The critical cert-rotation gate now verifies server issuance, daemon CA wiring, clientd persistence, and release-readiness coverage.
+- **F-009 CR-014 MikroTik v2 container bridge** - `mesh-ctl node prepare --platform mikrotik` now writes a deterministic RouterOS `.rsc` script that deploys the Linux `awg-mesh-client` inside a RouterOS `/container`. `--target-ros` covers the documented syntax pivots (`7.16.2` legacy, `7.20.8` transitional, `7.21.4` canonical) in generator tests; runtime CHR validation targets RouterOS `7.21+`, where the container kernel provides the nftables support required by the client data plane. Generated client commands now pass `/config/ca.crt` to `awg-mesh-node --mode client` and no longer force insecure control-plane transport. The CHR gate now runs a bare RouterOS runtime baseline before product deploy, proving veth/bridge setup, NAT, forward firewall counters, `/log` container output, and container-originated reachability. Native RouterOS vanilla WireGuard generation remains present as an unwired future track and is not part of the v2.0 release gate.
 - **F-009 CR-013 migration tooling** - `mesh-ctl migrate` converts v1.x topology YAML into schema v2 topology output, with file overwrite protection, JSON stdout mode, real critical-suite coverage, and release-readiness blockers reduced to CR-014 and CR-015.
 - **F-009 CR-012 emulation playbook v2** - `docs/PRODUCTION-TESTING-PLAYBOOK.md` is now a v2.0 customer-mode release walkthrough, and `tests/emulation-playbook/run.sh` executes the playbook against real `mesh-ctl` / `awg-mesh-node` binaries, writes a run report under `.agent/reports/`, and prints `PRODUCT_WORKS` only after every scenario passes.
 - **F-009 CR-011 critical-suite v2 gates** — `tests/critical/run-all.sh` now supports strict release mode (`--strict` or `CRITICAL_STRICT=1`) that fails on skipped critical scripts. CR-011 replaces the CR-owned stubs for latency, throughput, memory, and release-readiness; adds decommission, cert-rotation, observability, control-plane DR, availability, logging, upgrade, audit-log-query, and synthetic capacity gates. `release-readiness.sh` reports explicit remaining blockers as later CRs land.
@@ -1514,7 +1516,8 @@ Initial release of awg-mesh — a Docker-native encrypted overlay mesh network b
 
 ---
 
-[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.7...HEAD
+[Unreleased]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.14.1...v2.0.0
 [1.12.2]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/coonfuuseed-paandaa/awg-mesh/compare/v1.11.4...v1.12.0

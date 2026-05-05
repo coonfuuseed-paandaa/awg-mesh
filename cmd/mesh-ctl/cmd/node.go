@@ -19,8 +19,6 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/topology"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -35,6 +33,8 @@ type nodePrepareOptions struct {
 	topologyPath string
 	configDir    string
 	platform     string
+	controlPlane string
+	targetROS    string
 	output       string
 	stdout       io.Writer
 }
@@ -58,6 +58,7 @@ type nodeListOptions struct {
 
 type nodeRemoveOptions struct {
 	nodeName     string
+	configDir    string
 	controlPlane string
 	drain        time.Duration
 	output       string
@@ -135,6 +136,8 @@ func newNodePrepareCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&options.platform, "platform", "", "Prepare platform override (mikrotik)")
+	cmd.Flags().StringVar(&options.controlPlane, "control-plane", "", "Control-plane address to embed in platform-specific runtime artifacts")
+	cmd.Flags().StringVar(&options.targetROS, "target-ros", "", "Target RouterOS version for MikroTik container script dialect (default: 7.21+ canonical)")
 	cmd.Flags().StringVar(&options.output, "output", topologyOutputHuman, "Output format (human, json)")
 	return cmd
 }
@@ -195,6 +198,7 @@ func newNodeRemoveCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.nodeName = args[0]
+			options.configDir = configDir
 			options.stdout = cmd.OutOrStdout()
 			return runNodeRemoveCommand(options)
 		},
@@ -263,7 +267,10 @@ func runNodePrepareCommand(options nodePrepareOptions) error {
 	switch platform := preparePlatform(options.platform, node); platform {
 	case "", "linux":
 	case "mikrotik":
-		artifacts, err := prepareMikrotikRouterOS(topo, node, options.configDir, nd)
+		if strings.TrimSpace(options.controlPlane) == "" {
+			return fmt.Errorf("--control-plane is required for --platform mikrotik")
+		}
+		artifacts, err := prepareMikrotikRouterOS(topo, node, options.configDir, nd, tokenHash, options.controlPlane, options.targetROS)
 		if err != nil {
 			return err
 		}
@@ -304,7 +311,7 @@ func runNodeInitCommand(options nodeInitOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), validated.timeout)
 	defer cancel()
 
-	conn, err := grpc.NewClient(validated.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
 		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
 	}
@@ -374,7 +381,7 @@ func runNodeRemoveCommand(options nodeRemoveOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), validated.timeout)
 	defer cancel()
 
-	conn, err := grpc.NewClient(validated.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
 		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
 	}
@@ -465,6 +472,7 @@ func validateNodeRemoveOptions(options nodeRemoveOptions) (nodeRemoveOptions, er
 	}
 	return nodeRemoveOptions{
 		nodeName:     nodeName,
+		configDir:    options.configDir,
 		controlPlane: controlPlane,
 		drain:        time.Duration(drainSec) * time.Second,
 		output:       output,

@@ -3,4 +3,4 @@ package awgmesh
 
 // Version is the semantic version of this build.
 // Bumped per AGENTS.md release rules.
-const Version = "v2.0.0-alpha.1"
+const Version = "v2.0.0"

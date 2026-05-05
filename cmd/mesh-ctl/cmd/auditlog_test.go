@@ -2,24 +2,18 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
-	"io"
-	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestRunAuditLogQueryCommandSendsFiltersAndOutputsJSON(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingAuditServer{
 		entries: []*controlpb.AuditEntry{
 			{
@@ -31,12 +25,13 @@ func TestRunAuditLogQueryCommandSendsFiltersAndOutputsJSON(t *testing.T) {
 			},
 		},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runAuditLogQueryCommand(auditLogQueryOptions{
 		controlPlane: addr,
+		configDir:    configDir,
 		sinceUnix:    10,
 		untilUnix:    200,
 		eventType:    "register",
@@ -68,6 +63,7 @@ func TestRunAuditLogQueryCommandSendsFiltersAndOutputsJSON(t *testing.T) {
 }
 
 func TestRunAuditLogQueryCommandOutputsHuman(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingAuditServer{
 		entries: []*controlpb.AuditEntry{{
 			TsUnix:    100,
@@ -77,12 +73,13 @@ func TestRunAuditLogQueryCommandOutputsHuman(t *testing.T) {
 			Actor:     "operator",
 		}},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runAuditLogQueryCommand(auditLogQueryOptions{
 		controlPlane: addr,
+		configDir:    configDir,
 		output:       "human",
 		timeout:      2 * time.Second,
 		stdout:       &out,
@@ -97,6 +94,7 @@ func TestRunAuditLogQueryCommandOutputsHuman(t *testing.T) {
 }
 
 func TestRunAuditLogQueryCommandOutputsPromTextfile(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingAuditServer{
 		entries: []*controlpb.AuditEntry{{
 			TsUnix:    100,
@@ -106,12 +104,13 @@ func TestRunAuditLogQueryCommandOutputsPromTextfile(t *testing.T) {
 			Actor:     "operator",
 		}},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runAuditLogQueryCommand(auditLogQueryOptions{
 		controlPlane: addr,
+		configDir:    configDir,
 		output:       "prom-textfile",
 		timeout:      2 * time.Second,
 		stdout:       &out,
@@ -161,48 +160,4 @@ func (s *capturingAuditServer) capturedRequest(t *testing.T) *controlpb.QueryAud
 		t.Fatal("QueryAudit was not called")
 	}
 	return s.request
-}
-
-func startAuditLogTestServer(t *testing.T, server controlpb.ControlPlaneServer) (string, func()) {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	gs := grpc.NewServer()
-	controlpb.RegisterControlPlaneServer(gs, server)
-	serveErrCh := make(chan error, 1)
-	go func() { serveErrCh <- gs.Serve(lis) }()
-	addr := lis.Addr().String()
-	waitForAuditLogTestServer(t, addr)
-
-	teardown := func() {
-		gs.Stop()
-		select {
-		case err := <-serveErrCh:
-			if err != nil && !errors.Is(err, grpc.ErrServerStopped) && !errors.Is(err, io.EOF) {
-				t.Errorf("grpc Serve: %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Errorf("grpc Serve did not stop")
-		}
-	}
-	return addr, teardown
-}
-
-func waitForAuditLogTestServer(t *testing.T, addr string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("new readiness client: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
-	conn.Connect()
-	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
-		if !conn.WaitForStateChange(ctx, state) {
-			t.Fatalf("audit log test server did not become ready: state=%s err=%v", state, ctx.Err())
-		}
-	}
 }

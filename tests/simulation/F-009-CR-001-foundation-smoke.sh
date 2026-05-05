@@ -10,12 +10,12 @@
 #   R1  go build ./... succeeds
 #   R2  go vet ./... clean
 #   R3  gofmt -l . clean
-#   R4  go test -count=1 -short ./... PASS
-#   R5  awg-mesh-node binary builds, --version reports v2.0.0-alpha.1
+#   R4  go test -p 1 -count=1 -short ./... PASS
+#   R5  awg-mesh-node binary builds, --version reports v2.0.0
 #   R6  control-plane starts; implemented role dry-runs validate; client/clientd reports required flags
 #   R7  awg-mesh-node with no --mode exits 2 (usage error)
 #   R8  awg-mesh-node --mode invalid exits 2 (usage error)
-#   R9  mesh-ctl binary builds, version subcommand reports v2.0.0-alpha.1
+#   R9  mesh-ctl binary builds, version subcommand reports v2.0.0
 #   R10 pkg/topology unit tests verify v1.x rejected, v2.0 accepted
 #   R11 pkg/role unit tests verify role composability validator
 #   R12 tests/critical/run-all.sh runs without crash, returns 0 FAIL
@@ -131,8 +131,10 @@ echo ""
 
 ensure_smoke_image
 
-# Image bakes libpcap-dev — no apt-get in per-check prelude. Just set -e.
-PRELUDE='set -euo pipefail'
+# Image bakes libpcap-dev — no apt-get in per-check prelude.
+# Git runs as root inside the smoke container against a mounted host checkout;
+# mark /work safe so Go VCS stamping can query git status.
+PRELUDE='set -euo pipefail; git config --global --add safe.directory /work'
 
 # R1: go build clean
 if run_in_docker "${PRELUDE}; go build ./... 2>&1" >/tmp/F009-r1.log 2>&1; then
@@ -155,17 +157,20 @@ else
     bad "R3" "$(tail -10 /tmp/F009-r3.log)"
 fi
 
-# R4: tests
-if run_in_docker "${PRELUDE}; go test -count=1 -short ./... 2>&1" >/tmp/F009-r4.log 2>&1; then
-    ok "R4 — go test -short ./... PASS"
+# R4: tests. Serialize packages inside the Docker smoke container so
+# localhost gRPC and NET_ADMIN fixtures do not contend under Docker Desktop.
+if run_in_docker "${PRELUDE}; go test -p 1 -count=1 -short ./... 2>&1" >/tmp/F009-r4.log 2>&1; then
+    ok "R4 — go test -p 1 -short ./... PASS"
 else
     bad "R4" "$(tail -15 /tmp/F009-r4.log)"
 fi
 
 # R5: awg-mesh-node --version
+expected_node_version="${EXPECTED_NODE_VERSION:-v2.0.0}"
+expected_meshctl_version="${expected_node_version}"
 if run_in_docker "${PRELUDE}; go build -o /tmp/awg-mesh-node ./cmd/awg-mesh-node && /tmp/awg-mesh-node --version 2>&1" >/tmp/F009-r5.log 2>&1; then
-    if grep -q "awg-mesh-node v2.0.0-alpha.1" /tmp/F009-r5.log; then
-        ok "R5 — awg-mesh-node --version reports v2.0.0-alpha.1"
+    if grep -q "awg-mesh-node ${expected_node_version}" /tmp/F009-r5.log; then
+        ok "R5 — awg-mesh-node --version reports ${expected_node_version}"
     else
         bad "R5" "version output mismatch: $(cat /tmp/F009-r5.log)"
     fi
@@ -267,10 +272,10 @@ fi
 
 # R9: mesh-ctl version
 out=$(run_in_docker "${PRELUDE}; go build -o /tmp/mesh-ctl ./cmd/mesh-ctl && /tmp/mesh-ctl version 2>&1" 2>&1 || true)
-if echo "${out}" | grep -q "mesh-ctl version"; then
-    ok "R9 — mesh-ctl version subcommand reports a version"
+if echo "${out}" | grep -q "mesh-ctl version ${expected_meshctl_version}"; then
+    ok "R9 — mesh-ctl version subcommand reports ${expected_meshctl_version}"
 else
-    bad "R9" "expected 'mesh-ctl version <X>', got: ${out}"
+    bad "R9" "expected 'mesh-ctl version ${expected_meshctl_version}', got: ${out}"
 fi
 
 # R10: pkg/topology unit tests cover v1.x reject + v2.0 accept

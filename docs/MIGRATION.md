@@ -252,10 +252,13 @@ After Phase 6 completes:
   `mesh-ctl` versions before v1.8.0, the one-time bearer token was written
   to stdout and may sit in your shell history or tmux buffer. Rotate it
   after migration: `mesh-ctl token rotate <node>`.
-- **MikroTik RouterOS version:** client generation via `--type mikrotik`
-  emits `.rsc` syntax for RouterOS 7.x. For 6.x, the syntax differs on
-  `/interface/wireguard` — manually adapt the generated script (or upgrade
-  RouterOS first).
+- **MikroTik RouterOS version:** v2.0 client generation uses
+  `mesh-ctl node prepare --platform mikrotik` and emits a RouterOS
+  `/container` deployment for Linux `awg-mesh-client`. The generator can select
+  legacy/transitional/canonical container syntax via `--target-ros`, but the
+  current client data plane requires RouterOS 7.21+ container-side nftables
+  support. RouterOS 6.x is not supported for this path; native RouterOS vanilla
+  WireGuard generation is a deferred future track.
 - **Firewalls in front of masters:** the masters listen on the AWG ports
   you configured plus gRPC on `:9090` (mTLS). Open these inbound from
   endpoints + admin workstation only. gRPC should NOT be public.

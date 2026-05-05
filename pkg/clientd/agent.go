@@ -120,13 +120,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := a.register(ctx); err != nil {
+		return err
+	}
 	if !state.IsZero() {
 		if err := a.apply(ctx, state); err != nil {
 			return err
 		}
-	}
-	if err := a.register(ctx); err != nil {
-		return err
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)

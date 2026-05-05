@@ -3,8 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"errors"
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -13,12 +11,11 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/rotation"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestRunRotateCommandMeshWideSendsRequestAndPrintsRows(t *testing.T) {
-	addr, client, teardown := startMeshWideRotateServer(t)
+	configDir := writeControlPlaneMTLSConfig(t)
+	addr, client, teardown := startMeshWideRotateServer(t, configDir)
 	defer teardown()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -33,6 +30,7 @@ func TestRunRotateCommandMeshWideSendsRequestAndPrintsRows(t *testing.T) {
 		preset:       defaultRotatePreset,
 		meshWide:     true,
 		controlPlane: addr,
+		configDir:    configDir,
 		applyDelay:   rotation.DefaultApplyLeadTime,
 		stdout:       &out,
 	})
@@ -133,39 +131,10 @@ func TestRotateCommandTimeoutMeshWideIncludesApplyDelay(t *testing.T) {
 	}
 }
 
-func startMeshWideRotateServer(t *testing.T) (string, controlpb.ControlPlaneClient, func()) {
+func startMeshWideRotateServer(t *testing.T, configDir string) (string, controlpb.ControlPlaneClient, func()) {
 	t.Helper()
 	srv := controlplane.NewServer(controlplane.NewRegistry(), controlplane.NewLedger(), controlplane.NewAuditLog(64))
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	gs := grpc.NewServer()
-	controlpb.RegisterControlPlaneServer(gs, srv)
-	serveErrCh := make(chan error, 1)
-	go func() { serveErrCh <- gs.Serve(lis) }()
-
-	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		gs.Stop()
-		t.Fatalf("dial: %v", err)
-	}
-	client := controlpb.NewControlPlaneClient(conn)
-	teardown := func() {
-		if err := conn.Close(); err != nil {
-			t.Errorf("conn.Close: %v", err)
-		}
-		gs.Stop()
-		select {
-		case err := <-serveErrCh:
-			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-				t.Errorf("grpc Serve: %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Errorf("grpc Serve did not stop")
-		}
-	}
-	return lis.Addr().String(), client, teardown
+	return startMTLSControlPlaneTestServer(t, configDir, srv)
 }
 
 func registerMeshWideRotateNode(t *testing.T, client controlpb.ControlPlaneClient, ctx context.Context, name string, nodeRole role.Role, overlayIP string) {

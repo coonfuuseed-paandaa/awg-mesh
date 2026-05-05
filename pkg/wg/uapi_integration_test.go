@@ -114,6 +114,21 @@ func TestIntegration_writeConfig_AWGParamsAccepted(t *testing.T) {
 	}
 }
 
+func TestIntegration_meshBootstrapConfigAccepted(t *testing.T) {
+	dev := newTestDevice(t)
+	privKey := randomPrivateKey(t)
+
+	cfg, err := meshBootstrapConfig()
+	if err != nil {
+		t.Fatalf("meshBootstrapConfig: %v", err)
+	}
+	cfg.PrivateKey = &privKey
+
+	if err := ipcSetFromWriteConfig(dev, cfg); err != nil {
+		t.Fatalf("IpcSet rejected mesh bootstrap config: %v", err)
+	}
+}
+
 // TestIntegration_writeConfig_S3S4NeverSent confirms that writeConfig does NOT
 // emit s3 or s4 keys, since amneziawg-go v1.0.4 treats unknown keys as EINVAL.
 // This is the structural regression test: even if S3/S4 are populated in the

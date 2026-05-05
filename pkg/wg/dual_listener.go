@@ -26,6 +26,7 @@ type DualListenerConfig struct {
 	MeshListenPort      int
 	ClientPrivateKey    *Key
 	MeshPrivateKey      *Key
+	ClientPeers         []PeerConfig
 	VanillaFactory      TransportFactory
 	AWGFactory          TransportFactory
 }
@@ -247,6 +248,7 @@ func clientListenerConfig(cfg DualListenerConfig) (Config, error) {
 		PrivateKey:   &privateKey,
 		ListenPort:   IntPtr(cfg.ClientListenPort),
 		ReplacePeers: true,
+		Peers:        append([]PeerConfig(nil), cfg.ClientPeers...),
 	}, nil
 }
 
@@ -282,26 +284,23 @@ func meshBootstrapConfig() (Config, error) {
 	}
 	jmin := 64 + int(seed[0]%32)
 	jmax := jmin + 32 + int(seed[1]%32)
+	s1 := 16 + int(seed[2]%32)
+	s2 := 32 + int(seed[3]%32)
 	return Config{
 		Jc:   IntPtr(1 + int(seed[2]%8)),
 		Jmin: IntPtr(jmin),
 		Jmax: IntPtr(jmax),
-		S1:   IntPtr(seedInt(seed, 0)),
-		S2:   IntPtr(seedInt(seed, 4)),
-		S3:   IntPtr(seedInt(seed, 8)),
-		S4:   IntPtr(seedInt(seed, 12)),
-		H1:   StrPtr(fmt.Sprintf("%d", seedInt(seed, 16))),
-		H2:   StrPtr(fmt.Sprintf("%d", seedInt(seed, 18))),
-		H3:   StrPtr(fmt.Sprintf("%d", seedInt(seed, 20))),
-		H4:   StrPtr(fmt.Sprintf("%d", seedInt(seed, 22))),
-		I1:   StrPtr(fmt.Sprintf("<b %x>", seed[0:6])),
-		I2:   StrPtr(fmt.Sprintf("<t %x>", seed[6:12])),
-		I3:   StrPtr(fmt.Sprintf("<a %x>", seed[12:18])),
-		I4:   StrPtr(fmt.Sprintf("<m %x>", seed[18:24])),
-		I5:   StrPtr(fmt.Sprintf("<e %x>", seed[24:30])),
+		S1:   IntPtr(s1),
+		S2:   IntPtr(s2),
+		H1:   StrPtr(awgHeader(seed, 4, 1)),
+		H2:   StrPtr(awgHeader(seed, 8, 2)),
+		H3:   StrPtr(awgHeader(seed, 12, 3)),
+		H4:   StrPtr(awgHeader(seed, 16, 4)),
+		I1:   StrPtr(fmt.Sprintf("<b 0x%08x><c><t>", binary.BigEndian.Uint32(seed[20:24]))),
 	}, nil
 }
 
-func seedInt(seed Key, offset int) int {
-	return int(binary.BigEndian.Uint32(seed[offset:offset+4])&0x7fffffff) + 1
+func awgHeader(seed Key, offset int, bucket uint32) string {
+	value := bucket*100000000 + binary.BigEndian.Uint32(seed[offset:offset+4])%90000000
+	return fmt.Sprintf("%d", value)
 }

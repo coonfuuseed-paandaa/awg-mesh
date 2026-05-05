@@ -3,8 +3,12 @@ package wg
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/amnezia-vpn/amneziawg-go/device/awg"
 )
 
 type fakeDualTransport struct {
@@ -97,9 +101,21 @@ func TestDualListenerStartConfiguresProtocolSpecificListeners(t *testing.T) {
 
 	var clientTransports []*fakeDualTransport
 	var meshTransports []*fakeDualTransport
+	_, allowed, err := net.ParseCIDR("172.21.92.130/32")
+	if err != nil {
+		t.Fatalf("parse allowed CIDR: %v", err)
+	}
+	clientPeerKey := Key{1}
 	listener, err := NewDualListener(DualListenerConfig{
 		VanillaFactory: collectingFactory(ProtocolVanilla, &clientTransports, nil),
 		AWGFactory:     collectingFactory(ProtocolAmneziaWG, &meshTransports, nil),
+		ClientPeers: []PeerConfig{
+			{
+				PublicKey:         clientPeerKey,
+				ReplaceAllowedIPs: true,
+				AllowedIPs:        []net.IPNet{*allowed},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewDualListener: %v", err)
@@ -130,12 +146,67 @@ func TestDualListenerStartConfiguresProtocolSpecificListeners(t *testing.T) {
 	if clientCfg.Jc != nil || clientCfg.S1 != nil || clientCfg.H1 != nil || clientCfg.I1 != nil {
 		t.Fatalf("vanilla listener must not receive AmneziaWG params: %#v", clientCfg)
 	}
+	if len(clientCfg.Peers) != 1 || clientCfg.Peers[0].PublicKey != clientPeerKey {
+		t.Fatalf("vanilla listener did not receive static client peer: %#v", clientCfg.Peers)
+	}
+	if len(clientCfg.Peers[0].AllowedIPs) != 1 || clientCfg.Peers[0].AllowedIPs[0].String() != "172.21.92.130/32" {
+		t.Fatalf("vanilla listener static peer allowed IPs mismatch: %#v", clientCfg.Peers[0].AllowedIPs)
+	}
 	if meshCfg.Jc == nil || meshCfg.S1 == nil || meshCfg.H1 == nil || meshCfg.I1 == nil {
 		t.Fatalf("mesh listener must receive bootstrap AmneziaWG params: %#v", meshCfg)
 	}
 	snapshot := listener.Snapshot()
 	if !snapshot.Started || snapshot.ClientProtocol != ProtocolVanilla || snapshot.MeshProtocol != ProtocolAmneziaWG {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
+	}
+}
+
+func TestMeshBootstrapConfigUsesDriverAcceptedAWGParams(t *testing.T) {
+	t.Parallel()
+
+	for i := 0; i < 100; i++ {
+		cfg, err := meshBootstrapConfig()
+		if err != nil {
+			t.Fatalf("meshBootstrapConfig: %v", err)
+		}
+		if cfg.Jc == nil || *cfg.Jc < 1 {
+			t.Fatalf("invalid jc: %#v", cfg.Jc)
+		}
+		if cfg.Jmin == nil || cfg.Jmax == nil || *cfg.Jmin < 1 || *cfg.Jmax <= *cfg.Jmin {
+			t.Fatalf("invalid junk packet range: jmin=%#v jmax=%#v", cfg.Jmin, cfg.Jmax)
+		}
+		if cfg.S1 == nil || cfg.S2 == nil {
+			t.Fatalf("missing s1/s2: %#v", cfg)
+		}
+		if 148+*cfg.S1 == 92+*cfg.S2 {
+			t.Fatalf("init and response packet sizes must differ: s1=%d s2=%d", *cfg.S1, *cfg.S2)
+		}
+		if cfg.S3 != nil || cfg.S4 != nil {
+			t.Fatalf("s3/s4 must not be sent to amneziawg-go v1.0.4: s3=%#v s4=%#v", cfg.S3, cfg.S4)
+		}
+		headers := map[uint64]struct{}{}
+		for _, header := range []*string{cfg.H1, cfg.H2, cfg.H3, cfg.H4} {
+			if header == nil {
+				t.Fatalf("missing magic header: %#v", cfg)
+			}
+			parsed, err := strconv.ParseUint(*header, 10, 32)
+			if err != nil {
+				t.Fatalf("parse header %q: %v", *header, err)
+			}
+			if parsed <= 4 {
+				t.Fatalf("magic header must be >4, got %d", parsed)
+			}
+			headers[parsed] = struct{}{}
+		}
+		if len(headers) != 4 {
+			t.Fatalf("magic headers must be distinct: %#v", headers)
+		}
+		if cfg.I1 == nil {
+			t.Fatalf("missing i1 handshake template")
+		}
+		if _, err := awg.Parse("i1", *cfg.I1); err != nil {
+			t.Fatalf("invalid i1 template %q: %v", *cfg.I1, err)
+		}
 	}
 }
 

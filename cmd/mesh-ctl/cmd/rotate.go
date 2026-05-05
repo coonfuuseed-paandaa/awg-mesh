@@ -24,8 +24,6 @@ import (
 	proto "github.com/coonfuuseed-paandaa/awg-mesh/proto"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -41,6 +39,7 @@ type rotateOptions struct {
 	familyName   string
 	meshWide     bool
 	controlPlane string
+	configDir    string
 	applyDelay   time.Duration
 	stdout       io.Writer
 }
@@ -55,6 +54,7 @@ func newRotateCommand() *cobra.Command {
 		Use:   "rotate",
 		Short: "Rotate AWG parameters for an endpoint or the mesh",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			options.configDir = configDir
 			return runRotateCommand(options)
 		},
 	}
@@ -150,6 +150,7 @@ func validateRotateOptions(options rotateOptions) (rotateOptions, error) {
 		familyName:   trimmedFamily,
 		meshWide:     options.meshWide,
 		controlPlane: trimmedControlPlane,
+		configDir:    options.configDir,
 		applyDelay:   options.applyDelay,
 		stdout:       options.stdout,
 	}, nil
@@ -220,7 +221,7 @@ func executeMeshWideRotation(ctx context.Context, options rotateOptions) error {
 	if err != nil {
 		return err
 	}
-	conn, err := grpc.NewClient(options.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := newControlPlaneAdminConn(options.controlPlane, options.configDir)
 	if err != nil {
 		return fmt.Errorf("connect control-plane %q: %w", options.controlPlane, err)
 	}

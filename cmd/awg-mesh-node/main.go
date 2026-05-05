@@ -12,9 +12,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -107,6 +109,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	listenAddr := fs.String("listen", "127.0.0.1:51820", "control-plane: gRPC listen addr")
 	stateDir := fs.String("state-dir", "/var/lib/awg-mesh", "control-plane/clientd: state directory")
 	caDir := fs.String("ca-dir", "", "control-plane: CA material directory containing ca.crt and ca.key")
+	controlPlaneCertHosts := fs.String("cert-hosts", "", "control-plane: comma-separated additional DNS names/IPs for generated server certificate")
 	certRotationDays := fs.Int("cert-rotation-days", 90, "control-plane: mTLS cert rotation interval in days")
 	auditCap := fs.Int("audit-cap", 8192, "control-plane: in-memory audit ring capacity")
 	allowInsecurePublicBind := fs.Bool("allow-insecure-public-bind", false, "control-plane: allow binding insecure gRPC to non-loopback or wildcard addresses")
@@ -116,6 +119,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	clientdRegion := fs.String("region", "", "clientd: node region")
 	clientdCert := fs.String("cert", "", "clientd: node certificate PEM path")
 	clientdKey := fs.String("key", "", "clientd: node private key PEM path")
+	clientdCACert := fs.String("ca-cert", "", "clientd: mesh CA certificate PEM path for mTLS control-plane connections")
 	clientdIface := fs.String("iface", "awg-mesh0", "clientd: WireGuard interface name")
 	clientdProtocol := fs.String("protocol", string(wg.ProtocolAmneziaWG), "clientd: transport protocol: vanilla-wg or amneziawg")
 	allowInsecureControlPlane := fs.Bool("allow-insecure-control-plane", false, "clientd: allow insecure control-plane gRPC to non-loopback targets")
@@ -124,6 +128,8 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
 	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
 	masterClientPrivateKeyFile := fs.String("client-private-key-file", "", "master: base64 WireGuard private key file for the client-facing vanilla-WG listener")
+	var masterClientPeers routeFlags
+	fs.Var(&masterClientPeers, "client-peer", "master: static client-facing peer public_key=allowed_cidr[,allowed_cidr]; repeatable")
 	egressInternetIface := fs.String("internet-iface", "", "egress: internet-bound interface for MASQUERADE")
 	ingressPublicAddr := fs.String("ingress-public-addr", "", "ingress: public HTTP/TLS bind address")
 	ingressTenant := fs.String("ingress-tenant", ingress.DefaultTenant, "ingress: tenant for routes declared with --ingress-route")
@@ -182,9 +188,14 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 
 	switch *mode {
 	case "control-plane":
-		return runControlPlane(*listenAddr, *stateDir, *caDir, *certRotationDays, *auditCap, *allowInsecurePublicBind, stdout, stderr)
+		return runControlPlane(*listenAddr, *stateDir, *caDir, parseCSV(*controlPlaneCertHosts), *certRotationDays, *auditCap, *allowInsecurePublicBind, stdout, stderr)
 	case "master":
 		clientPrivateKey, err := loadOptionalWGPrivateKey(*masterClientPrivateKeyFile)
+		if err != nil {
+			writef(stderr, "master: %v\n", err)
+			return 2
+		}
+		clientPeers, err := parseMasterClientPeers(masterClientPeers)
 		if err != nil {
 			writef(stderr, "master: %v\n", err)
 			return 2
@@ -198,6 +209,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 				ClientListenPort:    *masterClientListenPort,
 				MeshListenPort:      *masterMeshListenPort,
 				ClientPrivateKey:    clientPrivateKey,
+				ClientPeers:         clientPeers,
 			},
 		}, *dryRun, stdout, stderr)
 	case "endpoint", "egress":
@@ -208,6 +220,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			Region:                    *clientdRegion,
 			CertPath:                  *clientdCert,
 			KeyPath:                   *clientdKey,
+			CACertPath:                *clientdCACert,
 			StateDir:                  *stateDir,
 			InterfaceName:             *clientdIface,
 			Protocol:                  wg.Protocol(*clientdProtocol),
@@ -250,6 +263,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		if *clientdKey != "" {
 			clientdArgs = append(clientdArgs, "--key", *clientdKey)
 		}
+		if *clientdCACert != "" {
+			clientdArgs = append(clientdArgs, "--ca-cert", *clientdCACert)
+		}
 		return clientd.RunCommand(context.Background(), clientdArgs, stdout, stderr)
 	default:
 		writef(stdout, "awg-mesh-node %s — mode=%s — daemon implementation lands in %s\n",
@@ -278,13 +294,60 @@ func loadOptionalWGPrivateKey(path string) (*wg.Key, error) {
 	return &key, nil
 }
 
-func runControlPlane(listenAddr, stateDir, caDir string, certRotationDays, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {
+func parseMasterClientPeers(values routeFlags) ([]wg.PeerConfig, error) {
+	peers := make([]wg.PeerConfig, 0, len(values))
+	for _, value := range values {
+		separator := strings.LastIndex(value, "=")
+		if separator < 0 {
+			return nil, fmt.Errorf("--client-peer %q must use public_key=allowed_cidr[,allowed_cidr]", value)
+		}
+		rawKey := value[:separator]
+		rawAllowed := value[separator+1:]
+		key, err := wg.ParseKey(strings.TrimSpace(rawKey))
+		if err != nil {
+			return nil, fmt.Errorf("--client-peer %q has invalid public key: %w", value, err)
+		}
+		allowed, err := parseAllowedCIDRs(rawAllowed)
+		if err != nil {
+			return nil, fmt.Errorf("--client-peer %q: %w", value, err)
+		}
+		peers = append(peers, wg.PeerConfig{
+			PublicKey:         key,
+			ReplaceAllowedIPs: true,
+			AllowedIPs:        allowed,
+		})
+	}
+	return peers, nil
+}
+
+func parseAllowedCIDRs(raw string) ([]net.IPNet, error) {
+	parts := strings.Split(raw, ",")
+	allowed := make([]net.IPNet, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowed CIDR %q: %w", trimmed, err)
+		}
+		allowed = append(allowed, *ipNet)
+	}
+	if len(allowed) == 0 {
+		return nil, errors.New("at least one allowed CIDR is required")
+	}
+	return allowed, nil
+}
+
+func runControlPlane(listenAddr, stateDir, caDir string, certHosts []string, certRotationDays, auditCap int, allowInsecurePublicBind bool, stdout, stderr io.Writer) int {
 	writef(stdout, "awg-mesh-node %s — mode=control-plane — listen=%s state=%s\n",
 		versionString(), listenAddr, stateDir)
 	d, err := control_plane.NewDaemon(control_plane.Config{
 		ListenAddr:              listenAddr,
 		StateDir:                stateDir,
 		CADir:                   caDir,
+		CertHosts:               certHosts,
 		CertRotationDays:        certRotationDays,
 		AuditCap:                auditCap,
 		AllowInsecurePublicBind: allowInsecurePublicBind,
@@ -298,6 +361,18 @@ func runControlPlane(listenAddr, stateDir, caDir string, certRotationDays, audit
 		return 1
 	}
 	return 0
+}
+
+func parseCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, stderr io.Writer) int {

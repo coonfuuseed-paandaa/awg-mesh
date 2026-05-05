@@ -12,8 +12,6 @@ import (
 
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -26,6 +24,7 @@ const (
 
 type auditLogQueryOptions struct {
 	controlPlane string
+	configDir    string
 	sinceUnix    int64
 	untilUnix    int64
 	eventType    string
@@ -71,6 +70,7 @@ func newAuditLogQueryCommand() *cobra.Command {
 		Short: "Query audit events from the control plane",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			options.configDir = configDir
 			options.stdout = cmd.OutOrStdout()
 			return runAuditLogQueryCommand(options)
 		},
@@ -96,7 +96,7 @@ func runAuditLogQueryCommand(options auditLogQueryOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), validated.timeout)
 	defer cancel()
 
-	conn, err := grpc.NewClient(validated.controlPlane, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := newControlPlaneAdminConn(validated.controlPlane, validated.configDir)
 	if err != nil {
 		return fmt.Errorf("connect control-plane %q: %w", validated.controlPlane, err)
 	}
@@ -145,6 +145,7 @@ func validateAuditLogQueryOptions(options auditLogQueryOptions) (auditLogQueryOp
 
 	return auditLogQueryOptions{
 		controlPlane: controlPlane,
+		configDir:    options.configDir,
 		sinceUnix:    options.sinceUnix,
 		untilUnix:    options.untilUnix,
 		eventType:    strings.TrimSpace(options.eventType),

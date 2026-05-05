@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/role"
@@ -145,7 +146,7 @@ func isLoopbackControlPlaneTarget(target string) bool {
 	return addr.IsLoopback()
 }
 
-// RunWithConfig creates the gRPC client and transport configurator, then runs the agent.
+// RunWithConfig creates the gRPC client and a lazy transport configurator, then runs the agent.
 func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) error {
 	validated, err := ValidateCommandConfig(cfg)
 	if err != nil {
@@ -166,25 +167,28 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 	}
 	defer func() { _ = conn.Close() }()
 
-	transport, err := newTransport(cfg.Protocol, cfg.InterfaceName)
-	if err != nil {
-		return err
+	configurator := &lazyTransportConfigurator{
+		protocol:     cfg.Protocol,
+		name:         cfg.InterfaceName,
+		localRoles:   cfg.Roles,
+		newTransport: newTransport,
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() { _ = configurator.Close() }()
 
+	certUpdatePath, certUpdateKeyPath := certUpdatePaths(cfg)
 	agent, err := NewAgent(Config{
 		NodeName:      cfg.Name,
 		Roles:         cfg.Roles,
 		OverlayIP:     cfg.OverlayIP,
 		Region:        cfg.Region,
 		NodeCertPEM:   certPEM,
-		CertPath:      cfg.CertPath,
-		KeyPath:       cfg.KeyPath,
+		CertPath:      certUpdatePath,
+		KeyPath:       certUpdateKeyPath,
 		Version:       awgmesh.Version,
 		InterfaceName: cfg.InterfaceName,
 		Protocol:      cfg.Protocol,
 		StatePath:     filepath.Join(cfg.StateDir, "clientd-state.json"),
-	}, pb.NewControlPlaneClient(conn), TransportConfigurator{Transport: transport, LocalRoles: cfg.Roles})
+	}, pb.NewControlPlaneClient(conn), configurator)
 	if err != nil {
 		return err
 	}
@@ -245,6 +249,58 @@ func defaultCACertPath(certPath string) string {
 func regularFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func certUpdatePaths(cfg CommandConfig) (string, string) {
+	if strings.TrimSpace(cfg.CACertPath) == "" {
+		return "", ""
+	}
+	return cfg.CertPath, cfg.KeyPath
+}
+
+type lazyTransportConfigurator struct {
+	protocol     wg.Protocol
+	name         string
+	localRoles   []role.Role
+	newTransport func(wg.Protocol, string) (wg.Transport, error)
+
+	mu        sync.Mutex
+	transport wg.Transport
+}
+
+func (c *lazyTransportConfigurator) Apply(ctx context.Context, state State) error {
+	transport, err := c.transportForApply()
+	if err != nil {
+		return err
+	}
+	return TransportConfigurator{Transport: transport, LocalRoles: c.localRoles}.Apply(ctx, state)
+}
+
+func (c *lazyTransportConfigurator) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.transport == nil {
+		return nil
+	}
+	return c.transport.Close()
+}
+
+func (c *lazyTransportConfigurator) transportForApply() (wg.Transport, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.transport != nil {
+		return c.transport, nil
+	}
+	factory := c.newTransport
+	if factory == nil {
+		factory = newTransport
+	}
+	transport, err := factory(c.protocol, c.name)
+	if err != nil {
+		return nil, err
+	}
+	c.transport = transport
+	return transport, nil
 }
 
 func newTransport(protocol wg.Protocol, name string) (wg.Transport, error) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/pkg/awgmesh"
+	controlplane "github.com/coonfuuseed-paandaa/awg-mesh/pkg/control_plane"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/pkg/tls"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/proto/control_plane"
 	"google.golang.org/protobuf/proto"
@@ -162,7 +165,7 @@ func TestRunNodePrepareCommandWritesV2TokenMaterialAndCerts(t *testing.T) {
 	}
 }
 
-func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) {
+func TestRunNodePrepareCommandWritesMikrotikContainerRouterOSScript(t *testing.T) {
 	dir := t.TempDir()
 	topologyPath := writeMikrotikPrepareTopology(t, dir)
 	configDir := filepath.Join(dir, "config")
@@ -173,6 +176,7 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 		topologyPath: topologyPath,
 		configDir:    configDir,
 		platform:     "mikrotik",
+		controlPlane: "192.0.2.5:9090",
 		output:       "json",
 		stdout:       &out,
 	})
@@ -188,11 +192,14 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 	if got.RouterOSScriptPath != filepath.Join(nodeDir, routerOSScriptFilename) {
 		t.Fatalf("routeros_script_path = %q, want %q", got.RouterOSScriptPath, filepath.Join(nodeDir, routerOSScriptFilename))
 	}
-	if got.WireGuardPrivateKeyPath != filepath.Join(nodeDir, mikrotikWGPrivateKeyFile) {
-		t.Fatalf("wireguard_private_key_path = %q", got.WireGuardPrivateKeyPath)
+	if got.WireGuardPrivateKeyPath != "" {
+		t.Fatalf("wireguard_private_key_path = %q, want empty for container path", got.WireGuardPrivateKeyPath)
 	}
-	if got.WireGuardPublicKeyPath != filepath.Join(nodeDir, mikrotikWGPublicKeyFile) {
-		t.Fatalf("wireguard_public_key_path = %q", got.WireGuardPublicKeyPath)
+	if got.WireGuardPublicKeyPath != "" {
+		t.Fatalf("wireguard_public_key_path = %q, want empty for container path", got.WireGuardPublicKeyPath)
+	}
+	if _, err := os.Stat(filepath.Join(nodeDir, mikrotikWGPrivateKeyFile)); !os.IsNotExist(err) {
+		t.Fatalf("native WireGuard private key should not be generated for container path, stat err=%v", err)
 	}
 
 	scriptBytes, err := os.ReadFile(got.RouterOSScriptPath)
@@ -200,42 +207,127 @@ func TestRunNodePrepareCommandWritesMikrotikRouterOSScriptAndKeys(t *testing.T) 
 		t.Fatalf("read RouterOS script: %v", err)
 	}
 	script := string(scriptBytes)
-	masterAKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-a", masterClientWGPublicKeyFile))
-	masterBKey := readTrimmedFile(t, filepath.Join(configDir, "nodes", "master-b", masterClientWGPublicKeyFile))
+	expectedClientImage := "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:" + awgmesh.Version
 	for _, want := range []string{
-		"/interface/wireguard",
-		"private-key=\"",
-		"add address=172.21.92.130/32 interface=awg-mesh",
-		"public-key=\"" + masterAKey + "\" endpoint-address=203.0.113.10 endpoint-port=51820",
-		"public-key=\"" + masterBKey + "\" endpoint-address=198.51.100.11 endpoint-port=51820",
-		"allowed-address=172.21.92.2/32,172.21.92.34/32",
-		"allowed-address=172.21.92.20/32,172.21.92.3/32",
+		"# awg-mesh RouterOS deployment script",
+		"/interface/veth add name=AWG_MESH_ROUTER_01",
+		"/container/mounts/add list=AWG_MESH_ROUTER_01_CONFIG",
+		"/container/add interface=AWG_MESH_ROUTER_01",
+		"remote-image=" + expectedClientImage,
+		"envlist=AWG_MESH_ROUTER_01_ENVS",
+		"key=MESH_TOKEN_HASH",
+		"key=MESH_NODE_CERT_B64",
+		"key=MESH_NODE_KEY_B64",
+		"key=MESH_CA_CERT_B64",
+		`cmd="--mode client --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --ca-cert /config/ca.crt --state-dir /config --iface awg-mesh0 --protocol amneziawg"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("RouterOS script missing %q:\n%s", want, redactRouterOSScript(script))
 		}
 	}
-	if strings.Contains(strings.ToLower(script), "amnezia") {
-		t.Fatalf("native RouterOS script must not contain AmneziaWG settings:\n%s", redactRouterOSScript(script))
+	if strings.Contains(script, "/interface/wireguard") {
+		t.Fatalf("container RouterOS script must not configure native WireGuard:\n%s", redactRouterOSScript(script))
 	}
+}
 
-	var secondOut bytes.Buffer
-	if err := runNodePrepareCommand(nodePrepareOptions{
+func TestRunNodePrepareCommandRequiresMikrotikControlPlane(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+
+	err := runNodePrepareCommand(nodePrepareOptions{
+		nodeName:     "router-01",
+		topologyPath: topologyPath,
+		configDir:    filepath.Join(dir, "config"),
+		platform:     "mikrotik",
+		output:       "json",
+		stdout:       io.Discard,
+	})
+	if err == nil {
+		t.Fatal("expected --control-plane requirement")
+	}
+	if !strings.Contains(err.Error(), "--control-plane") {
+		t.Fatalf("error %q does not mention --control-plane", err)
+	}
+}
+
+func TestRunNodePrepareCommandWritesLegacyMikrotikContainerDialect(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+	configDir := filepath.Join(dir, "config")
+
+	err := runNodePrepareCommand(nodePrepareOptions{
 		nodeName:     "router-01",
 		topologyPath: topologyPath,
 		configDir:    configDir,
 		platform:     "mikrotik",
+		controlPlane: "192.0.2.5:9090",
+		targetROS:    "7.16.2",
 		output:       "json",
-		stdout:       &secondOut,
-	}); err != nil {
-		t.Fatalf("runNodePrepareCommand second run: %v", err)
-	}
-	secondScript, err := os.ReadFile(got.RouterOSScriptPath)
+		stdout:       io.Discard,
+	})
 	if err != nil {
-		t.Fatalf("read second RouterOS script: %v", err)
+		t.Fatalf("runNodePrepareCommand: %v", err)
 	}
-	if script != string(secondScript) {
-		t.Fatalf("RouterOS script changed after key reuse\nfirst:\n%s\nsecond:\n%s", redactRouterOSScript(script), redactRouterOSScript(string(secondScript)))
+
+	scriptBytes, err := os.ReadFile(filepath.Join(configDir, "nodes", "router-01", routerOSScriptFilename))
+	if err != nil {
+		t.Fatalf("read RouterOS script: %v", err)
+	}
+	script := string(scriptBytes)
+	expectedClientImage := "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:" + awgmesh.Version
+	for _, want := range []string{
+		"/container/mounts/add name=AWG_MESH_ROUTER_01_CONFIG",
+		"/container/envs/add name=AWG_MESH_ROUTER_01_ENVS",
+		"image=" + expectedClientImage,
+		"mounts=AWG_MESH_ROUTER_01_CONFIG",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("RouterOS 7.16 script missing %q:\n%s", want, redactRouterOSScript(script))
+		}
+	}
+	if strings.Contains(script, "mountlists=") || strings.Contains(script, "/container/envs/add list=") {
+		t.Fatalf("RouterOS 7.16 script contains canonical dialect:\n%s", redactRouterOSScript(script))
+	}
+}
+
+func TestPrepareMikrotikNativeWireGuardRouterOSRemainsDeferredGenerator(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeMikrotikPrepareTopology(t, dir)
+	configDir := filepath.Join(dir, "config")
+
+	topo, err := loadTopologyV2(topologyPath)
+	if err != nil {
+		t.Fatalf("load topology: %v", err)
+	}
+	node, err := findTopologyNode(topo, "router-01")
+	if err != nil {
+		t.Fatalf("find router-01: %v", err)
+	}
+	nodeDir, err := safeNodeConfigDir(configDir, node.Name)
+	if err != nil {
+		t.Fatalf("node dir: %v", err)
+	}
+
+	artifacts, err := prepareMikrotikNativeWireGuardRouterOS(topo, node, configDir, nodeDir)
+	if err != nil {
+		t.Fatalf("prepare native WireGuard generator: %v", err)
+	}
+	if artifacts.WireGuardPrivateKeyPath == "" || artifacts.WireGuardPublicKeyPath == "" {
+		t.Fatalf("native generator did not report WireGuard key paths: %+v", artifacts)
+	}
+	scriptBytes, err := os.ReadFile(artifacts.RouterOSScriptPath)
+	if err != nil {
+		t.Fatalf("read native RouterOS script: %v", err)
+	}
+	script := string(scriptBytes)
+	for _, want := range []string{
+		"# awg-mesh v2 RouterOS native WireGuard client script",
+		"/interface/wireguard/add",
+		"/interface/wireguard/peers/add",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("native generator output missing %q:\n%s", want, script)
+		}
 	}
 }
 
@@ -347,7 +439,7 @@ func TestRunNodeInitCommandRegistersPreparedNode(t *testing.T) {
 	server := &capturingRegisterServer{
 		response: &controlpb.RegisterNodeResponse{Accepted: true, RegisteredAtUnix: 123},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
@@ -392,6 +484,67 @@ func TestRunNodeInitCommandRegistersPreparedNode(t *testing.T) {
 	}
 }
 
+func TestRunNodeInitAndRemoveUsePreparedMTLS(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeClientLifecycleTopology(t, dir, "client-01")
+	configDir := filepath.Join(dir, "config")
+
+	if err := runNodePrepareCommand(nodePrepareOptions{
+		nodeName:     "client-01",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		output:       "human",
+		stdout:       &bytes.Buffer{},
+	}); err != nil {
+		t.Fatalf("prepare node: %v", err)
+	}
+
+	addr, teardown := startCAControlPlaneDaemon(t, configDir)
+	defer teardown()
+
+	var initOut bytes.Buffer
+	if err := runNodeInitCommand(nodeInitOptions{
+		nodeName:     "client-01",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		controlPlane: addr,
+		nodeVersion:  "test-build-version",
+		output:       "json",
+		timeout:      2 * time.Second,
+		stdout:       &initOut,
+	}); err != nil {
+		t.Fatalf("runNodeInitCommand against mTLS daemon: %v", err)
+	}
+
+	var initResult nodeInitJSONOutput
+	if err := json.Unmarshal(initOut.Bytes(), &initResult); err != nil {
+		t.Fatalf("decode init JSON: %v\n%s", err, initOut.String())
+	}
+	if initResult.NodeName != "client-01" || !initResult.Accepted {
+		t.Fatalf("unexpected init JSON: %+v", initResult)
+	}
+
+	var removeOut bytes.Buffer
+	if err := runNodeRemoveCommand(nodeRemoveOptions{
+		nodeName:     "client-01",
+		configDir:    configDir,
+		controlPlane: addr,
+		output:       "json",
+		timeout:      2 * time.Second,
+		stdout:       &removeOut,
+	}); err != nil {
+		t.Fatalf("runNodeRemoveCommand against mTLS daemon: %v", err)
+	}
+
+	var removeResult nodeRemoveJSONOutput
+	if err := json.Unmarshal(removeOut.Bytes(), &removeResult); err != nil {
+		t.Fatalf("decode remove JSON: %v\n%s", err, removeOut.String())
+	}
+	if removeResult.NodeName != "client-01" || !removeResult.Success {
+		t.Fatalf("unexpected remove JSON: %+v", removeResult)
+	}
+}
+
 func TestRunNodeInitCommandReportsRejectedRegistration(t *testing.T) {
 	dir := t.TempDir()
 	topologyPath := writeNodeLifecycleTopology(t, dir, "master-01")
@@ -410,7 +563,7 @@ func TestRunNodeInitCommandReportsRejectedRegistration(t *testing.T) {
 	server := &capturingRegisterServer{
 		response: &controlpb.RegisterNodeResponse{Accepted: false, RejectReason: "missing cert"},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	err := runNodeInitCommand(nodeInitOptions{
@@ -466,15 +619,17 @@ func TestRunNodeInitCommandRequiresPreparedKeyPair(t *testing.T) {
 }
 
 func TestRunNodeRemoveCommandSendsRequestAndOutputsJSON(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingDecommissionServer{
 		response: &controlpb.DecommissionResponse{Success: true, ReassignedOverlayCount: 3},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runNodeRemoveCommand(nodeRemoveOptions{
 		nodeName:     "master-01",
+		configDir:    configDir,
 		controlPlane: addr,
 		drain:        15 * time.Second,
 		output:       "json",
@@ -517,15 +672,17 @@ func TestValidateNodeRemoveOptionsRejectsSubSecondDrain(t *testing.T) {
 }
 
 func TestRunNodeRemoveCommandReportsServerFailure(t *testing.T) {
+	configDir := writeControlPlaneMTLSConfig(t)
 	server := &capturingDecommissionServer{
 		response: &controlpb.DecommissionResponse{Success: false, Error: "node not in registry"},
 	}
-	addr, teardown := startAuditLogTestServer(t, server)
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
 	defer teardown()
 
 	var out bytes.Buffer
 	err := runNodeRemoveCommand(nodeRemoveOptions{
 		nodeName:     "missing-node",
+		configDir:    configDir,
 		controlPlane: addr,
 		output:       "human",
 		timeout:      2 * time.Second,
@@ -595,6 +752,43 @@ func (s *capturingDecommissionServer) capturedRequest(t *testing.T) *controlpb.D
 	return s.request
 }
 
+func startCAControlPlaneDaemon(t *testing.T, caDir string) (string, func()) {
+	t.Helper()
+	daemon, err := controlplane.NewDaemon(controlplane.Config{
+		ListenAddr: "127.0.0.1:0",
+		StateDir:   t.TempDir(),
+		CADir:      caDir,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- daemon.Run(ctx) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for daemon.ListenerAddr() == "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	addr := daemon.ListenerAddr()
+	if addr == "" {
+		cancel()
+		t.Fatal("control-plane daemon never bound listener")
+	}
+
+	return addr, func() {
+		cancel()
+		select {
+		case err := <-doneCh:
+			if err != nil {
+				t.Fatalf("control-plane daemon returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("control-plane daemon did not shut down within 5s")
+		}
+	}
+}
+
 func writeNodeLifecycleTopology(t *testing.T, dir, nodeName string) string {
 	t.Helper()
 	path := filepath.Join(dir, "topology.yml")
@@ -609,6 +803,26 @@ nodes:
     overlay_ip: 172.21.92.2
     bridge_ip: 192.168.93.2
     region: ru
+`, nodeName)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write topology fixture: %v", err)
+	}
+	return path
+}
+
+func writeClientLifecycleTopology(t *testing.T, dir, nodeName string) string {
+	t.Helper()
+	path := filepath.Join(dir, "topology.yml")
+	data := fmt.Sprintf(`
+schema_version: 2
+mesh:
+  name: lifecycle-test
+  overlay_supernet: 172.21.92.0/24
+nodes:
+  - name: %q
+    roles: [client]
+    overlay_ip: 172.21.92.130
+    region: home
 `, nodeName)
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatalf("write topology fixture: %v", err)

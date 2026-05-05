@@ -60,8 +60,9 @@ func TestGenerateDeployRSC(t *testing.T) {
 		"dns=1.1.1.1,8.8.8.8",
 		"logging=yes",
 		"start-on-boot=yes",
-		// Start
-		"/container/start [find where name=AWG_MESH_HOME]",
+		// RouterOS imports local container images asynchronously; immediate
+		// /container/start inside the same /import transaction is not reliable.
+		"RouterOS starts the container after local image import",
 	}
 
 	mustNotContain := []string{
@@ -69,6 +70,7 @@ func TestGenerateDeployRSC(t *testing.T) {
 		"key=MESH_AWG_CONFIG", // dead duplicate of MESH_MASTERS
 		"key=MESH_CONFIG_DIR", // redundant — /config is the binary default
 		"192.168.100",         // old default subnet — must be gone
+		"/container/start",
 	}
 
 	// Plaintext MESH_TOKEN= must never land in a generated script.
@@ -99,6 +101,34 @@ func TestGenerateDeployRSC(t *testing.T) {
 	}
 	if vethIdx >= bridgePortIdx {
 		t.Fatalf("veth section must precede bridge-port section: veth at %d, bridge/port at %d\nscript:\n%s", vethIdx, bridgePortIdx, script)
+	}
+}
+
+func TestGenerateDeployRSCClientCommandUsesMTLS(t *testing.T) {
+	t.Parallel()
+
+	script, err := GenerateDeployRSC(DeployScript{
+		TopologyName:  "mikrotik-home",
+		ContainerName: "AWG_MESH_HOME",
+		Image:         "ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
+		Veth:          "AWG_MESH_HOME",
+		OverlayIP:     "10.10.0.10",
+		OverlayNet:    "10.10.0.0/16",
+		TokenHash:     "$2a$12$abcdefghijklmnopqrstuv",
+		NodeCertB64:   "bm9kZS1jZXJ0",
+		NodeKeyB64:    "bm9kZS1rZXk=",
+		CACertB64:     "Y2EtY2VydA==",
+		ControlPlane:  "192.0.2.5:9090",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployRSC returned error: %v", err)
+	}
+
+	if !strings.Contains(script, "--ca-cert /config/ca.crt") {
+		t.Fatalf("client command missing CA cert flag:\n%s", script)
+	}
+	if strings.Contains(script, "--allow-insecure-control-plane") {
+		t.Fatalf("client command must not force insecure control-plane transport:\n%s", script)
 	}
 }
 

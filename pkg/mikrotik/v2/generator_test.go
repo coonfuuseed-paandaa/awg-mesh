@@ -46,10 +46,8 @@ func TestGenerateStaticRSCProducesDeterministicNativeWireGuardScript(t *testing.
 
 	mustContain := []string{
 		"# awg-mesh v2 RouterOS native WireGuard client script",
-		"/interface/wireguard",
-		"add name=awg-mesh listen-port=13231 private-key=\"" + clientPrivate.String() + "\"",
-		"/ip/address",
-		"add address=172.21.92.130/32 interface=awg-mesh",
+		"/interface/wireguard/add name=awg-mesh listen-port=13231 private-key=\"" + clientPrivate.String() + "\"",
+		"/ip/address/add address=172.21.92.130/32 interface=awg-mesh",
 		"public-key=\"" + masterKeys["master-a"].String() + "\" endpoint-address=203.0.113.10 endpoint-port=51820 allowed-address=172.21.92.2/32,172.21.92.34/32",
 		"public-key=\"" + masterKeys["master-b"].String() + "\" endpoint-address=198.51.100.11 endpoint-port=51820 allowed-address=172.21.92.20/32,172.21.92.3/32",
 		"persistent-keepalive=25s",
