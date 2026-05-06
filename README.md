@@ -17,52 +17,58 @@ prove both code contracts and product behavior before a tag is published.
 ## Architecture Overview
 
 ```mermaid
-graph TB
-    subgraph Admin["Admin workstation"]
+graph LR
+    subgraph Desired["Desired state (operator-owned)"]
         ctl["mesh-ctl"]
         topo["mesh-topology.yml\nsource of truth"]
+        ctl -->|"validate / generate / prepare"| topo
     end
 
-    subgraph ZoneA["Master-owned zone"]
-        master["master-01\nmaster + balancer + ingress"]
-        coord["runtime coordination endpoint\nhosted by responsible master"]
-        egress["egress-01"]
-        ingress["ingress role"]
-        client["client / home server"]
-        mt["MikroTik\n/container client"]
+    subgraph Masters["Equal master-owned zones"]
+        master1["master-01\nmaster + balancer\nembedded coordination endpoint"]
+        master2["master-02\nmaster + balancer\nembedded coordination endpoint"]
+        master1 <-->|"federated mesh-internal AWG\nwhen topology requires"| master2
     end
 
-    subgraph Failover["Optional failover zone"]
-        master2["master-02\nindependent master"]
+    subgraph Edge["Non-client role nodes"]
+        egress["egress-01\nNAT boundary"]
+        ingress["ingress-de-01\nservice ingress"]
+    end
+
+    subgraph Clients["Client nodes"]
+        client["home-server-01\nclient"]
+        mt["mikrotik-home\n/container client"]
     end
 
     user["Users / apps"]
     internet["Internet"]
 
-    ctl -- "validate / generate / prepare" --> topo
-    topo -- "desired state" --> master
-    topo -- "responsible master targets" --> egress
-    topo -- "responsible master targets" --> ingress
-    topo -- "responsible master targets" --> client
-    topo -- "failover targets" --> master2
-    master -- "hosts" --> coord
-    egress -- "mTLS registration / peer updates" --> coord
-    ingress -- "mTLS registration / peer updates" --> coord
-    client -- "mTLS registration / peer updates" --> coord
-    mt -- "mTLS registration / peer updates" --> coord
-    client -- "vanilla WG to master" --> master
-    mt -- "vanilla WG to master" --> master
-    master -- "mesh-internal AWG" --> egress
-    ingress -- "service forwarding" --> client
-    egress -- "NAT at boundary" --> internet
+    topo -. "desired state" .-> master1
+    topo -. "desired state" .-> master2
+    topo -. "responsible masters" .-> egress
+    topo -. "responsible masters" .-> ingress
+    topo -. "preferred / failover masters" .-> client
+    topo -. "preferred / failover masters" .-> mt
+    client <-->|"vanilla WG client link"| master1
+    client -. "optional failover link" .-> master2
+    mt <-->|"vanilla WG client link"| master1
+    mt -. "optional failover link" .-> master2
+    master1 -->|"mesh-internal AWG"| egress
+    master2 -. "mesh-internal AWG\nwhen responsible / failover" .-> egress
     user --> ingress
+    ingress -->|"service forwarding via master"| master1
+    egress -- "NAT at boundary" --> internet
 ```
 
 `mesh-ctl` is the desired-state tool: it reads `mesh-topology.yml`, validates
 intent, prepares node material, and drives explicit operator actions. The data
 plane runs on `awg-mesh-node` instances. In the current v2.x model, masters own
 runtime responsibility for their zones; no standalone daemon is required in the
-happy path, and masters do not share runtime state with each other.
+happy path. Master nodes are equivalent peers; failover is a topology-generated
+relationship between clients or role nodes and their responsible masters, not a
+separate failover-only master class. The coordination endpoint is hosted inside
+the responsible master runtime when current v2.x flows need registration, peer
+updates, audit, or certificate lifecycle hooks.
 
 The v2 topology file declares nodes once under `nodes:` and gives each node one
 or more roles:
