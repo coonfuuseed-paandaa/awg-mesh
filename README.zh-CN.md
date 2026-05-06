@@ -1,4 +1,4 @@
-<!-- synced: 2026-05-05 source-commit: 2ac88340119bf7f2a5f55fcdf994a8709b8f11f1 -->
+<!-- synced: 2026-05-06 source-state: README.md working-tree architecture-diagram correction -->
 [English](README.md) | [Русский](README.ru.md) | **中文**
 
 [![CI](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml)
@@ -18,52 +18,58 @@ backup/restore、通过 MikroTik RouterOS `/container` 部署，以及在发布 
 ## 架构概览
 
 ```mermaid
-graph TB
-    subgraph Admin["Admin workstation"]
+graph LR
+    subgraph Desired["Desired state (operator-owned)"]
         ctl["mesh-ctl"]
         topo["mesh-topology.yml\nsource of truth"]
+        ctl -->|"validate / generate / prepare"| topo
     end
 
-    subgraph ZoneA["Master-owned zone"]
-        master["master-01\nmaster + balancer + ingress"]
-        coord["runtime coordination endpoint\nhosted by responsible master"]
-        egress["egress-01"]
-        ingress["ingress role"]
-        client["client / home server"]
-        mt["MikroTik\n/container client"]
+    subgraph Masters["Equal master-owned zones"]
+        master1["master-01\nmaster + balancer\nembedded coordination endpoint"]
+        master2["master-02\nmaster + balancer\nembedded coordination endpoint"]
+        master1 <-->|"federated mesh-internal AWG\nwhen topology requires"| master2
     end
 
-    subgraph Failover["Optional failover zone"]
-        master2["master-02\nindependent master"]
+    subgraph Edge["Non-client role nodes"]
+        egress["egress-01\nNAT boundary"]
+        ingress["ingress-de-01\nservice ingress"]
+    end
+
+    subgraph Clients["Client nodes"]
+        client["home-server-01\nclient"]
+        mt["mikrotik-home\n/container client"]
     end
 
     user["Users / apps"]
     internet["Internet"]
 
-    ctl -- "validate / generate / prepare" --> topo
-    topo -- "desired state" --> master
-    topo -- "responsible master targets" --> egress
-    topo -- "responsible master targets" --> ingress
-    topo -- "responsible master targets" --> client
-    topo -- "failover targets" --> master2
-    master -- "hosts" --> coord
-    egress -- "mTLS registration / peer updates" --> coord
-    ingress -- "mTLS registration / peer updates" --> coord
-    client -- "mTLS registration / peer updates" --> coord
-    mt -- "mTLS registration / peer updates" --> coord
-    client -- "vanilla WG to master" --> master
-    mt -- "vanilla WG to master" --> master
-    master -- "mesh-internal AWG" --> egress
-    ingress -- "service forwarding" --> client
-    egress -- "NAT at boundary" --> internet
+    topo -. "desired state" .-> master1
+    topo -. "desired state" .-> master2
+    topo -. "responsible masters" .-> egress
+    topo -. "responsible masters" .-> ingress
+    topo -. "preferred / failover masters" .-> client
+    topo -. "preferred / failover masters" .-> mt
+    client <-->|"vanilla WG client link"| master1
+    client -. "optional failover link" .-> master2
+    mt <-->|"vanilla WG client link"| master1
+    mt -. "optional failover link" .-> master2
+    master1 -->|"mesh-internal AWG"| egress
+    master2 -. "mesh-internal AWG\nwhen responsible / failover" .-> egress
     user --> ingress
+    ingress -->|"service forwarding via master"| master1
+    egress -- "NAT at boundary" --> internet
 ```
 
 `mesh-ctl` 是 desired-state tool：它读取 `mesh-topology.yml`、验证 intent、
 准备 node material，并执行显式的 operator actions。Data plane 运行在
 `awg-mesh-node` 实例上。在当前 v2.x 模型中，masters 拥有各自 zones 的
-runtime responsibility；happy path 不需要独立的 standalone daemon，并且 masters
-之间不共享 runtime state。
+runtime responsibility；happy path 不需要独立的 standalone daemon。Master
+nodes 是平等的 peers；failover 是由 topology 生成的关系，连接 clients 或
+role nodes 与它们的 responsible masters，而不是单独的 failover-only master
+类别。当前 v2.x flows 需要 registration、peer updates、audit 或 certificate
+lifecycle hooks 时，coordination endpoint 托管在 responsible master runtime
+内部。
 
 v2 topology 文件在 `nodes:` 下只声明一次节点，并给每个节点分配一个或多个角色：
 

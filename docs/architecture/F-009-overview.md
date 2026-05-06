@@ -1,12 +1,17 @@
 # F-009 Architecture Overview — awg-mesh v2.0
 
-**Status:** v2.0.0-alpha.1 (CR-001 foundation landed; daemon implementation in CR-002+)
+**Status:** Historical background; superseded for current v2.x releases by
+the F-010 master-owned-zone recalibration.
 **Spec:** see project repo `.agent/specs/F-009-mesh-architecture/spec.md` (local development)
 **Genesis:** `.agent/genesis/F-009-mesh-redesign-vision.md`
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-06
 
-This is the operator-facing one-pager for the v2.0 architecture. Skim it before
-deploying; consult the full spec for FR/NFR detail.
+This document preserves F-009 background and early design intent. It is not the
+current deployment diagram. The current v2.x release architecture uses
+master-owned zones: `mesh-ctl` is the desired-state CLI, masters host the
+runtime coordination surface they need for their own zones, and no standalone
+control-plane topology node is required in the happy path. See the root
+`README.md` for the current operator-facing overview.
 
 ## What changed vs v1.x
 
@@ -22,7 +27,7 @@ node and an **ECMP multipath route** for overlay traffic. Three problems:
 
 v2.0 (F-009) collapses to a **flat AmneziaWG mesh with role-tagged nodes**.
 
-## High-level architecture
+## Historical high-level architecture
 
 ```text
                   control plane (mesh-ctl daemon)

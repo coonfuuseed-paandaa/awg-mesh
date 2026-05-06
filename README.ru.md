@@ -1,4 +1,4 @@
-<!-- synced: 2026-05-05 source-commit: 2ac88340119bf7f2a5f55fcdf994a8709b8f11f1 -->
+<!-- synced: 2026-05-06 source-state: README.md working-tree architecture-diagram correction -->
 [English](README.md) | **Русский** | [中文](README.zh-CN.md)
 
 [![CI](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml/badge.svg)](https://github.com/coonfuuseed-paandaa/awg-mesh/actions/workflows/build.yml)
@@ -19,52 +19,58 @@ Docker-native зашифрованная overlay-сеть на базе AmneziaW
 ## Обзор архитектуры
 
 ```mermaid
-graph TB
-    subgraph Admin["Admin workstation"]
+graph LR
+    subgraph Desired["Desired state (operator-owned)"]
         ctl["mesh-ctl"]
         topo["mesh-topology.yml\nsource of truth"]
+        ctl -->|"validate / generate / prepare"| topo
     end
 
-    subgraph ZoneA["Master-owned zone"]
-        master["master-01\nmaster + balancer + ingress"]
-        coord["runtime coordination endpoint\nhosted by responsible master"]
-        egress["egress-01"]
-        ingress["ingress role"]
-        client["client / home server"]
-        mt["MikroTik\n/container client"]
+    subgraph Masters["Equal master-owned zones"]
+        master1["master-01\nmaster + balancer\nembedded coordination endpoint"]
+        master2["master-02\nmaster + balancer\nembedded coordination endpoint"]
+        master1 <-->|"federated mesh-internal AWG\nwhen topology requires"| master2
     end
 
-    subgraph Failover["Optional failover zone"]
-        master2["master-02\nindependent master"]
+    subgraph Edge["Non-client role nodes"]
+        egress["egress-01\nNAT boundary"]
+        ingress["ingress-de-01\nservice ingress"]
+    end
+
+    subgraph Clients["Client nodes"]
+        client["home-server-01\nclient"]
+        mt["mikrotik-home\n/container client"]
     end
 
     user["Users / apps"]
     internet["Internet"]
 
-    ctl -- "validate / generate / prepare" --> topo
-    topo -- "desired state" --> master
-    topo -- "responsible master targets" --> egress
-    topo -- "responsible master targets" --> ingress
-    topo -- "responsible master targets" --> client
-    topo -- "failover targets" --> master2
-    master -- "hosts" --> coord
-    egress -- "mTLS registration / peer updates" --> coord
-    ingress -- "mTLS registration / peer updates" --> coord
-    client -- "mTLS registration / peer updates" --> coord
-    mt -- "mTLS registration / peer updates" --> coord
-    client -- "vanilla WG to master" --> master
-    mt -- "vanilla WG to master" --> master
-    master -- "mesh-internal AWG" --> egress
-    ingress -- "service forwarding" --> client
-    egress -- "NAT at boundary" --> internet
+    topo -. "desired state" .-> master1
+    topo -. "desired state" .-> master2
+    topo -. "responsible masters" .-> egress
+    topo -. "responsible masters" .-> ingress
+    topo -. "preferred / failover masters" .-> client
+    topo -. "preferred / failover masters" .-> mt
+    client <-->|"vanilla WG client link"| master1
+    client -. "optional failover link" .-> master2
+    mt <-->|"vanilla WG client link"| master1
+    mt -. "optional failover link" .-> master2
+    master1 -->|"mesh-internal AWG"| egress
+    master2 -. "mesh-internal AWG\nwhen responsible / failover" .-> egress
     user --> ingress
+    ingress -->|"service forwarding via master"| master1
+    egress -- "NAT at boundary" --> internet
 ```
 
 `mesh-ctl` - это desired-state tool: он читает `mesh-topology.yml`, проверяет
 intent, готовит node material и выполняет явные действия оператора. Data plane
 работает на экземплярах `awg-mesh-node`. В текущей модели v2.x masters владеют
 runtime responsibility своих zones; отдельный standalone daemon не требуется в
-happy path, и masters не разделяют runtime state друг с другом.
+happy path. Master nodes — равноправные peers; failover — это
+сгенерированная из topology связь между clients или role nodes и их responsible
+masters, а не отдельный failover-only класс master. Coordination endpoint
+размещается внутри runtime responsible master, когда текущим v2.x flows нужны
+registration, peer updates, audit или certificate lifecycle hooks.
 
 Файл топологии v2 объявляет узлы один раз в `nodes:` и назначает каждому узлу
 одну или несколько ролей:
