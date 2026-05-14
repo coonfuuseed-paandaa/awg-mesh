@@ -2,7 +2,7 @@ module github.com/coonfuuseed-paandaa/awg-mesh/v2
 
 go 1.25.0
 
-toolchain go1.25.9
+toolchain go1.25.10
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
