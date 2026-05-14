@@ -70,8 +70,7 @@ func newBootstrapCommand() *cobra.Command {
 		Use:   "bootstrap",
 		Short: "Prepare a bare Linux host: install Docker and pull the awg-mesh-node image",
 		Long: `bootstrap SSHes into a fresh Linux host, installs Docker if missing,
-and pulls the awg-mesh-node image so the host is ready for 'mesh-ctl master prepare'
-or 'mesh-ctl endpoint prepare'.
+	and pulls the awg-mesh-node image so the host is ready for 'mesh-ctl node prepare'.
 
 SSH host-key verification uses ~/.ssh/known_hosts by default.
 Use --accept-new-host-key only for first-contact with a host you trust.`,
@@ -193,7 +192,7 @@ func runBootstrap(opts bootstrapOpts) error {
 	fmt.Printf("  Docker:        %s\n", dockerVersion)
 	fmt.Printf("  Image:         %s\n", opts.image)
 	fmt.Printf("  Image digest:  %s\n", digest)
-	fmt.Printf("\nHost is ready. Run 'mesh-ctl master prepare' or 'mesh-ctl endpoint prepare' next.\n")
+	fmt.Printf("\nHost is ready. Run 'mesh-ctl node prepare <name>' next.\n")
 
 	return nil
 }

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Removed stale v1.x Docker Compose templates** from `cmd/mesh-ctl/templates/`
+  and `deploy/templates/`. They referenced removed role-specific onboarding
+  (`master prepare` / `endpoint prepare` / `client prepare`), combined
+  `network_mode: host` with container-scoped `sysctls`, omitted `/dev/net/tun`,
+  and emitted obsolete `MESH_*` env vars. v2 onboarding uses
+  `mesh-ctl node prepare`; the old compose templates are not an active generator.
+- **Bootstrap next-step text** now points operators to
+  `mesh-ctl node prepare <name>` instead of removed v1.x role commands.
+
 ## [2.0.0] — 2026-05-03 — flat mesh architecture
 
 ### Added
