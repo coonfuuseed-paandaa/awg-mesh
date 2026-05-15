@@ -12,6 +12,7 @@ emulation playbook:
 ```bash
 CGO_ENABLED=1 go test -race -count=1 ./...
 bash tests/simulation/F-009-CR-001-foundation-smoke.sh
+bash tests/critical/f011-peer-identity-handshake.sh
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-chr-baseline-runtime.sh
 BUILDX_BUILDER=default bash tests/simulation/mikrotik-version-matrix.sh
 ```
@@ -26,6 +27,7 @@ runtime path with unrelated registry or network errors.
 | Script | Purpose |
 |---|---|
 | `F-009-CR-001-foundation-smoke.sh` | Foundation smoke: tracked Go files are formatted, build/vet/test gates pass, binary modes start, schema v1 is rejected, schema v2 is accepted, and the critical-suite runner is present. |
+| `tests/critical/f011-peer-identity-handshake.sh` | F-011 peer identity regression: control-plane snapshot overrides stale clientd cache, clientd configures the AmneziaWG peer, a packet transits, and the peer reports a non-zero handshake timestamp. |
 | `mikrotik-chr-baseline-runtime.sh` | Bare RouterOS `/container` baseline: veth, bridge, NAT, firewall counters, container logs, and container-originated reachability work before the product is deployed. |
 | `mikrotik-version-matrix.sh` | Product CHR E2E on RouterOS 7.21+ targets. The default is 7.21.4. Generator syntax coverage for 7.16.2 and 7.20.8 is handled by Go tests, not by this runtime gate. |
 
