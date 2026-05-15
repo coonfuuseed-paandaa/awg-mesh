@@ -13,6 +13,7 @@ import (
 type fakeMasterTransport struct {
 	name       string
 	protocol   wg.Protocol
+	pubkey     wg.Key
 	closeCount int
 }
 
@@ -21,7 +22,9 @@ func (t *fakeMasterTransport) Name() string                { return t.name }
 func (t *fakeMasterTransport) Configure(wg.Config) error   { return nil }
 func (t *fakeMasterTransport) AddPeer(wg.PeerConfig) error { return nil }
 func (t *fakeMasterTransport) RemovePeer(wg.Key) error     { return nil }
-func (t *fakeMasterTransport) Stats() (*wg.Device, error)  { return &wg.Device{Name: t.name}, nil }
+func (t *fakeMasterTransport) Stats() (*wg.Device, error) {
+	return &wg.Device{Name: t.name, PublicKey: t.pubkey}, nil
+}
 func (t *fakeMasterTransport) Close() error {
 	t.closeCount++
 	return nil

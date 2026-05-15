@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/netip"
 	"strings"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
@@ -87,6 +90,7 @@ func (m *Master) Run(ctx context.Context) error {
 			return errors.Join(fmt.Errorf("start master coordination: %w", err), closeErr)
 		}
 		coordinationDone = m.coordination.Done()
+		m.selfRegisterCoordination()
 	}
 	select {
 	case <-ctx.Done():
@@ -105,6 +109,27 @@ func (m *Master) Run(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (m *Master) selfRegisterCoordination() {
+	meshPubkey, err := m.listener.MeshPublicKey()
+	if err != nil {
+		log.Printf("master %s: could not read mesh public key for self-registration: %v", m.cfg.Name, err)
+		return
+	}
+	selfNode := control_plane.RegisteredNode{
+		Name:        m.cfg.Name,
+		Roles:       []role.Role{role.RoleMaster},
+		OverlayIP:   m.cfg.OverlayIP,
+		Pubkey:      meshPubkey[:],
+		NodeCertPEM: []byte("self-registered-master"),
+		Protocol:    string(wg.ProtocolAmneziaWG),
+	}
+	if err := m.coordination.SelfRegister(selfNode); err != nil {
+		log.Printf("master %s: self-registration failed: %v", m.cfg.Name, err)
+		return
+	}
+	log.Printf("master %s: self-registered in coordination registry (pubkey %x...)", m.cfg.Name, meshPubkey[:4])
 }
 
 // Close tears down the master listeners.
