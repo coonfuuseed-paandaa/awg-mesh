@@ -69,12 +69,15 @@ func (s *Server) RegisterNode(ctx context.Context, req *pb.RegisterNodeRequest) 
 		roles = append(roles, role.Role(r))
 	}
 	node := RegisteredNode{
-		Name:        req.GetNodeName(),
-		Roles:       roles,
-		OverlayIP:   req.GetOverlayIp(),
-		Region:      req.GetRegion(),
-		NodeCertPEM: req.GetNodeCertPem(),
-		NodeVersion: req.GetNodeVersion(),
+		Name:         req.GetNodeName(),
+		Roles:        roles,
+		OverlayIP:    req.GetOverlayIp(),
+		Region:       req.GetRegion(),
+		NodeCertPEM:  req.GetNodeCertPem(),
+		NodeVersion:  req.GetNodeVersion(),
+		Pubkey:       req.GetPubkey(),
+		EndpointHost: req.GetEndpointHost(),
+		Protocol:     req.GetProtocol(),
 	}
 	if err := s.registry.Register(node); err != nil {
 		s.audit.Append(AuditEvent{
@@ -125,7 +128,7 @@ func (s *Server) Heartbeat(stream pb.ControlPlane_HeartbeatServer) error {
 			}
 			return err
 		}
-		if err := s.registry.Heartbeat(req.GetNodeName(), req.GetHealth()); err != nil {
+		if err := s.registry.Heartbeat(req.GetNodeName(), req.GetHealth(), req.GetPubkey(), req.GetEndpointHost(), req.GetProtocol()); err != nil {
 			return status.Errorf(codes.NotFound, "node %q not registered", req.GetNodeName())
 		}
 		s.audit.Append(AuditEvent{
@@ -426,25 +429,40 @@ func authenticatedStreamNodeName(ctx context.Context) (string, error) {
 // --- Helpers -----------------------------------------------------------------
 
 func (s *Server) buildPeerListUpdate(subject string, snapshot []OwnershipEntry, version int64) *pb.PeerListUpdate {
-	// CR-002 emits a stripped peer list — only overlay/owner pairs that the
-	// subject node SHOULD peer with. Full peer-entry shape (pubkey, endpoint,
-	// allowed_ips partition, protocol) lands in CR-003 (clientd) once the
-	// registry exposes pubkey state. For now we publish the ownership view as
-	// the peer-list seed; clientd derives configuration from its own ledger
-	// stream.
-	peers := make([]*pb.PeerEntry, 0, len(snapshot))
+	// Step 1: Group overlay IPs by owning master, preserving first-seen order.
+	type masterAgg struct {
+		allowedIPs []string
+		overlayIP  string // first overlay IP (for PeerOverlayIp field)
+	}
+	byMaster := make(map[string]*masterAgg)
+	var masterOrder []string
 	for _, e := range snapshot {
-		peers = append(peers, &pb.PeerEntry{
-			PeerName:      e.OwningMaster,
-			PeerOverlayIp: e.OverlayIp(),
-			AllowedIps:    []string{e.OverlayIp() + "/32"},
-		})
+		agg, ok := byMaster[e.OwningMaster]
+		if !ok {
+			agg = &masterAgg{overlayIP: e.OverlayIp()}
+			byMaster[e.OwningMaster] = agg
+			masterOrder = append(masterOrder, e.OwningMaster)
+		}
+		agg.allowedIPs = append(agg.allowedIPs, e.OverlayIp()+"/32")
 	}
-	return &pb.PeerListUpdate{
-		SubjectNode: subject,
-		Peers:       peers,
-		Version:     version,
+
+	// Step 2: Build one PeerEntry per unique master, enriched from the registry.
+	peers := make([]*pb.PeerEntry, 0, len(byMaster))
+	for _, masterName := range masterOrder {
+		agg := byMaster[masterName]
+		entry := &pb.PeerEntry{
+			PeerName:      masterName,
+			PeerOverlayIp: agg.overlayIP,
+			AllowedIps:    agg.allowedIPs,
+		}
+		if node, ok := s.registry.Lookup(masterName); ok {
+			entry.PeerPubkey = node.Pubkey
+			entry.PeerEndpointHost = node.EndpointHost
+			entry.Protocol = node.Protocol
+		}
+		peers = append(peers, entry)
 	}
+	return &pb.PeerListUpdate{SubjectNode: subject, Peers: peers, Version: version}
 }
 
 // OverlayIp is a small helper so we don't have to fmt-import in the server file.

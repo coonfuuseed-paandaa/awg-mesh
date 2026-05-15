@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -266,6 +267,12 @@ func runNodePrepareCommand(options nodePrepareOptions) error {
 	}
 	switch platform := preparePlatform(options.platform, node); platform {
 	case "", "linux":
+		_, _, wgPaths, err := loadOrCreateWireGuardKeyPair(nd, "wireguard-private.key", "wireguard-public.key")
+		if err != nil {
+			return fmt.Errorf("load or create wireguard key pair for %q: %w", node.Name, err)
+		}
+		result.WireGuardPrivateKeyPath = wgPaths.PrivateKeyPath
+		result.WireGuardPublicKeyPath = wgPaths.PublicKeyPath
 	case "mikrotik":
 		if strings.TrimSpace(options.controlPlane) == "" {
 			return fmt.Errorf("--control-plane is required as the responsible master coordination target for --platform mikrotik")
@@ -317,13 +324,35 @@ func runNodeInitCommand(options nodeInitOptions) error {
 	}
 	defer func() { _ = conn.Close() }()
 
+	var pubkeyBytes []byte
+	pubkeyPath := filepath.Join(nd, "wireguard-public.key")
+	if raw, err := os.ReadFile(pubkeyPath); err == nil {
+		trimmed := strings.TrimSpace(string(raw))
+		if decoded, decErr := base64.StdEncoding.DecodeString(trimmed); decErr == nil && len(decoded) == 32 {
+			pubkeyBytes = decoded
+		}
+	}
+
+	var endpointHost string
+	if node.PublicIP != "" {
+		endpointHost = node.PublicIP + ":51820"
+	}
+
+	protocol := node.MeshProtocol
+	if protocol == "" {
+		protocol = "amneziawg"
+	}
+
 	resp, err := controlpb.NewControlPlaneClient(conn).RegisterNode(ctx, &controlpb.RegisterNodeRequest{
-		NodeName:    node.Name,
-		Roles:       roleStrings(node.Roles),
-		NodeCertPem: append([]byte(nil), certPEM...),
-		NodeVersion: validated.nodeVersion,
-		OverlayIp:   node.OverlayIP,
-		Region:      node.Region,
+		NodeName:     node.Name,
+		Roles:        roleStrings(node.Roles),
+		NodeCertPem:  append([]byte(nil), certPEM...),
+		NodeVersion:  validated.nodeVersion,
+		OverlayIp:    node.OverlayIP,
+		Region:       node.Region,
+		Pubkey:       pubkeyBytes,
+		EndpointHost: endpointHost,
+		Protocol:     protocol,
 	})
 	if err != nil {
 		return fmt.Errorf("register node %q: %w", node.Name, err)
@@ -489,6 +518,9 @@ func writeNodePrepareResult(out io.Writer, output string, result nodePrepareJSON
 		if result.RouterOSScriptPath != "" {
 			line += fmt.Sprintf(" routeros_script=%s wireguard_private_key=%s wireguard_public_key=%s",
 				result.RouterOSScriptPath, result.WireGuardPrivateKeyPath, result.WireGuardPublicKeyPath)
+		} else if result.WireGuardPrivateKeyPath != "" {
+			line += fmt.Sprintf(" wireguard_private_key=%s wireguard_public_key=%s",
+				result.WireGuardPrivateKeyPath, result.WireGuardPublicKeyPath)
 		}
 		_, err := fmt.Fprintln(out, line)
 		return err
