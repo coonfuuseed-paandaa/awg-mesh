@@ -155,6 +155,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		go recvCertUpdates(runCtx, certStream, updates)
 	}
 
+	peerSnapshotSeen := false
+	ownershipSnapshotSeen := false
 	for {
 		select {
 		case <-runCtx.Done():
@@ -171,10 +173,20 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 			var changed bool
 			if update.peers != nil {
-				state, changed = state.WithPeerList(update.peers)
+				if !peerSnapshotSeen {
+					state, changed = state.WithPeerListSnapshot(update.peers)
+					peerSnapshotSeen = true
+				} else {
+					state, changed = state.WithPeerList(update.peers)
+				}
 			}
 			if update.ownership != nil {
-				state, changed = state.WithOwnership(update.ownership)
+				if !ownershipSnapshotSeen {
+					state, changed = state.WithOwnershipSnapshot(update.ownership)
+					ownershipSnapshotSeen = true
+				} else {
+					state, changed = state.WithOwnership(update.ownership)
+				}
 			}
 			if update.cert != nil {
 				if err := ApplyCertUpdate(a.cfg.CertPath, a.cfg.KeyPath, update.cert); err != nil {
@@ -325,6 +337,21 @@ func (s State) WithPeerList(update *pb.PeerListUpdate) (State, bool) {
 	if update == nil || update.Version <= s.PeerListVersion {
 		return s.Clone(), false
 	}
+	return s.withPeerList(update), true
+}
+
+// WithPeerListSnapshot returns a new state from the first full snapshot on a
+// newly opened stream. Stream versions are process-local, while the cache
+// survives control-plane restarts, so the first snapshot is authoritative even
+// when its version is not greater than the cached version.
+func (s State) WithPeerListSnapshot(update *pb.PeerListUpdate) (State, bool) {
+	if update == nil {
+		return s.Clone(), false
+	}
+	return s.withPeerList(update), true
+}
+
+func (s State) withPeerList(update *pb.PeerListUpdate) State {
 	out := s.Clone()
 	out.PeerListVersion = update.Version
 	out.Peers = make([]PeerEntry, 0, len(update.Peers))
@@ -342,7 +369,7 @@ func (s State) WithPeerList(update *pb.PeerListUpdate) (State, bool) {
 			Protocol:                wg.Protocol(p.Protocol),
 		})
 	}
-	return out, true
+	return out
 }
 
 // WithOwnership returns a new state if update is newer than the current ownership version.
@@ -350,6 +377,20 @@ func (s State) WithOwnership(update *pb.OwnershipUpdate) (State, bool) {
 	if update == nil || update.Version <= s.OwnershipVersion {
 		return s.Clone(), false
 	}
+	return s.withOwnership(update), true
+}
+
+// WithOwnershipSnapshot returns a new state from the first full snapshot on a
+// newly opened stream. Ownership versions are process-local, while cached state
+// can outlive the control-plane process that produced it.
+func (s State) WithOwnershipSnapshot(update *pb.OwnershipUpdate) (State, bool) {
+	if update == nil {
+		return s.Clone(), false
+	}
+	return s.withOwnership(update), true
+}
+
+func (s State) withOwnership(update *pb.OwnershipUpdate) State {
 	out := s.Clone()
 	out.OwnershipVersion = update.Version
 	out.Ownership = make([]OwnershipEntry, 0, len(update.Entries))
@@ -364,7 +405,7 @@ func (s State) WithOwnership(update *pb.OwnershipUpdate) (State, bool) {
 			Reason:               e.Reason,
 		})
 	}
-	return out, true
+	return out
 }
 
 func clonePeers(in []PeerEntry) []PeerEntry {

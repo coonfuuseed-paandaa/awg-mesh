@@ -531,6 +531,91 @@ func TestAgentRunStrippedPeerUpdateDoesNotExit(t *testing.T) {
 	}
 }
 
+func TestAgentRunFirstPeerSnapshotOverridesCachedVersion(t *testing.T) {
+	const streamTestTimeout = 10 * time.Second
+
+	key := bytesOf(0x42)
+	server := &streamingTestServer{
+		registered: make(chan *pb.RegisterNodeRequest, 1),
+		peerUpdates: []*pb.PeerListUpdate{
+			{
+				SubjectNode: "client-a",
+				Version:     1,
+				Peers: []*pb.PeerEntry{{
+					PeerName:      "master-a",
+					PeerPubkey:    key,
+					AllowedIps:    []string{"10.0.0.1/32"},
+					Protocol:      string(wg.ProtocolAmneziaWG),
+					PeerOverlayIp: "10.0.0.1",
+				}},
+			},
+		},
+	}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	cachePath := filepath.Join(t.TempDir(), "clientd-state.json")
+	if err := NewStateCache(cachePath).Save(State{
+		PeerListVersion: 1,
+		Peers:           []PeerEntry{{PeerName: "master-a", AllowedIPs: []string{"10.0.0.1/32"}}},
+	}); err != nil {
+		t.Fatalf("seed cached state: %v", err)
+	}
+
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	agent, err := NewAgent(Config{
+		NodeName:      "client-a",
+		Roles:         []role.Role{role.RoleClient},
+		OverlayIP:     "10.10.0.10",
+		Region:        "eu-test",
+		NodeCertPEM:   []byte("cert-bytes"),
+		Version:       "test-version",
+		InterfaceName: "awg-test0",
+		Protocol:      wg.ProtocolAmneziaWG,
+		StatePath:     cachePath,
+	}, pb.NewControlPlaneClient(conn), TransportConfigurator{Transport: transport})
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(ctx) }()
+	defer cancel()
+
+	select {
+	case <-server.registered:
+	case <-time.After(streamTestTimeout):
+		t.Fatalf("timed out waiting for registration")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, cfg := range transport.configsSnapshot() {
+			if len(cfg.Peers) == 1 {
+				cancel()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("agent returned error after cancel: %v", err)
+					}
+				case <-time.After(streamTestTimeout):
+					t.Fatalf("timed out waiting for agent shutdown")
+				}
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("first stream snapshot with populated pubkey was not applied; configs=%#v", transport.configsSnapshot())
+}
+
 func TestAgentRunReturnsErrorWhenPeerStreamEndsBeforeCancel(t *testing.T) {
 	const streamTestTimeout = 10 * time.Second
 
