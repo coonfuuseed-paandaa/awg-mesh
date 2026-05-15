@@ -90,7 +90,10 @@ func (m *Master) Run(ctx context.Context) error {
 			return errors.Join(fmt.Errorf("start master coordination: %w", err), closeErr)
 		}
 		coordinationDone = m.coordination.Done()
-		m.selfRegisterCoordination()
+		if err := m.selfRegisterCoordination(); err != nil {
+			closeErr := m.Close()
+			return errors.Join(fmt.Errorf("self-register master in coordination: %w", err), closeErr)
+		}
 	}
 	select {
 	case <-ctx.Done():
@@ -111,11 +114,13 @@ func (m *Master) Run(ctx context.Context) error {
 	return nil
 }
 
-func (m *Master) selfRegisterCoordination() {
+func (m *Master) selfRegisterCoordination() error {
 	meshPubkey, err := m.listener.MeshPublicKey()
 	if err != nil {
-		log.Printf("master %s: could not read mesh public key for self-registration: %v", m.cfg.Name, err)
-		return
+		return fmt.Errorf("read mesh public key: %w", err)
+	}
+	if meshPubkey.IsZero() {
+		return errors.New("mesh public key is zero")
 	}
 	selfNode := control_plane.RegisteredNode{
 		Name:        m.cfg.Name,
@@ -126,10 +131,10 @@ func (m *Master) selfRegisterCoordination() {
 		Protocol:    string(wg.ProtocolAmneziaWG),
 	}
 	if err := m.coordination.SelfRegister(selfNode); err != nil {
-		log.Printf("master %s: self-registration failed: %v", m.cfg.Name, err)
-		return
+		return fmt.Errorf("self-register master: %w", err)
 	}
 	log.Printf("master %s: self-registered in coordination registry (pubkey %x...)", m.cfg.Name, meshPubkey[:4])
+	return nil
 }
 
 // Close tears down the master listeners.
