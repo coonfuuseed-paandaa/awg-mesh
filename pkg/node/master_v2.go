@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/netip"
 	"strings"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
@@ -87,6 +90,10 @@ func (m *Master) Run(ctx context.Context) error {
 			return errors.Join(fmt.Errorf("start master coordination: %w", err), closeErr)
 		}
 		coordinationDone = m.coordination.Done()
+		if err := m.selfRegisterCoordination(); err != nil {
+			closeErr := m.Close()
+			return errors.Join(fmt.Errorf("self-register master in coordination: %w", err), closeErr)
+		}
 	}
 	select {
 	case <-ctx.Done():
@@ -104,6 +111,29 @@ func (m *Master) Run(ctx context.Context) error {
 	if err := m.Close(); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (m *Master) selfRegisterCoordination() error {
+	meshPubkey, err := m.listener.MeshPublicKey()
+	if err != nil {
+		return fmt.Errorf("read mesh public key: %w", err)
+	}
+	if meshPubkey.IsZero() {
+		return errors.New("mesh public key is zero")
+	}
+	selfNode := control_plane.RegisteredNode{
+		Name:        m.cfg.Name,
+		Roles:       []role.Role{role.RoleMaster},
+		OverlayIP:   m.cfg.OverlayIP,
+		Pubkey:      meshPubkey[:],
+		NodeCertPEM: []byte("self-registered-master"),
+		Protocol:    string(wg.ProtocolAmneziaWG),
+	}
+	if err := m.coordination.SelfRegister(selfNode); err != nil {
+		return fmt.Errorf("self-register master: %w", err)
+	}
+	log.Printf("master %s: self-registered in coordination registry (pubkey %x...)", m.cfg.Name, meshPubkey[:4])
 	return nil
 }
 

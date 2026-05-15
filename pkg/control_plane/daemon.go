@@ -18,6 +18,7 @@ import (
 	"time"
 
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -297,6 +298,25 @@ func (d *Daemon) Run(ctx context.Context) error {
 	cancel()
 	d.shutdown()
 	d.flushAudit()
+	return nil
+}
+
+// SelfRegister writes a node directly into the internal registry and ledger,
+// bypassing gRPC. Used by the master to register itself without a network
+// round-trip. NodeCertPEM must be non-empty; pass []byte("self-registered-master")
+// when no real cert is available at startup.
+func (d *Daemon) SelfRegister(node RegisteredNode) error {
+	if err := d.registry.Register(node); err != nil {
+		return err
+	}
+	for _, r := range node.Roles {
+		if r == role.RoleMaster {
+			if _, err := d.ledger.Reassign(node.OverlayIP, node.Name, "self-register"); err != nil {
+				return fmt.Errorf("ledger reassign for self-register: %w", err)
+			}
+			break
+		}
+	}
 	return nil
 }
 

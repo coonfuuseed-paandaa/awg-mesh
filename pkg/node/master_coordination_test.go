@@ -48,10 +48,10 @@ func TestMasterCoordinationListenerExposesRegistryAndOwnership(t *testing.T) {
 
 	registerCtx, registerCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	resp, err := client.RegisterNode(registerCtx, &pb.RegisterNodeRequest{
-		NodeName:    "master-01",
-		Roles:       []string{"master"},
+		NodeName:    "egress-01",
+		Roles:       []string{"egress"},
 		NodeCertPem: []byte("test-cert"),
-		OverlayIp:   "172.21.92.2",
+		OverlayIp:   "172.21.92.10",
 		Region:      "eu",
 	})
 	registerCancel()
@@ -66,7 +66,7 @@ func TestMasterCoordinationListenerExposesRegistryAndOwnership(t *testing.T) {
 
 	streamCtx, streamCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer streamCancel()
-	stream, err := client.StreamOwnership(streamCtx, &pb.StreamOwnershipRequest{SubscriberNode: "master-01"})
+	stream, err := client.StreamOwnership(streamCtx, &pb.StreamOwnershipRequest{SubscriberNode: "egress-01"})
 	if err != nil {
 		cancel()
 		t.Fatalf("StreamOwnership through master coordination: %v", err)
@@ -82,7 +82,7 @@ func TestMasterCoordinationListenerExposesRegistryAndOwnership(t *testing.T) {
 	}
 	if !ownershipContains(update.GetEntries(), "172.21.92.2", "master-01") {
 		cancel()
-		t.Fatalf("ownership snapshot missing registered master: %#v", update.GetEntries())
+		t.Fatalf("ownership snapshot missing self-registered master: %#v", update.GetEntries())
 	}
 
 	cancel()
@@ -93,6 +93,67 @@ func TestMasterCoordinationListenerExposesRegistryAndOwnership(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("master Run did not return after cancellation")
+	}
+}
+
+func TestMasterSelfRegistersAndStreamsPubkey(t *testing.T) {
+	t.Parallel()
+
+	master, err := NewMaster(testMasterConfigWithCoordination(t, "127.0.0.1:0"))
+	if err != nil {
+		t.Fatalf("NewMaster: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- master.Run(ctx) }()
+
+	waitFor(t, func() bool {
+		s := master.Status().Coordination
+		return s.Enabled && s.Started && s.BoundAddr != ""
+	})
+	addr := master.Status().Coordination.BoundAddr
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	client := pb.NewControlPlaneClient(conn)
+
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer streamCancel()
+	stream, err := client.StreamPeerList(streamCtx, &pb.StreamPeerListRequest{NodeName: "client-01"})
+	if err != nil {
+		t.Fatalf("StreamPeerList: %v", err)
+	}
+	initial, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv initial peer list: %v", err)
+	}
+	if len(initial.GetPeers()) != 1 {
+		t.Fatalf("expected 1 peer (self-registered master), got %d", len(initial.GetPeers()))
+	}
+	peer := initial.GetPeers()[0]
+	if peer.GetPeerName() != "master-01" {
+		t.Fatalf("peer name = %q, want master-01", peer.GetPeerName())
+	}
+	if len(peer.GetPeerPubkey()) != 32 {
+		t.Fatalf("REGRESSION: peer pubkey length = %d, want 32 — master did not self-register its WG pubkey", len(peer.GetPeerPubkey()))
+	}
+	if peer.GetPeerOverlayIp() != "172.21.92.2" {
+		t.Fatalf("peer overlay = %q, want 172.21.92.2", peer.GetPeerOverlayIp())
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
 	}
 }
 
@@ -154,6 +215,8 @@ func TestMasterCoordinationBindFailureDoesNotCorruptDataPlaneConfig(t *testing.T
 	}
 }
 
+var testMasterPubkey = wg.Key{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+
 func testMasterConfigWithCoordination(t *testing.T, listenAddr string) MasterConfig {
 	t.Helper()
 
@@ -165,7 +228,7 @@ func testMasterConfigWithCoordination(t *testing.T, listenAddr string) MasterCon
 				return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil
 			},
 			AWGFactory: func(name string) (wg.Transport, error) {
-				return &fakeMasterTransport{name: name, protocol: wg.ProtocolAmneziaWG}, nil
+				return &fakeMasterTransport{name: name, protocol: wg.ProtocolAmneziaWG, pubkey: testMasterPubkey}, nil
 			},
 		},
 		Coordination: &MasterCoordinationConfig{

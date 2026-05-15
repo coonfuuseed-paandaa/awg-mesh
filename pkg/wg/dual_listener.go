@@ -170,6 +170,21 @@ func (l *DualListener) Close() error {
 	return errors.Join(errs...)
 }
 
+// MeshPublicKey returns the public key of the mesh (AmneziaWG) transport.
+// Returns an error if the mesh transport has not been started yet.
+func (l *DualListener) MeshPublicKey() (Key, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.mesh == nil {
+		return Key{}, errors.New("mesh transport not started")
+	}
+	dev, err := l.mesh.Stats()
+	if err != nil {
+		return Key{}, fmt.Errorf("read mesh transport stats: %w", err)
+	}
+	return dev.PublicKey, nil
+}
+
 // Snapshot returns the configured listener state without exposing transports.
 func (l *DualListener) Snapshot() DualListenerSnapshot {
 	if l == nil {

@@ -175,6 +175,16 @@ func (c *MasterCoordination) clearDone() {
 	c.done = nil
 }
 
+// SelfRegister delegates to the underlying daemon's SelfRegister, allowing the
+// master node to inject its own identity into the coordination registry without
+// a gRPC round-trip.
+func (c *MasterCoordination) SelfRegister(node control_plane.RegisteredNode) error {
+	if c == nil || c.daemon == nil {
+		return errors.New("coordination not initialized")
+	}
+	return c.daemon.SelfRegister(node)
+}
+
 func cloneMasterCoordinationConfig(cfg MasterCoordinationConfig) MasterCoordinationConfig {
 	cfg.CertHosts = append([]string(nil), cfg.CertHosts...)
 	return cfg
