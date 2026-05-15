@@ -25,6 +25,9 @@ type RegisteredNode struct {
 	RegisteredAt     time.Time         `json:"registered_at"`
 	LastHeartbeatAt  time.Time         `json:"last_heartbeat_at,omitzero"`
 	HealthIndicators map[string]string `json:"health,omitempty"`
+	Pubkey           []byte            `json:"pubkey,omitempty"`
+	EndpointHost     string            `json:"endpoint_host,omitempty"`
+	Protocol         string            `json:"protocol,omitempty"`
 }
 
 // Registry errors.
@@ -160,8 +163,9 @@ func (r *Registry) ClearCertRollover(name string, certPEM []byte) error {
 	return nil
 }
 
-// Heartbeat updates last-seen and health indicators for a node.
-func (r *Registry) Heartbeat(name string, health map[string]string) error {
+// Heartbeat updates last-seen, health indicators, and peer identity fields for a node.
+// Non-empty pubkey/endpointHost/protocol overwrite the previously stored values.
+func (r *Registry) Heartbeat(name string, health map[string]string, pubkey []byte, endpointHost, protocol string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n, ok := r.byName[name]
@@ -172,6 +176,15 @@ func (r *Registry) Heartbeat(name string, health map[string]string) error {
 	if health != nil {
 		n.HealthIndicators = make(map[string]string, len(health))
 		maps.Copy(n.HealthIndicators, health)
+	}
+	if len(pubkey) > 0 {
+		n.Pubkey = append([]byte(nil), pubkey...)
+	}
+	if endpointHost != "" {
+		n.EndpointHost = endpointHost
+	}
+	if protocol != "" {
+		n.Protocol = protocol
 	}
 	return nil
 }
@@ -235,6 +248,7 @@ func cloneRegisteredNode(in RegisteredNode) RegisteredNode {
 	out.Roles = append([]role.Role(nil), in.Roles...)
 	out.NodeCertPEM = append([]byte(nil), in.NodeCertPEM...)
 	out.PendingCertPEM = append([]byte(nil), in.PendingCertPEM...)
+	out.Pubkey = append([]byte(nil), in.Pubkey...)
 	if in.HealthIndicators != nil {
 		out.HealthIndicators = make(map[string]string, len(in.HealthIndicators))
 		maps.Copy(out.HealthIndicators, in.HealthIndicators)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"slices"
 	"strings"
@@ -50,12 +51,12 @@ func (c TransportConfigurator) Apply(ctx context.Context, state State) error {
 	if len(localRoles) == 0 {
 		localRoles = []role.Role{role.RoleClient}
 	}
-	peers, err := BuildPeerConfigs(ReloadInput{LocalRoles: localRoles, Peers: state.Peers, Ownership: state.Ownership})
+	peers, skipped, err := BuildPeerConfigs(ReloadInput{LocalRoles: localRoles, Peers: state.Peers, Ownership: state.Ownership})
 	if err != nil {
-		if errors.Is(err, ErrPeerPublicKeyRequired) {
-			return nil
-		}
 		return err
+	}
+	for _, name := range skipped {
+		log.Printf("clientd: skipping peer %q: missing public key", name)
 	}
 	select {
 	case <-ctx.Done():
@@ -69,23 +70,30 @@ func (c TransportConfigurator) Apply(ctx context.Context, state State) error {
 }
 
 // BuildPeerConfigs validates reload input and converts peer entries into wg.PeerConfig values.
-func BuildPeerConfigs(input ReloadInput) ([]wg.PeerConfig, error) {
+// Peers missing a public key are skipped: their names are returned in the second return value.
+// Other errors abort the entire batch.
+func BuildPeerConfigs(input ReloadInput) ([]wg.PeerConfig, []string, error) {
 	if localHasClient(input.LocalRoles) {
 		for _, peer := range input.Peers {
 			if peer.PeerRole != "" && peer.PeerRole != role.RoleMaster {
-				return nil, fmt.Errorf("%w: peer %q has role %q", ErrNonMasterPeerRejected, peer.PeerName, peer.PeerRole)
+				return nil, nil, fmt.Errorf("%w: peer %q has role %q", ErrNonMasterPeerRejected, peer.PeerName, peer.PeerRole)
 			}
 		}
 	}
 	out := make([]wg.PeerConfig, 0, len(input.Peers))
+	var skipped []string
 	for _, peer := range input.Peers {
 		cfg, err := PeerEntryToWGConfig(peer)
 		if err != nil {
-			return nil, err
+			if errors.Is(err, ErrPeerPublicKeyRequired) {
+				skipped = append(skipped, peer.PeerName)
+				continue
+			}
+			return nil, nil, err
 		}
 		out = append(out, cfg)
 	}
-	return out, nil
+	return out, skipped, nil
 }
 
 // PeerEntryToWGConfig converts one peer entry into a WireGuard peer config.

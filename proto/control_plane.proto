@@ -65,6 +65,9 @@ message RegisterNodeRequest {
   string node_version = 4;
   string overlay_ip = 5;         // assigned overlay /32.
   string region = 6;
+  bytes pubkey = 7;              // WireGuard public key (32 bytes, optional — backward compat).
+  string endpoint_host = 8;      // WG endpoint host:port (e.g. "203.0.113.10:51820").
+  string protocol = 9;           // "vanilla-wg" or "amneziawg".
 }
 
 message RegisterNodeResponse {
@@ -77,6 +80,9 @@ message HeartbeatRequest {
   string node_name = 1;
   int64 sent_at_unix = 2;
   map<string, string> health = 3; // role-specific health indicators
+  bytes pubkey = 4;              // WireGuard public key refresh (optional).
+  string endpoint_host = 5;      // WG endpoint refresh (optional).
+  string protocol = 6;           // WG protocol refresh (optional).
 }
 
 message HeartbeatResponse {

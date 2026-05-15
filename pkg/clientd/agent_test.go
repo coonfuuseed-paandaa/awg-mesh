@@ -370,12 +370,12 @@ func TestStateCacheMissingLoadWriteOverwriteAndInvalidJSON(t *testing.T) {
 }
 
 func TestBuildPeerConfigsValidationAndStrippedSeed(t *testing.T) {
-	_, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: []PeerEntry{{PeerName: "endpoint-a", PeerRole: role.RoleEgress}}})
+	_, _, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: []PeerEntry{{PeerName: "endpoint-a", PeerRole: role.RoleEgress}}})
 	if !errors.Is(err, ErrNonMasterPeerRejected) {
 		t.Fatalf("expected non-master rejection, got %v", err)
 	}
 	key := bytesOf(0x42)
-	_, err = BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleEgress}, Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: key, AllowedIPs: []string{"10.0.0.1/32"}}}})
+	_, _, err = BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleEgress}, Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: key, AllowedIPs: []string{"10.0.0.1/32"}}}})
 	if err != nil {
 		t.Fatalf("egress role should accept master peer: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestBuildPeerConfigsValidationAndStrippedSeed(t *testing.T) {
 	if !errors.Is(err, ErrPeerPublicKeyRequired) {
 		t.Fatalf("expected stripped peer-list public-key error, got %v", err)
 	}
-	configs, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: key, AllowedIPs: []string{"10.0.0.1/32"}, PersistentKeepaliveSecs: 25, Protocol: wg.ProtocolAmneziaWG}}})
+	configs, _, err := BuildPeerConfigs(ReloadInput{LocalRoles: []role.Role{role.RoleClient}, Peers: []PeerEntry{{PeerName: "master-a", PeerRole: role.RoleMaster, PeerPubkey: key, AllowedIPs: []string{"10.0.0.1/32"}, PersistentKeepaliveSecs: 25, Protocol: wg.ProtocolAmneziaWG}}})
 	if err != nil {
 		t.Fatalf("valid master peer rejected: %v", err)
 	}
@@ -440,11 +440,12 @@ func TestTransportConfiguratorSkipsStrippedSnapshot(t *testing.T) {
 	if err := configurator.Apply(context.Background(), state); err != nil {
 		t.Fatalf("stripped snapshot should not fail: %v", err)
 	}
-	if got := len(transport.configsSnapshot()); got != 0 {
-		t.Fatalf("expected no Configure calls, got %d", got)
+	configs := transport.configsSnapshot()
+	if got := len(configs); got != 1 {
+		t.Fatalf("expected 1 Configure call (empty peers), got %d", got)
 	}
-	if got := transport.addPeerCount(); got != 0 {
-		t.Fatalf("expected no AddPeer calls, got %d", got)
+	if got := len(configs[0].Peers); got != 0 {
+		t.Fatalf("expected 0 peers in Configure (all skipped), got %d", got)
 	}
 }
 
@@ -511,8 +512,12 @@ func TestAgentRunStrippedPeerUpdateDoesNotExit(t *testing.T) {
 		t.Fatalf("agent exited before cancel: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	if got := len(transport.configsSnapshot()); got != 0 {
-		t.Fatalf("expected no Configure calls for stripped snapshot, got %d", got)
+	configs := transport.configsSnapshot()
+	if got := len(configs); got != 1 {
+		t.Fatalf("expected 1 Configure call (empty peers for stripped snapshot), got %d", got)
+	}
+	if got := len(configs[0].Peers); got != 0 {
+		t.Fatalf("expected 0 peers in Configure (all stripped), got %d", got)
 	}
 
 	cancel()

@@ -369,6 +369,149 @@ func TestServer_StreamPeerList_LiveUpdate(t *testing.T) {
 	}
 }
 
+func TestServer_StreamPeerList_IncludesPubkey(t *testing.T) {
+	client, _, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	masterPubkey := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+	resp, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:     "master-01",
+		Roles:        []string{"master"},
+		NodeCertPem:  []byte("test-cert"),
+		OverlayIp:    "10.0.0.5",
+		Region:       "eu",
+		Pubkey:       masterPubkey,
+		EndpointHost: "203.0.113.10:51820",
+		Protocol:     "amneziawg",
+	})
+	if err != nil || !resp.GetAccepted() {
+		t.Fatalf("register: err=%v accepted=%v reason=%s", err, resp.GetAccepted(), resp.GetRejectReason())
+	}
+
+	stream, err := client.StreamPeerList(ctx, &pb.StreamPeerListRequest{NodeName: "client-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(initial.GetPeers()) != 1 {
+		t.Fatalf("expected 1 peer, got %d", len(initial.GetPeers()))
+	}
+	peer := initial.GetPeers()[0]
+	if peer.GetPeerName() != "master-01" {
+		t.Fatalf("peer name = %q, want master-01", peer.GetPeerName())
+	}
+	if len(peer.GetPeerPubkey()) != 32 {
+		t.Fatalf("peer pubkey length = %d, want 32", len(peer.GetPeerPubkey()))
+	}
+	if peer.GetPeerEndpointHost() != "203.0.113.10:51820" {
+		t.Fatalf("peer endpoint = %q, want 203.0.113.10:51820", peer.GetPeerEndpointHost())
+	}
+	if peer.GetProtocol() != "amneziawg" {
+		t.Fatalf("peer protocol = %q, want amneziawg", peer.GetProtocol())
+	}
+}
+
+func TestServer_StreamPeerList_DeduplicatesByMaster(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "master-01",
+		Roles:       []string{"master"},
+		NodeCertPem: []byte("test-cert"),
+		OverlayIp:   "10.0.0.5",
+		Region:      "eu",
+		Pubkey:      []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.ledger.Reassign("10.0.0.6", "master-01", "scheduled"); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := client.StreamPeerList(ctx, &pb.StreamPeerListRequest{NodeName: "client-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(upd.GetPeers()) != 1 {
+		t.Fatalf("expected 1 deduplicated peer, got %d", len(upd.GetPeers()))
+	}
+	peer := upd.GetPeers()[0]
+	if len(peer.GetAllowedIps()) != 2 {
+		t.Fatalf("expected 2 AllowedIPs (merged), got %d: %v", len(peer.GetAllowedIps()), peer.GetAllowedIps())
+	}
+}
+
+func TestServer_HeartbeatRefreshesPubkey(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "master-01",
+		Roles:       []string{"master"},
+		NodeCertPem: []byte("test-cert"),
+		OverlayIp:   "10.0.0.5",
+		Region:      "eu",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node, ok := srv.registry.Lookup("master-01")
+	if !ok {
+		t.Fatal("master-01 not found in registry")
+	}
+	if len(node.Pubkey) != 0 {
+		t.Fatalf("expected empty pubkey after registration without pubkey, got %d bytes", len(node.Pubkey))
+	}
+
+	newPubkey := []byte{42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42}
+	hbStream, err := client.Heartbeat(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hbStream.Send(&pb.HeartbeatRequest{
+		NodeName:     "master-01",
+		SentAtUnix:   time.Now().Unix(),
+		Pubkey:       newPubkey,
+		EndpointHost: "198.51.100.1:51820",
+		Protocol:     "vanilla-wg",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hbStream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+
+	node, ok = srv.registry.Lookup("master-01")
+	if !ok {
+		t.Fatal("master-01 not found after heartbeat")
+	}
+	if len(node.Pubkey) != 32 {
+		t.Fatalf("expected pubkey refreshed to 32 bytes, got %d", len(node.Pubkey))
+	}
+	if node.EndpointHost != "198.51.100.1:51820" {
+		t.Fatalf("endpoint = %q, want 198.51.100.1:51820", node.EndpointHost)
+	}
+	if node.Protocol != "vanilla-wg" {
+		t.Fatalf("protocol = %q, want vanilla-wg", node.Protocol)
+	}
+}
+
 func TestServer_DecommissionNode(t *testing.T) {
 	client, srv, teardown := startTestServer(t)
 	defer teardown()

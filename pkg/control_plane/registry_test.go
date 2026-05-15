@@ -197,7 +197,7 @@ func TestRegistry_ReRegisterRejectsOverlayMove(t *testing.T) {
 
 func TestRegistry_HeartbeatUnknown(t *testing.T) {
 	r := NewRegistry()
-	err := r.Heartbeat("ghost", nil)
+	err := r.Heartbeat("ghost", nil, nil, "", "")
 	if !errors.Is(err, ErrRegistryNotFound) {
 		t.Fatalf("expected ErrRegistryNotFound, got %v", err)
 	}
@@ -244,7 +244,7 @@ func TestRegistry_ClonesMutableFields(t *testing.T) {
 	cert[0] = 'X'
 
 	health := map[string]string{"state": "ok"}
-	if err := r.Heartbeat("n1", health); err != nil {
+	if err := r.Heartbeat("n1", health, nil, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	health["state"] = "mutated"
