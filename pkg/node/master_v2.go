@@ -22,6 +22,13 @@ type MasterConfig struct {
 	MeshEndpointHost string
 	DualListener     wg.DualListenerConfig
 	Coordination     *MasterCoordinationConfig
+	LinkConfigurator MasterLinkConfigurator
+}
+
+// MasterLinkConfigurator applies OS-level state for master WireGuard devices.
+type MasterLinkConfigurator interface {
+	AddrAdd(ifaceName string, addr *net.IPNet) error
+	LinkSetUp(ifaceName string) error
 }
 
 // MasterStatus is the observable runtime state of the master protocol bridge.
@@ -35,9 +42,10 @@ type MasterStatus struct {
 
 // Master runs the vanilla-WG client listener and AmneziaWG mesh listener.
 type Master struct {
-	cfg          MasterConfig
-	listener     *wg.DualListener
-	coordination *MasterCoordination
+	cfg            MasterConfig
+	overlayAddress *net.IPNet
+	listener       *wg.DualListener
+	coordination   *MasterCoordination
 }
 
 // NewMaster validates config and builds the master runtime.
@@ -48,14 +56,19 @@ func NewMaster(cfg MasterConfig) (*Master, error) {
 	if strings.TrimSpace(cfg.OverlayIP) == "" {
 		return nil, errors.New("master overlay IP is required")
 	}
-	if _, err := netip.ParseAddr(cfg.OverlayIP); err != nil {
+	overlayAddr, err := parseMasterOverlayAddress(cfg.OverlayIP)
+	if err != nil {
 		return nil, fmt.Errorf("parse master overlay IP %q: %w", cfg.OverlayIP, err)
 	}
+	cfg.OverlayIP = overlayAddr.IP.String()
 	cfg.MeshEndpointHost = strings.TrimSpace(cfg.MeshEndpointHost)
 	if cfg.Coordination != nil {
 		if err := validateAdvertisedMeshEndpoint(cfg.MeshEndpointHost); err != nil {
 			return nil, err
 		}
+	}
+	if cfg.LinkConfigurator == nil {
+		return nil, errors.New("master link configurator is required")
 	}
 	listenerCfg := cfg.DualListener
 	defaults := wg.DefaultDualListenerConfig()
@@ -79,7 +92,7 @@ func NewMaster(cfg MasterConfig) (*Master, error) {
 		cfg.Coordination = &coordinationCfg
 	}
 	cfg.DualListener = listenerCfg
-	return &Master{cfg: cfg, listener: listener, coordination: coordination}, nil
+	return &Master{cfg: cfg, overlayAddress: overlayAddr, listener: listener, coordination: coordination}, nil
 }
 
 // Run starts both master listeners and blocks until context cancellation.
@@ -92,6 +105,10 @@ func (m *Master) Run(ctx context.Context) error {
 	}
 	if err := m.listener.Start(ctx); err != nil {
 		return err
+	}
+	if err := m.configureLinks(); err != nil {
+		closeErr := m.listener.Close()
+		return errors.Join(fmt.Errorf("configure master links: %w", err), closeErr)
 	}
 	var coordinationDone <-chan error
 	if m.coordination != nil {
@@ -124,6 +141,20 @@ func (m *Master) Run(ctx context.Context) error {
 	return nil
 }
 
+func (m *Master) configureLinks() error {
+	snapshot := m.listener.Snapshot()
+	if err := m.cfg.LinkConfigurator.AddrAdd(snapshot.MeshInterfaceName, m.overlayAddress); err != nil {
+		return fmt.Errorf("assign mesh overlay address: %w", err)
+	}
+	if err := m.cfg.LinkConfigurator.LinkSetUp(snapshot.MeshInterfaceName); err != nil {
+		return fmt.Errorf("bring mesh interface up: %w", err)
+	}
+	if err := m.cfg.LinkConfigurator.LinkSetUp(snapshot.ClientInterfaceName); err != nil {
+		return fmt.Errorf("bring client interface up: %w", err)
+	}
+	return nil
+}
+
 func (m *Master) selfRegisterCoordination() error {
 	meshPubkey, err := m.listener.MeshPublicKey()
 	if err != nil {
@@ -146,6 +177,21 @@ func (m *Master) selfRegisterCoordination() error {
 	}
 	log.Printf("master %s: self-registered in coordination registry (pubkey %x...)", m.cfg.Name, meshPubkey[:4])
 	return nil
+}
+
+func parseMasterOverlayAddress(value string) (*net.IPNet, error) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return nil, err
+	}
+	bits := 32
+	if addr.Is6() {
+		bits = 128
+	}
+	return &net.IPNet{
+		IP:   append(net.IP(nil), addr.AsSlice()...),
+		Mask: net.CIDRMask(bits, bits),
+	}, nil
 }
 
 func validateAdvertisedMeshEndpoint(endpoint string) error {

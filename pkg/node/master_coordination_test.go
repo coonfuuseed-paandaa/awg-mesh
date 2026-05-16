@@ -169,6 +169,7 @@ func TestMasterDoesNotServeCoordinationBeforeSelfRegister(t *testing.T) {
 		Name:             "master-01",
 		OverlayIP:        "172.21.92.2",
 		MeshEndpointHost: "203.0.113.10:51821",
+		LinkConfigurator: &fakeMasterLinkConfigurator{},
 		DualListener: wg.DualListenerConfig{
 			VanillaFactory: func(name string) (wg.Transport, error) {
 				return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil
@@ -265,6 +266,7 @@ func TestMasterCoordinationBindFailureDoesNotCorruptDataPlaneConfig(t *testing.T
 		Name:             "master-01",
 		OverlayIP:        "172.21.92.2",
 		MeshEndpointHost: "203.0.113.10:51821",
+		LinkConfigurator: &fakeMasterLinkConfigurator{},
 		DualListener: wg.DualListenerConfig{
 			ClientInterfaceName: "wg-clientx",
 			MeshInterfaceName:   "wg-meshx",
@@ -314,6 +316,7 @@ func testMasterConfigWithCoordination(t *testing.T, listenAddr string) MasterCon
 		Name:             "master-01",
 		OverlayIP:        "172.21.92.2",
 		MeshEndpointHost: "203.0.113.10:51821",
+		LinkConfigurator: &fakeMasterLinkConfigurator{},
 		DualListener: wg.DualListenerConfig{
 			VanillaFactory: func(name string) (wg.Transport, error) {
 				return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil

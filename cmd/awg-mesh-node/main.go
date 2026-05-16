@@ -30,6 +30,7 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/ingress"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/node"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/routing"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 	"github.com/rs/zerolog"
 )
@@ -242,7 +243,8 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 				ClientPrivateKey:    clientPrivateKey,
 				ClientPeers:         clientPeers,
 			},
-			Coordination: coordination,
+			Coordination:     coordination,
+			LinkConfigurator: routing.NewNetlinkRouter(),
 		}, *dryRun, stdout, stderr)
 	case "endpoint", "egress":
 		clientdCfg := clientd.CommandConfig{

@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +41,66 @@ func (t *fakeMasterTransport) Close() error {
 	return nil
 }
 
+type fakeMasterLinkConfigurator struct {
+	mu      sync.Mutex
+	addrs   []fakeMasterLinkAddress
+	upIfcs  []string
+	addrErr error
+	upErr   error
+}
+
+type fakeMasterLinkAddress struct {
+	iface string
+	addr  string
+}
+
+func (l *fakeMasterLinkConfigurator) AddrAdd(ifaceName string, addr *net.IPNet) error {
+	if l.addrErr != nil {
+		return l.addrErr
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.addrs = append(l.addrs, fakeMasterLinkAddress{iface: ifaceName, addr: addr.String()})
+	return nil
+}
+
+func (l *fakeMasterLinkConfigurator) LinkSetUp(ifaceName string) error {
+	if l.upErr != nil {
+		return l.upErr
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.upIfcs = append(l.upIfcs, ifaceName)
+	return nil
+}
+
+func (l *fakeMasterLinkConfigurator) assertCalls(t *testing.T, meshIface, clientIface, overlayCIDR string) {
+	t.Helper()
+	if !l.hasCalls(meshIface, clientIface, overlayCIDR) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		t.Fatalf("link calls = addrs:%#v up:%#v, want addr %s %s and up %#v", l.addrs, l.upIfcs, meshIface, overlayCIDR, []string{meshIface, clientIface})
+	}
+}
+
+func (l *fakeMasterLinkConfigurator) hasCalls(meshIface, clientIface, overlayCIDR string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.addrs) != 1 || l.addrs[0] != (fakeMasterLinkAddress{iface: meshIface, addr: overlayCIDR}) {
+		return false
+	}
+	wantUp := []string{meshIface, clientIface}
+	if len(l.upIfcs) != len(wantUp) {
+		return false
+	}
+	for i := range wantUp {
+		if l.upIfcs[i] != wantUp[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestNewMasterValidation(t *testing.T) {
 	t.Parallel()
 
@@ -54,8 +115,9 @@ func TestNewMasterValidation(t *testing.T) {
 		{
 			name: "coordination missing mesh endpoint",
 			cfg: MasterConfig{
-				Name:      "master-01",
-				OverlayIP: "172.21.92.2",
+				Name:             "master-01",
+				OverlayIP:        "172.21.92.2",
+				LinkConfigurator: &fakeMasterLinkConfigurator{},
 				Coordination: &MasterCoordinationConfig{
 					ListenAddr: "127.0.0.1:0",
 					StateDir:   t.TempDir(),
@@ -69,6 +131,7 @@ func TestNewMasterValidation(t *testing.T) {
 				Name:             "master-01",
 				OverlayIP:        "172.21.92.2",
 				MeshEndpointHost: "203.0.113.10",
+				LinkConfigurator: &fakeMasterLinkConfigurator{},
 				Coordination: &MasterCoordinationConfig{
 					ListenAddr: "127.0.0.1:0",
 					StateDir:   t.TempDir(),
@@ -76,6 +139,7 @@ func TestNewMasterValidation(t *testing.T) {
 			},
 			wantErr: "must be host:port",
 		},
+		{name: "missing link configurator", cfg: MasterConfig{Name: "master-01", OverlayIP: "172.21.92.2"}, wantErr: "link configurator is required"},
 	}
 
 	for _, tt := range tests {
@@ -95,9 +159,11 @@ func TestMasterRunStartsAndClosesOnCancel(t *testing.T) {
 
 	var clientTransport *fakeMasterTransport
 	var meshTransport *fakeMasterTransport
+	link := &fakeMasterLinkConfigurator{}
 	master, err := NewMaster(MasterConfig{
-		Name:      "master-01",
-		OverlayIP: "172.21.92.2",
+		Name:             "master-01",
+		OverlayIP:        "172.21.92.2",
+		LinkConfigurator: link,
 		DualListener: wg.DualListenerConfig{
 			VanillaFactory: func(name string) (wg.Transport, error) {
 				clientTransport = &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}
@@ -124,6 +190,10 @@ func TestMasterRunStartsAndClosesOnCancel(t *testing.T) {
 	if status.Coordination.Enabled || status.Coordination.Started || status.Coordination.BoundAddr != "" {
 		t.Fatalf("master without coordination config must keep coordination disabled, got %#v", status.Coordination)
 	}
+	waitFor(t, func() bool {
+		return link.hasCalls(wg.DefaultMeshInterfaceName, wg.DefaultClientInterfaceName, "172.21.92.2/32")
+	})
+	link.assertCalls(t, wg.DefaultMeshInterfaceName, wg.DefaultClientInterfaceName, "172.21.92.2/32")
 	cancel()
 
 	select {
@@ -143,8 +213,9 @@ func TestMasterRunReturnsStartupError(t *testing.T) {
 	t.Parallel()
 
 	master, err := NewMaster(MasterConfig{
-		Name:      "master-01",
-		OverlayIP: "172.21.92.2",
+		Name:             "master-01",
+		OverlayIP:        "172.21.92.2",
+		LinkConfigurator: &fakeMasterLinkConfigurator{},
 		DualListener: wg.DualListenerConfig{
 			VanillaFactory: func(name string) (wg.Transport, error) {
 				return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil
@@ -161,6 +232,39 @@ func TestMasterRunReturnsStartupError(t *testing.T) {
 	err = master.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "mesh startup failed") {
 		t.Fatalf("expected startup error, got %v", err)
+	}
+}
+
+func TestMasterRunClosesTransportsOnLinkSetupError(t *testing.T) {
+	t.Parallel()
+
+	var clientTransport *fakeMasterTransport
+	var meshTransport *fakeMasterTransport
+	master, err := NewMaster(MasterConfig{
+		Name:             "master-01",
+		OverlayIP:        "172.21.92.2",
+		LinkConfigurator: &fakeMasterLinkConfigurator{upErr: errors.New("link denied")},
+		DualListener: wg.DualListenerConfig{
+			VanillaFactory: func(name string) (wg.Transport, error) {
+				clientTransport = &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}
+				return clientTransport, nil
+			},
+			AWGFactory: func(name string) (wg.Transport, error) {
+				meshTransport = &fakeMasterTransport{name: name, protocol: wg.ProtocolAmneziaWG}
+				return meshTransport, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewMaster: %v", err)
+	}
+
+	err = master.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "configure master links") || !strings.Contains(err.Error(), "link denied") {
+		t.Fatalf("expected link setup error, got %v", err)
+	}
+	if clientTransport.closeCount != 1 || meshTransport.closeCount != 1 {
+		t.Fatalf("expected both transports closed after link failure, got client=%d mesh=%d", clientTransport.closeCount, meshTransport.closeCount)
 	}
 }
 
