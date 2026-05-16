@@ -44,6 +44,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	clientDevice := newUnconfiguredSimulationDevice(t, "sim-client")
 	clientTransport := newSimulationTransport("sim-client", clientDevice.dev)
 	clientLink := &simulationLinkConfigurator{}
+	masterLink := &simulationLinkConfigurator{}
 
 	configurePeer(t, masterDevice.dev, wg.PeerConfig{
 		PublicKey:         clientPub,
@@ -51,8 +52,9 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		AllowedIPs:        []net.IPNet{mustIPNet(t, clientIP.String()+"/32")},
 	})
 
-	cpClient, cleanupControlPlane := startSimulationMasterCoordination(t, masterPub, masterDevice.endpoint(), masterIP)
+	cpClient, cleanupControlPlane := startSimulationMasterCoordination(t, masterPub, masterDevice.endpoint(), masterIP, masterLink)
 	defer cleanupControlPlane()
+	assertMasterLinks(t, masterLink, wg.DefaultMeshInterfaceName, wg.DefaultClientInterfaceName, masterIP.String()+"/32")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -221,7 +223,14 @@ func (t *simulationTransport) Stats() (*wg.Device, error) {
 
 type simulationLinkConfigurator struct {
 	mu     sync.Mutex
+	addrs  []simulationAddress
+	upIfcs []string
 	routes []simulationRoute
+}
+
+type simulationAddress struct {
+	iface string
+	addr  string
 }
 
 type simulationRoute struct {
@@ -230,8 +239,19 @@ type simulationRoute struct {
 	src   string
 }
 
-func (l *simulationLinkConfigurator) AddrAdd(string, *net.IPNet) error { return nil }
-func (l *simulationLinkConfigurator) LinkSetUp(string) error           { return nil }
+func (l *simulationLinkConfigurator) AddrAdd(ifaceName string, addr *net.IPNet) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.addrs = append(l.addrs, simulationAddress{iface: ifaceName, addr: addr.String()})
+	return nil
+}
+
+func (l *simulationLinkConfigurator) LinkSetUp(ifaceName string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.upIfcs = append(l.upIfcs, ifaceName)
+	return nil
+}
 
 func (l *simulationLinkConfigurator) RouteReplaceLinkWithSrc(dest *net.IPNet, ifaceName string, src net.IP) error {
 	l.mu.Lock()
@@ -260,12 +280,13 @@ func (t *masterCoordinationTransport) Stats() (*wg.Device, error) {
 	return &wg.Device{Name: t.name, PublicKey: t.pubkey}, nil
 }
 
-func startSimulationMasterCoordination(t *testing.T, pubkey wg.Key, endpoint string, overlayIP netip.Addr) (pb.ControlPlaneClient, func()) {
+func startSimulationMasterCoordination(t *testing.T, pubkey wg.Key, endpoint string, overlayIP netip.Addr, linkConfigurator meshnode.MasterLinkConfigurator) (pb.ControlPlaneClient, func()) {
 	t.Helper()
 	master, err := meshnode.NewMaster(meshnode.MasterConfig{
 		Name:             "master-a",
 		OverlayIP:        overlayIP.String(),
 		MeshEndpointHost: endpoint,
+		LinkConfigurator: linkConfigurator,
 		DualListener: wg.DualListenerConfig{
 			VanillaFactory: func(name string) (wg.Transport, error) {
 				return &masterCoordinationTransport{name: name, protocol: wg.ProtocolVanilla}, nil
@@ -345,6 +366,24 @@ func waitForAppliedPeer(t *testing.T, applied <-chan wg.Config, want wg.Key, wan
 			}
 		case <-timer.C:
 			t.Fatalf("clientd did not apply peer %s within %s", want.String(), timeout)
+		}
+	}
+}
+
+func assertMasterLinks(t *testing.T, link *simulationLinkConfigurator, wantMeshIface, wantClientIface, wantOverlay string) {
+	t.Helper()
+	link.mu.Lock()
+	defer link.mu.Unlock()
+	if len(link.addrs) != 1 || link.addrs[0] != (simulationAddress{iface: wantMeshIface, addr: wantOverlay}) {
+		t.Fatalf("master link AddrAdd calls = %#v, want %s %s", link.addrs, wantMeshIface, wantOverlay)
+	}
+	wantUp := []string{wantMeshIface, wantClientIface}
+	if len(link.upIfcs) != len(wantUp) {
+		t.Fatalf("master link LinkSetUp calls = %#v, want %#v", link.upIfcs, wantUp)
+	}
+	for i := range wantUp {
+		if link.upIfcs[i] != wantUp[i] {
+			t.Fatalf("master link LinkSetUp calls = %#v, want %#v", link.upIfcs, wantUp)
 		}
 	}
 }
