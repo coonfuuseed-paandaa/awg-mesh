@@ -38,6 +38,7 @@ type MasterCoordination struct {
 
 	mu      sync.RWMutex
 	done    chan error
+	stopped chan struct{}
 	started bool
 }
 
@@ -80,13 +81,16 @@ func (c *MasterCoordination) begin(ctx context.Context) chan error {
 		return nil
 	}
 	done := make(chan error, 1)
+	stopped := make(chan struct{})
 	c.done = done
+	c.stopped = stopped
 	c.mu.Unlock()
 
 	go func() {
 		err := c.daemon.Run(ctx)
 		c.setStarted(false)
 		done <- err
+		close(stopped)
 	}()
 	return done
 }
@@ -139,8 +143,16 @@ func (c *MasterCoordination) Stop() {
 	if c == nil || c.daemon == nil {
 		return
 	}
+	stopped := c.stoppedSnapshot()
 	c.daemon.Stop()
+	if stopped != nil {
+		select {
+		case <-stopped:
+		case <-time.After(masterCoordinationStartupTimeout):
+		}
+	}
 	c.setStarted(false)
+	c.clearDone()
 }
 
 // Snapshot returns the current adapter state without exposing control-plane internals.
@@ -173,6 +185,13 @@ func (c *MasterCoordination) clearDone() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.done = nil
+	c.stopped = nil
+}
+
+func (c *MasterCoordination) stoppedSnapshot() <-chan struct{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.stopped
 }
 
 // SelfRegister delegates to the underlying daemon's SelfRegister, allowing the

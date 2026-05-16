@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
+	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

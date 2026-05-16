@@ -41,6 +41,9 @@ func TestParseCommandConfigRequiredFlagsAndProtocol(t *testing.T) {
 	if cfg.KeyPath != filepath.Join(".", "node.key") {
 		t.Fatalf("default key path = %q, want ./node.key", cfg.KeyPath)
 	}
+	if cfg.WireGuardPrivateKeyPath != "wireguard-private.key" {
+		t.Fatalf("default wireguard private key path = %q, want wireguard-private.key", cfg.WireGuardPrivateKeyPath)
+	}
 
 	args = append(validCommandArgs(t), "--key", "custom.key")
 	cfg, err = ParseCommandConfig(args, &strings.Builder{})
@@ -59,6 +62,15 @@ func TestParseCommandConfigRequiredFlagsAndProtocol(t *testing.T) {
 	if cfg.CACertPath != "mesh-ca.crt" {
 		t.Fatalf("explicit CA path = %q, want mesh-ca.crt", cfg.CACertPath)
 	}
+
+	args = append(validCommandArgs(t), "--wireguard-private-key", "custom-wg.key")
+	cfg, err = ParseCommandConfig(args, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("config with explicit WireGuard key path rejected: %v", err)
+	}
+	if cfg.WireGuardPrivateKeyPath != "custom-wg.key" {
+		t.Fatalf("explicit WireGuard key path = %q, want custom-wg.key", cfg.WireGuardPrivateKeyPath)
+	}
 }
 
 func TestValidateCommandConfigDefaultsCACertFromPreparedNodeLayout(t *testing.T) {
@@ -74,12 +86,16 @@ func TestValidateCommandConfigDefaultsCACertFromPreparedNodeLayout(t *testing.T)
 	cfg.CertPath = certPath
 	cfg.KeyPath = ""
 	cfg.CACertPath = ""
+	cfg.WireGuardPrivateKeyPath = ""
 	validated, err := ValidateCommandConfig(cfg)
 	if err != nil {
 		t.Fatalf("prepared layout config rejected: %v", err)
 	}
 	if validated.CACertPath != filepath.Join(configDir, "ca.crt") {
 		t.Fatalf("default CA path = %q, want %q", validated.CACertPath, filepath.Join(configDir, "ca.crt"))
+	}
+	if validated.WireGuardPrivateKeyPath != filepath.Join(configDir, "nodes", "client-a", "wireguard-private.key") {
+		t.Fatalf("default WireGuard key path = %q", validated.WireGuardPrivateKeyPath)
 	}
 
 	cwd := t.TempDir()
@@ -97,6 +113,42 @@ func TestValidateCommandConfigDefaultsCACertFromPreparedNodeLayout(t *testing.T)
 	}
 	if validated.CACertPath != "" {
 		t.Fatalf("arbitrary cert path auto-discovered CA %q, want empty", validated.CACertPath)
+	}
+}
+
+func TestLoadWireGuardPrivateKeyAndOverlayAddress(t *testing.T) {
+	privateKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate private key: %v", err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "wireguard-private.key")
+	if err := os.WriteFile(keyPath, []byte(privateKey.String()+"\n"), 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+	loaded, err := loadWireGuardPrivateKey(keyPath)
+	if err != nil {
+		t.Fatalf("load wireguard private key: %v", err)
+	}
+	if loaded != privateKey {
+		t.Fatalf("loaded key mismatch")
+	}
+	if _, err := loadWireGuardPrivateKey(filepath.Join(t.TempDir(), "missing.key")); err == nil || !strings.Contains(err.Error(), "read wireguard private key") {
+		t.Fatalf("expected missing key read error, got %v", err)
+	}
+
+	addr, err := parseOverlayAddress("172.21.92.130")
+	if err != nil {
+		t.Fatalf("parse IPv4 overlay address: %v", err)
+	}
+	if addr.String() != "172.21.92.130/32" {
+		t.Fatalf("IPv4 overlay address = %s, want /32", addr)
+	}
+	addr, err = parseOverlayAddress("fd00::10/64")
+	if err != nil {
+		t.Fatalf("parse IPv6 CIDR overlay address: %v", err)
+	}
+	if addr.String() != "fd00::10/64" {
+		t.Fatalf("IPv6 overlay address = %s, want fd00::10/64", addr)
 	}
 }
 

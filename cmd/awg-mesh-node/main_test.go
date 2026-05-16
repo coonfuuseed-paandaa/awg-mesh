@@ -604,6 +604,7 @@ func TestRunClientModeAcceptsCACertFlag(t *testing.T) {
 		"--cert", certPath,
 		"--key", keyPath,
 		"--ca-cert", caPath,
+		"--wireguard-private-key", writeTestWGKey(t),
 	}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("expected clientd runtime validation exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())

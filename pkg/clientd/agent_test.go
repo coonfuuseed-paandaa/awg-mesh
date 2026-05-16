@@ -432,6 +432,46 @@ func TestTransportConfiguratorReplacesCompleteDesiredPeers(t *testing.T) {
 	}
 }
 
+func TestTransportConfiguratorAppliesDeviceIdentityAndOverlayLink(t *testing.T) {
+	privateKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate private key: %v", err)
+	}
+	overlay := mustIPNet(t, "172.21.92.130/32")
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	link := &fakeLinkConfigurator{}
+	configurator := TransportConfigurator{
+		Transport:        transport,
+		LocalRoles:       []role.Role{role.RoleClient},
+		PrivateKey:       &privateKey,
+		OverlayAddress:   overlay,
+		LinkConfigurator: link,
+	}
+
+	state := State{Peers: []PeerEntry{{
+		PeerName:         "master-a",
+		PeerRole:         role.RoleMaster,
+		PeerPubkey:       bytesOf(0x42),
+		PeerEndpointHost: "127.0.0.1:51820",
+		AllowedIPs:       []string{"172.21.92.1/32"},
+	}}}
+	if err := configurator.Apply(context.Background(), state); err != nil {
+		t.Fatalf("apply production transport config: %v", err)
+	}
+
+	configs := transport.configsSnapshot()
+	if len(configs) != 1 {
+		t.Fatalf("expected one Configure call, got %d", len(configs))
+	}
+	if configs[0].PrivateKey == nil || *configs[0].PrivateKey != privateKey {
+		t.Fatalf("Configure did not apply private key: %#v", configs[0].PrivateKey)
+	}
+	if !configs[0].ReplacePeers || len(configs[0].Peers) != 1 {
+		t.Fatalf("Configure did not apply full peer snapshot: %#v", configs[0])
+	}
+	link.assertCalls(t, "awg-test0", overlay)
+}
+
 func TestTransportConfiguratorSkipsStrippedSnapshot(t *testing.T) {
 	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
 	configurator := TransportConfigurator{Transport: transport}
@@ -714,6 +754,53 @@ func (t *fakeTransport) addPeerCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.addPeers)
+}
+
+func mustIPNet(t *testing.T, cidr string) *net.IPNet {
+	t.Helper()
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		t.Fatalf("parse CIDR %q: %v", cidr, err)
+	}
+	ipNet.IP = ip
+	return ipNet
+}
+
+type fakeLinkConfigurator struct {
+	mu     sync.Mutex
+	addrs  []fakeLinkAddress
+	upIfcs []string
+}
+
+type fakeLinkAddress struct {
+	iface string
+	addr  string
+}
+
+func (l *fakeLinkConfigurator) AddrAdd(ifaceName string, addr *net.IPNet) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.addrs = append(l.addrs, fakeLinkAddress{iface: ifaceName, addr: addr.String()})
+	return nil
+}
+
+func (l *fakeLinkConfigurator) LinkSetUp(ifaceName string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.upIfcs = append(l.upIfcs, ifaceName)
+	return nil
+}
+
+func (l *fakeLinkConfigurator) assertCalls(t *testing.T, wantIface string, wantAddr *net.IPNet) {
+	t.Helper()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.addrs) != 1 || l.addrs[0].iface != wantIface || l.addrs[0].addr != wantAddr.String() {
+		t.Fatalf("AddrAdd calls = %#v, want %s %s", l.addrs, wantIface, wantAddr)
+	}
+	if len(l.upIfcs) != 1 || l.upIfcs[0] != wantIface {
+		t.Fatalf("LinkSetUp calls = %#v, want %s", l.upIfcs, wantIface)
+	}
 }
 
 type recordingConfigurator struct {
