@@ -185,6 +185,16 @@ func (l *DualListener) MeshPublicKey() (Key, error) {
 	return dev.PublicKey, nil
 }
 
+// AddMeshPeer adds or updates one peer on the mesh-internal listener.
+func (l *DualListener) AddMeshPeer(peer PeerConfig) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.mesh == nil {
+		return errors.New("mesh transport not started")
+	}
+	return l.mesh.AddPeer(peer)
+}
+
 // Snapshot returns the configured listener state without exposing transports.
 func (l *DualListener) Snapshot() DualListenerSnapshot {
 	if l == nil {

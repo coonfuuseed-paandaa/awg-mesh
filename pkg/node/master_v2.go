@@ -29,6 +29,7 @@ type MasterConfig struct {
 type MasterLinkConfigurator interface {
 	AddrAdd(ifaceName string, addr *net.IPNet) error
 	LinkSetUp(ifaceName string) error
+	RouteReplaceLinkWithSrc(dest *net.IPNet, ifaceName string, src net.IP) error
 }
 
 // MasterStatus is the observable runtime state of the master protocol bridge.
@@ -85,6 +86,9 @@ func NewMaster(cfg MasterConfig) (*Master, error) {
 	var coordination *MasterCoordination
 	if cfg.Coordination != nil {
 		coordinationCfg := cloneMasterCoordinationConfig(*cfg.Coordination)
+		coordinationCfg.RegistrationObserver = func(node control_plane.RegisteredNode) error {
+			return applyRegisteredMeshPeer(listener, cfg.Name, cfg.LinkConfigurator, overlayAddr, node)
+		}
 		coordination, err = NewMasterCoordination(coordinationCfg)
 		if err != nil {
 			return nil, fmt.Errorf("build master coordination: %w", err)
@@ -153,6 +157,53 @@ func (m *Master) configureLinks() error {
 		return fmt.Errorf("bring client interface up: %w", err)
 	}
 	return nil
+}
+
+func applyRegisteredMeshPeer(listener *wg.DualListener, masterName string, link MasterLinkConfigurator, localOverlay *net.IPNet, node control_plane.RegisteredNode) error {
+	if node.Name == "" || node.Name == masterName {
+		return nil
+	}
+	if hasRole(node.Roles, role.RoleMaster) {
+		return nil
+	}
+	if node.Protocol != "" && node.Protocol != string(wg.ProtocolAmneziaWG) {
+		return nil
+	}
+	if len(node.Pubkey) == 0 {
+		log.Printf("master %s: skipping registered peer %q: missing public key", masterName, node.Name)
+		return nil
+	}
+	if len(node.Pubkey) != len(wg.Key{}) {
+		return fmt.Errorf("registered peer %q public key length = %d, want 32", node.Name, len(node.Pubkey))
+	}
+	key := wg.Key{}
+	copy(key[:], node.Pubkey)
+	peerOverlay, err := parseMasterOverlayAddress(node.OverlayIP)
+	if err != nil {
+		return fmt.Errorf("parse registered peer %q overlay IP %q: %w", node.Name, node.OverlayIP, err)
+	}
+	snapshot := listener.Snapshot()
+	peer := wg.PeerConfig{
+		PublicKey:         key,
+		ReplaceAllowedIPs: true,
+		AllowedIPs:        []net.IPNet{*peerOverlay},
+	}
+	if err := listener.AddMeshPeer(peer); err != nil {
+		return fmt.Errorf("add registered peer %q to mesh listener: %w", node.Name, err)
+	}
+	if err := link.RouteReplaceLinkWithSrc(peerOverlay, snapshot.MeshInterfaceName, localOverlay.IP); err != nil {
+		return fmt.Errorf("route registered peer %q overlay: %w", node.Name, err)
+	}
+	return nil
+}
+
+func hasRole(roles []role.Role, want role.Role) bool {
+	for _, got := range roles {
+		if got == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Master) selfRegisterCoordination() error {

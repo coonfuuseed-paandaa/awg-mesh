@@ -204,6 +204,7 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 		Version:       awgmesh.Version,
 		InterfaceName: cfg.InterfaceName,
 		Protocol:      cfg.Protocol,
+		PublicKey:     privateKey.PublicKey(),
 		StatePath:     filepath.Join(cfg.StateDir, "clientd-state.json"),
 	}, pb.NewControlPlaneClient(conn), configurator)
 	if err != nil {

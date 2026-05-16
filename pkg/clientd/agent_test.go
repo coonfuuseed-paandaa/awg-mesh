@@ -1,6 +1,7 @@
 package clientd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -74,6 +75,8 @@ func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
 
 	configurator := &recordingConfigurator{notify: make(chan State, 8)}
 	cachePath := t.TempDir() + "/clientd-state.json"
+	publicKey := wg.Key{}
+	copy(publicKey[:], bytesOf(0x7a))
 	agent, err := NewAgent(Config{
 		NodeName:      "client-a",
 		Roles:         []role.Role{role.RoleClient},
@@ -83,6 +86,7 @@ func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
 		Version:       "test-version",
 		InterfaceName: "awg-test0",
 		Protocol:      wg.ProtocolAmneziaWG,
+		PublicKey:     publicKey,
 		StatePath:     cachePath,
 	}, pb.NewControlPlaneClient(conn), configurator)
 	if err != nil {
@@ -104,6 +108,12 @@ func TestAgentRegistersAndAppliesNewerStreamVersions(t *testing.T) {
 		}
 		if string(got.NodeCertPem) != "cert-bytes" {
 			t.Fatalf("unexpected cert bytes: %q", string(got.NodeCertPem))
+		}
+		if !bytes.Equal(got.Pubkey, publicKey[:]) {
+			t.Fatalf("unexpected pubkey: %x", got.Pubkey)
+		}
+		if got.Protocol != string(wg.ProtocolAmneziaWG) {
+			t.Fatalf("unexpected protocol: %q", got.Protocol)
 		}
 	case <-time.After(streamTestTimeout):
 		t.Fatalf("timed out waiting for registration")

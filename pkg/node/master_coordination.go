@@ -21,6 +21,7 @@ type MasterCoordinationConfig struct {
 	CertRotationDays        int
 	AuditCap                int
 	AllowInsecurePublicBind bool
+	RegistrationObserver    func(control_plane.RegisteredNode) error
 }
 
 // MasterCoordinationSnapshot is the observable state of the coordination child.
@@ -52,6 +53,7 @@ func NewMasterCoordination(cfg MasterCoordinationConfig) (*MasterCoordination, e
 		CertRotationDays:        cfg.CertRotationDays,
 		AuditCap:                cfg.AuditCap,
 		AllowInsecurePublicBind: cfg.AllowInsecurePublicBind,
+		RegistrationObserver:    cfg.RegistrationObserver,
 	})
 	if err != nil {
 		return nil, err

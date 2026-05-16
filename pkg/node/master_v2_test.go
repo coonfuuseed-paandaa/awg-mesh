@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/control_plane"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 )
 
@@ -20,13 +22,17 @@ type fakeMasterTransport struct {
 	statsBlock chan struct{}
 	statsOnce  sync.Once
 	closeCount int
+	peers      []wg.PeerConfig
 }
 
-func (t *fakeMasterTransport) Protocol() wg.Protocol       { return t.protocol }
-func (t *fakeMasterTransport) Name() string                { return t.name }
-func (t *fakeMasterTransport) Configure(wg.Config) error   { return nil }
-func (t *fakeMasterTransport) AddPeer(wg.PeerConfig) error { return nil }
-func (t *fakeMasterTransport) RemovePeer(wg.Key) error     { return nil }
+func (t *fakeMasterTransport) Protocol() wg.Protocol     { return t.protocol }
+func (t *fakeMasterTransport) Name() string              { return t.name }
+func (t *fakeMasterTransport) Configure(wg.Config) error { return nil }
+func (t *fakeMasterTransport) AddPeer(peer wg.PeerConfig) error {
+	t.peers = append(t.peers, peer)
+	return nil
+}
+func (t *fakeMasterTransport) RemovePeer(wg.Key) error { return nil }
 func (t *fakeMasterTransport) Stats() (*wg.Device, error) {
 	if t.statsStart != nil {
 		t.statsOnce.Do(func() { close(t.statsStart) })
@@ -42,16 +48,24 @@ func (t *fakeMasterTransport) Close() error {
 }
 
 type fakeMasterLinkConfigurator struct {
-	mu      sync.Mutex
-	addrs   []fakeMasterLinkAddress
-	upIfcs  []string
-	addrErr error
-	upErr   error
+	mu       sync.Mutex
+	addrs    []fakeMasterLinkAddress
+	upIfcs   []string
+	routes   []fakeMasterLinkRoute
+	addrErr  error
+	upErr    error
+	routeErr error
 }
 
 type fakeMasterLinkAddress struct {
 	iface string
 	addr  string
+}
+
+type fakeMasterLinkRoute struct {
+	iface string
+	dest  string
+	src   string
 }
 
 func (l *fakeMasterLinkConfigurator) AddrAdd(ifaceName string, addr *net.IPNet) error {
@@ -71,6 +85,20 @@ func (l *fakeMasterLinkConfigurator) LinkSetUp(ifaceName string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.upIfcs = append(l.upIfcs, ifaceName)
+	return nil
+}
+
+func (l *fakeMasterLinkConfigurator) RouteReplaceLinkWithSrc(dest *net.IPNet, ifaceName string, src net.IP) error {
+	if l.routeErr != nil {
+		return l.routeErr
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	srcText := ""
+	if src != nil {
+		srcText = src.String()
+	}
+	l.routes = append(l.routes, fakeMasterLinkRoute{iface: ifaceName, dest: dest.String(), src: srcText})
 	return nil
 }
 
@@ -266,6 +294,68 @@ func TestMasterRunClosesTransportsOnLinkSetupError(t *testing.T) {
 	if clientTransport.closeCount != 1 || meshTransport.closeCount != 1 {
 		t.Fatalf("expected both transports closed after link failure, got client=%d mesh=%d", clientTransport.closeCount, meshTransport.closeCount)
 	}
+}
+
+func TestApplyRegisteredMeshPeerAddsPeerAndRoute(t *testing.T) {
+	t.Parallel()
+
+	var meshTransport *fakeMasterTransport
+	listener, err := wg.NewDualListener(wg.DualListenerConfig{
+		VanillaFactory: func(name string) (wg.Transport, error) {
+			return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil
+		},
+		AWGFactory: func(name string) (wg.Transport, error) {
+			meshTransport = &fakeMasterTransport{name: name, protocol: wg.ProtocolAmneziaWG}
+			return meshTransport, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDualListener: %v", err)
+	}
+	if err := listener.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	link := &fakeMasterLinkConfigurator{}
+	peerKey := wg.Key{1, 2, 3}
+	err = applyRegisteredMeshPeer(listener, "master-a", link, mustIPNet(t, "1.0.0.1/32"), control_plane.RegisteredNode{
+		Name:      "egress-a",
+		Roles:     []role.Role{role.RoleEgress},
+		OverlayIP: "1.0.0.2",
+		Pubkey:    peerKey[:],
+		Protocol:  string(wg.ProtocolAmneziaWG),
+	})
+	if err != nil {
+		t.Fatalf("applyRegisteredMeshPeer: %v", err)
+	}
+	if len(meshTransport.peers) != 1 {
+		t.Fatalf("mesh peers = %#v, want one peer", meshTransport.peers)
+	}
+	peer := meshTransport.peers[0]
+	if peer.PublicKey != peerKey {
+		t.Fatalf("peer public key mismatch")
+	}
+	if len(peer.AllowedIPs) != 1 || peer.AllowedIPs[0].String() != "1.0.0.2/32" {
+		t.Fatalf("peer allowed IPs = %#v, want 1.0.0.2/32", peer.AllowedIPs)
+	}
+	link.mu.Lock()
+	routes := append([]fakeMasterLinkRoute(nil), link.routes...)
+	link.mu.Unlock()
+	wantRoute := fakeMasterLinkRoute{iface: wg.DefaultMeshInterfaceName, dest: "1.0.0.2/32", src: "1.0.0.1"}
+	if len(routes) != 1 || routes[0] != wantRoute {
+		t.Fatalf("routes = %#v, want %#v", routes, []fakeMasterLinkRoute{wantRoute})
+	}
+}
+
+func mustIPNet(t *testing.T, cidr string) *net.IPNet {
+	t.Helper()
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		t.Fatalf("parse CIDR %q: %v", cidr, err)
+	}
+	ipNet.IP = ip
+	return ipNet
 }
 
 func waitFor(t *testing.T, condition func() bool) {

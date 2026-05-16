@@ -31,6 +31,41 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 	}
 }
 
+func TestRegistry_ReRegisterPreservesPeerIdentityWhenEmpty(t *testing.T) {
+	r := NewRegistry()
+	pubkey := bytesOf(0x42)
+	mustRegister(t, r, RegisteredNode{
+		Name:         "egress-01",
+		Roles:        []role.Role{role.RoleEgress},
+		OverlayIP:    "172.21.92.10",
+		NodeCertPEM:  fakeCert,
+		Pubkey:       pubkey,
+		EndpointHost: "198.51.100.10:51821",
+		Protocol:     "amneziawg",
+	})
+
+	mustRegister(t, r, RegisteredNode{
+		Name:        "egress-01",
+		Roles:       []role.Role{role.RoleEgress},
+		OverlayIP:   "172.21.92.10",
+		NodeCertPEM: fakeCert,
+	})
+
+	got, ok := r.Lookup("egress-01")
+	if !ok {
+		t.Fatal("egress-01 missing after re-register")
+	}
+	if string(got.Pubkey) != string(pubkey) {
+		t.Fatalf("pubkey was not preserved on empty re-register: %x", got.Pubkey)
+	}
+	if got.EndpointHost != "198.51.100.10:51821" {
+		t.Fatalf("endpoint = %q, want preserved endpoint", got.EndpointHost)
+	}
+	if got.Protocol != "amneziawg" {
+		t.Fatalf("protocol = %q, want preserved protocol", got.Protocol)
+	}
+}
+
 func TestRegistry_RejectsBadInputs(t *testing.T) {
 	r := NewRegistry()
 	cases := []struct {
@@ -292,4 +327,12 @@ func mustAllowCertRollover(t *testing.T, r *Registry, name string, certPEM []byt
 	if err := r.AllowCertRollover(name, certPEM, overlapUntil); err != nil {
 		t.Fatalf("AllowCertRollover(%s): %v", name, err)
 	}
+}
+
+func bytesOf(v byte) []byte {
+	out := make([]byte, 32)
+	for i := range out {
+		out[i] = v
+	}
+	return out
 }
