@@ -41,12 +41,11 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	clientPub := clientPriv.PublicKey()
 
 	masterDevice := newSimulationDevice(t, "sim-master", masterPriv)
-	clientDevice := newSimulationDevice(t, "sim-client", clientPriv)
+	clientDevice := newUnconfiguredSimulationDevice(t, "sim-client")
 	clientTransport := newSimulationTransport("sim-client", clientDevice.dev)
 
 	configurePeer(t, masterDevice.dev, wg.PeerConfig{
 		PublicKey:         clientPub,
-		Endpoint:          mustUDPAddr(t, clientDevice.endpoint()),
 		ReplaceAllowedIPs: true,
 		AllowedIPs:        []net.IPNet{mustIPNet(t, clientIP.String()+"/32")},
 	})
@@ -92,6 +91,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	}, cpClient, clientd.TransportConfigurator{
 		Transport:  clientTransport,
 		LocalRoles: []role.Role{role.RoleClient},
+		PrivateKey: &clientPriv,
 	})
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
@@ -127,22 +127,29 @@ type simulationDevice struct {
 
 func newSimulationDevice(t *testing.T, name string, privateKey wg.Key) *simulationDevice {
 	t.Helper()
-	tun := tuntest.NewChannelTUN()
-	dev := device.NewDevice(tun.TUN(), conn.NewDefaultBind(), device.NewLogger(device.LogLevelError, name+": "))
-	t.Cleanup(dev.Close)
+	simDevice := newUnconfiguredSimulationDevice(t, name)
 
 	listenPort := 0
-	if err := dev.IpcSet(encodeWGConfig(wg.Config{
+	if err := simDevice.dev.IpcSet(encodeWGConfig(wg.Config{
 		PrivateKey:   &privateKey,
 		ListenPort:   &listenPort,
 		ReplacePeers: true,
 	})); err != nil {
 		t.Fatalf("%s initial IpcSet: %v", name, err)
 	}
-	if err := dev.Up(); err != nil {
+	if err := simDevice.dev.Up(); err != nil {
 		t.Fatalf("%s Up: %v", name, err)
 	}
-	return &simulationDevice{tun: tun, dev: dev, port: readListenPort(t, dev)}
+	simDevice.port = readListenPort(t, simDevice.dev)
+	return simDevice
+}
+
+func newUnconfiguredSimulationDevice(t *testing.T, name string) *simulationDevice {
+	t.Helper()
+	tun := tuntest.NewChannelTUN()
+	dev := device.NewDevice(tun.TUN(), conn.NewDefaultBind(), device.NewLogger(device.LogLevelError, name+": "))
+	t.Cleanup(dev.Close)
+	return &simulationDevice{tun: tun, dev: dev}
 }
 
 func (d *simulationDevice) endpoint() string {
@@ -168,6 +175,9 @@ func (t *simulationTransport) Configure(cfg wg.Config) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := t.dev.IpcSet(encodeWGConfig(cfg)); err != nil {
+		return err
+	}
+	if err := t.dev.Up(); err != nil {
 		return err
 	}
 	select {
@@ -465,15 +475,6 @@ func mustPrivateKey(t *testing.T) wg.Key {
 		t.Fatalf("GeneratePrivateKey: %v", err)
 	}
 	return key
-}
-
-func mustUDPAddr(t *testing.T, value string) *net.UDPAddr {
-	t.Helper()
-	addr, err := net.ResolveUDPAddr("udp", value)
-	if err != nil {
-		t.Fatalf("ResolveUDPAddr(%q): %v", value, err)
-	}
-	return addr
 }
 
 func mustIPNet(t *testing.T, cidr string) net.IPNet {

@@ -30,8 +30,17 @@ type ReloadInput struct {
 
 // TransportConfigurator applies peer snapshots through pkg/wg Transport.
 type TransportConfigurator struct {
-	Transport  wg.Transport
-	LocalRoles []role.Role
+	Transport        wg.Transport
+	LocalRoles       []role.Role
+	PrivateKey       *wg.Key
+	OverlayAddress   *net.IPNet
+	LinkConfigurator LinkConfigurator
+}
+
+// LinkConfigurator applies OS-level interface state after UAPI configuration.
+type LinkConfigurator interface {
+	AddrAdd(ifaceName string, addr *net.IPNet) error
+	LinkSetUp(ifaceName string) error
 }
 
 // Apply validates the state and updates local Transport peers.
@@ -63,8 +72,20 @@ func (c TransportConfigurator) Apply(ctx context.Context, state State) error {
 		return ctx.Err()
 	default:
 	}
-	if err := c.Transport.Configure(wg.Config{Peers: peers, ReplacePeers: true}); err != nil {
+	cfg := wg.Config{PrivateKey: c.PrivateKey, Peers: peers, ReplacePeers: true}
+	if err := c.Transport.Configure(cfg); err != nil {
 		return fmt.Errorf("configure peers: %w", err)
+	}
+	if c.OverlayAddress != nil {
+		if c.LinkConfigurator == nil {
+			return errors.New("link configurator is required when overlay address is set")
+		}
+		if err := c.LinkConfigurator.AddrAdd(c.Transport.Name(), c.OverlayAddress); err != nil {
+			return fmt.Errorf("assign overlay address: %w", err)
+		}
+		if err := c.LinkConfigurator.LinkSetUp(c.Transport.Name()); err != nil {
+			return fmt.Errorf("bring overlay interface up: %w", err)
+		}
 	}
 	return nil
 }
