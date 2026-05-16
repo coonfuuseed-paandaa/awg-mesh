@@ -1,6 +1,7 @@
 package control_plane
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/tls"
@@ -212,6 +213,62 @@ func TestServer_RegisterNode_ClientDoesNotSeedOwnershipLedger(t *testing.T) {
 	}
 	if _, ok := srv.ledger.Lookup("10.0.0.20"); ok {
 		t.Fatalf("client must not self-own its overlay in the ledger")
+	}
+}
+
+func TestServer_RegisterNode_ObserverReceivesPreservedPeerIdentity(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	pubkey := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+	var observed []RegisteredNode
+	srv.SetRegistrationObserver(func(node RegisteredNode) error {
+		observed = append(observed, node)
+		return nil
+	})
+
+	resp, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:     "egress-01",
+		Roles:        []string{string(role.RoleEgress)},
+		NodeCertPem:  fakeCert,
+		OverlayIp:    "10.0.0.50",
+		Pubkey:       pubkey,
+		EndpointHost: "198.51.100.10:443",
+		Protocol:     "amneziawg",
+	})
+	if err != nil {
+		t.Fatalf("RegisterNode initial: %v", err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("initial register rejected: %s", resp.GetRejectReason())
+	}
+
+	resp, err = client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "egress-01",
+		Roles:       []string{string(role.RoleEgress)},
+		NodeCertPem: fakeCert,
+		OverlayIp:   "10.0.0.50",
+	})
+	if err != nil {
+		t.Fatalf("RegisterNode refresh: %v", err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("refresh register rejected: %s", resp.GetRejectReason())
+	}
+	if len(observed) != 2 {
+		t.Fatalf("observer calls = %d, want 2", len(observed))
+	}
+	got := observed[1]
+	if !bytes.Equal(got.Pubkey, pubkey) {
+		t.Fatalf("observer preserved pubkey = %v, want %v", got.Pubkey, pubkey)
+	}
+	if got.EndpointHost != "198.51.100.10:443" {
+		t.Fatalf("observer preserved endpoint = %q", got.EndpointHost)
+	}
+	if got.Protocol != "amneziawg" {
+		t.Fatalf("observer preserved protocol = %q", got.Protocol)
 	}
 }
 

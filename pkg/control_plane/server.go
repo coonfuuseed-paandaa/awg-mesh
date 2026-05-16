@@ -37,6 +37,7 @@ type Server struct {
 	ownershipBcast *OwnershipBroadcaster
 	rotation       *meshrotation.Orchestrator
 	certLifecycle  *CertLifecycle
+	onRegister     func(RegisteredNode) error
 }
 
 // NewServer wires the provided dependencies into a Server. The ledger
@@ -55,6 +56,14 @@ func NewServer(registry *Registry, ledger *Ledger, audit *AuditLog) *Server {
 		s.peerListBcast.Broadcast(PeerListUpdateMsg{Snapshot: snap, Version: version})
 	}))
 	return s
+}
+
+// SetRegistrationObserver installs a post-registration integration hook.
+func (s *Server) SetRegistrationObserver(observer func(RegisteredNode) error) {
+	if s == nil {
+		return
+	}
+	s.onRegister = observer
 }
 
 // RegisterNode handles initial registration. The node cert MUST be present
@@ -104,7 +113,32 @@ func (s *Server) RegisterNode(ctx context.Context, req *pb.RegisterNodeRequest) 
 			return &pb.RegisterNodeResponse{Accepted: false, RejectReason: err.Error()}, nil
 		}
 	}
-	saved, _ := s.registry.Lookup(req.GetNodeName())
+	saved, ok := s.registry.Lookup(req.GetNodeName())
+	if !ok {
+		s.audit.Append(AuditEvent{
+			EventType: "register-rejected",
+			NodeName:  req.GetNodeName(),
+			Detail:    "registered node missing after registry write",
+		})
+		return &pb.RegisterNodeResponse{Accepted: false, RejectReason: "registered node missing after registry write"}, nil
+	}
+	if s.onRegister != nil {
+		if err := s.onRegister(saved); err != nil {
+			s.audit.Append(AuditEvent{
+				EventType: "register-rejected",
+				NodeName:  req.GetNodeName(),
+				Detail:    fmt.Sprintf("registration observer: %v", err),
+			})
+			if removeErr := s.registry.Remove(req.GetNodeName()); removeErr != nil {
+				s.audit.Append(AuditEvent{
+					EventType: "register-rollback-failed",
+					NodeName:  req.GetNodeName(),
+					Detail:    removeErr.Error(),
+				})
+			}
+			return &pb.RegisterNodeResponse{Accepted: false, RejectReason: fmt.Sprintf("registration observer: %v", err)}, nil
+		}
+	}
 	s.audit.Append(AuditEvent{
 		EventType: "register",
 		NodeName:  req.GetNodeName(),

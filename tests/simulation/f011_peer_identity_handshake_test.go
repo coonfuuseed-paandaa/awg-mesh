@@ -46,13 +46,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	clientLink := &simulationLinkConfigurator{}
 	masterLink := &simulationLinkConfigurator{}
 
-	configurePeer(t, masterDevice.dev, wg.PeerConfig{
-		PublicKey:         clientPub,
-		ReplaceAllowedIPs: true,
-		AllowedIPs:        []net.IPNet{mustIPNet(t, clientIP.String()+"/32")},
-	})
-
-	cpClient, cleanupControlPlane := startSimulationMasterCoordination(t, masterPub, masterDevice.endpoint(), masterIP, masterLink)
+	cpClient, cleanupControlPlane := startSimulationMasterCoordination(t, masterDevice, masterPriv, masterDevice.endpoint(), masterIP, masterLink)
 	defer cleanupControlPlane()
 	assertMasterLinks(t, masterLink, wg.DefaultMeshInterfaceName, wg.DefaultClientInterfaceName, masterIP.String()+"/32")
 
@@ -90,6 +84,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		Version:       "sim",
 		InterfaceName: clientTransport.Name(),
 		Protocol:      wg.ProtocolAmneziaWG,
+		PublicKey:     clientPub,
 		StatePath:     cachePath,
 		ApplyTimeout:  2 * time.Second,
 	}, cpClient, clientd.TransportConfigurator{
@@ -121,9 +116,12 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	})
 
 	waitForAppliedPeer(t, clientTransport.applied, masterPub, masterDevice.endpoint(), 5*time.Second)
+	waitForPeerRoute(t, masterLink, wg.DefaultMeshInterfaceName, clientIP.String()+"/32", masterIP.String(), 5*time.Second)
 	waitForPeerRoute(t, clientLink, clientTransport.Name(), masterIP.String()+"/32", clientIP.String(), 5*time.Second)
 	assertPacketTransit(t, clientDevice.tun, masterDevice.tun, clientIP, masterIP, 5*time.Second)
-	assertPeerHandshake(t, clientDevice.dev, masterPub, 5*time.Second)
+	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 5*time.Second)
+	assertFreshPeerHandshake(t, clientDevice.dev, masterPub, 130*time.Second, 5*time.Second)
+	assertFreshPeerHandshake(t, masterDevice.dev, clientPub, 130*time.Second, 5*time.Second)
 }
 
 type simulationDevice struct {
@@ -167,6 +165,7 @@ type simulationTransport struct {
 	name    string
 	dev     *device.Device
 	applied chan wg.Config
+	pubkey  wg.Key
 	mu      sync.Mutex
 }
 
@@ -187,6 +186,9 @@ func (t *simulationTransport) Configure(cfg wg.Config) error {
 	if err := t.dev.Up(); err != nil {
 		return err
 	}
+	if cfg.PrivateKey != nil {
+		t.pubkey = cfg.PrivateKey.PublicKey()
+	}
 	select {
 	case t.applied <- cloneWGConfig(cfg):
 	default:
@@ -203,11 +205,15 @@ func (t *simulationTransport) RemovePeer(key wg.Key) error {
 }
 
 func (t *simulationTransport) Stats() (*wg.Device, error) {
+	t.mu.Lock()
+	pubkey := t.pubkey
+	t.mu.Unlock()
+
 	peers, err := readPeerStats(t.dev)
 	if err != nil {
 		return nil, err
 	}
-	out := &wg.Device{Name: t.name}
+	out := &wg.Device{Name: t.name, PublicKey: pubkey}
 	for _, peer := range peers {
 		key, err := keyFromHex(peer.publicKeyHex)
 		if err != nil {
@@ -280,19 +286,22 @@ func (t *masterCoordinationTransport) Stats() (*wg.Device, error) {
 	return &wg.Device{Name: t.name, PublicKey: t.pubkey}, nil
 }
 
-func startSimulationMasterCoordination(t *testing.T, pubkey wg.Key, endpoint string, overlayIP netip.Addr, linkConfigurator meshnode.MasterLinkConfigurator) (pb.ControlPlaneClient, func()) {
+func startSimulationMasterCoordination(t *testing.T, masterDevice *simulationDevice, privateKey wg.Key, endpoint string, overlayIP netip.Addr, linkConfigurator meshnode.MasterLinkConfigurator) (pb.ControlPlaneClient, func()) {
 	t.Helper()
+	masterTransport := newSimulationTransport("sim-master", masterDevice.dev)
 	master, err := meshnode.NewMaster(meshnode.MasterConfig{
 		Name:             "master-a",
 		OverlayIP:        overlayIP.String(),
 		MeshEndpointHost: endpoint,
 		LinkConfigurator: linkConfigurator,
 		DualListener: wg.DualListenerConfig{
+			MeshPrivateKey: &privateKey,
+			MeshListenPort: masterDevice.port,
 			VanillaFactory: func(name string) (wg.Transport, error) {
 				return &masterCoordinationTransport{name: name, protocol: wg.ProtocolVanilla}, nil
 			},
 			AWGFactory: func(name string) (wg.Transport, error) {
-				return &masterCoordinationTransport{name: name, protocol: wg.ProtocolAmneziaWG, pubkey: pubkey}, nil
+				return masterTransport, nil
 			},
 		},
 		Coordination: &meshnode.MasterCoordinationConfig{
@@ -425,7 +434,7 @@ func assertPacketTransit(t *testing.T, src, dst *tuntest.ChannelTUN, srcIP, dstI
 	t.Fatalf("packet did not transit from %s to %s within %s", srcIP, dstIP, timeout)
 }
 
-func assertPeerHandshake(t *testing.T, dev *device.Device, want wg.Key, timeout time.Duration) {
+func assertFreshPeerHandshake(t *testing.T, dev *device.Device, want wg.Key, maxAge, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -434,14 +443,19 @@ func assertPeerHandshake(t *testing.T, dev *device.Device, want wg.Key, timeout 
 			t.Fatalf("read peer stats: %v", err)
 		}
 		for _, peer := range peers {
-			if peer.publicKeyHex == hexKey(want) && peer.lastHandshakeSec > 0 {
+			if peer.publicKeyHex != hexKey(want) || peer.lastHandshakeSec <= 0 {
+				continue
+			}
+			age := time.Since(time.Unix(peer.lastHandshakeSec, 0))
+			if age <= maxAge {
 				return
 			}
+			t.Fatalf("peer %s latest handshake age = %s, want <= %s", want.String(), age, maxAge)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	raw, _ := dev.IpcGet()
-	t.Fatalf("peer %s did not report a non-zero handshake within %s\n%s", want.String(), timeout, raw)
+	t.Fatalf("peer %s did not report a fresh handshake within %s\n%s", want.String(), timeout, raw)
 }
 
 func readListenPort(t *testing.T, dev *device.Device) int {

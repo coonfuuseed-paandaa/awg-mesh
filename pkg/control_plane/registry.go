@@ -104,6 +104,15 @@ func (r *Registry) Register(node RegisteredNode) error {
 		if prev.OverlayIP != node.OverlayIP {
 			return fmt.Errorf("%w: %q -> %q", ErrRegistryOverlayMove, prev.OverlayIP, node.OverlayIP)
 		}
+		if len(node.Pubkey) == 0 {
+			node.Pubkey = append([]byte(nil), prev.Pubkey...)
+		}
+		if node.EndpointHost == "" {
+			node.EndpointHost = prev.EndpointHost
+		}
+		if node.Protocol == "" {
+			node.Protocol = prev.Protocol
+		}
 		// Re-register: refresh metadata, preserve RegisteredAt of original.
 		node.RegisteredAt = prev.RegisteredAt
 	} else {

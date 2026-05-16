@@ -34,6 +34,7 @@ type Config struct {
 	AuditCap                int           // ring-buffer capacity (default 8192)
 	StartupGrace            time.Duration // delay before declaring readiness (test hook)
 	AllowInsecurePublicBind bool          // explicit opt-in for binding insecure gRPC outside loopback
+	RegistrationObserver    func(RegisteredNode) error
 }
 
 // Daemon is the long-running control-plane process. It owns the registry,
@@ -73,6 +74,7 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 	ledger := NewLedger()
 	audit := NewAuditLog(cfg.AuditCap)
 	server := NewServer(registry, ledger, audit)
+	server.SetRegistrationObserver(cfg.RegistrationObserver)
 	serverOptions, err := configureDaemonCertLifecycle(cfg, server)
 	if err != nil {
 		return nil, err

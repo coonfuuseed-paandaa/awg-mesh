@@ -29,6 +29,7 @@ type Config struct {
 	Version       string
 	InterfaceName string
 	Protocol      wg.Protocol
+	PublicKey     wg.Key
 	StatePath     string
 	ApplyTimeout  time.Duration
 }
@@ -223,6 +224,8 @@ func (a *Agent) register(ctx context.Context) error {
 		NodeVersion: a.cfg.Version,
 		OverlayIp:   a.cfg.OverlayIP,
 		Region:      a.cfg.Region,
+		Pubkey:      publicKeyBytes(a.cfg.PublicKey),
+		Protocol:    string(a.cfg.Protocol),
 	})
 	if err != nil {
 		return fmt.Errorf("register node: %w", err)
@@ -231,6 +234,13 @@ func (a *Agent) register(ctx context.Context) error {
 		return fmt.Errorf("register node rejected: %s", resp.RejectReason)
 	}
 	return nil
+}
+
+func publicKeyBytes(key wg.Key) []byte {
+	if key.IsZero() {
+		return nil
+	}
+	return append([]byte(nil), key[:]...)
 }
 
 func (a *Agent) apply(ctx context.Context, state State) error {
