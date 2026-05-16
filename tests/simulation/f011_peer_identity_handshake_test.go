@@ -89,7 +89,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		ApplyTimeout:  2 * time.Second,
 	}, cpClient, clientd.TransportConfigurator{
 		Transport:        clientTransport,
-		LocalRoles:       []role.Role{role.RoleClient},
+		LocalRoles:       []role.Role{role.RoleEgress},
 		PrivateKey:       &clientPriv,
 		OverlayAddress:   &clientOverlay,
 		LinkConfigurator: clientLink,
