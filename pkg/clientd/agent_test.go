@@ -469,7 +469,46 @@ func TestTransportConfiguratorAppliesDeviceIdentityAndOverlayLink(t *testing.T) 
 	if !configs[0].ReplacePeers || len(configs[0].Peers) != 1 {
 		t.Fatalf("Configure did not apply full peer snapshot: %#v", configs[0])
 	}
-	link.assertCalls(t, "awg-test0", overlay)
+	link.assertCalls(t, "awg-test0", overlay, []fakeLinkRoute{{iface: "awg-test0", dest: "172.21.92.1/32", src: "172.21.92.130"}})
+}
+
+func TestTransportConfiguratorInstallsPeerAllowedIPRoutes(t *testing.T) {
+	overlay := mustIPNet(t, "172.21.92.130/32")
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	link := &fakeLinkConfigurator{}
+	configurator := TransportConfigurator{
+		Transport:        transport,
+		LocalRoles:       []role.Role{role.RoleClient},
+		OverlayAddress:   overlay,
+		LinkConfigurator: link,
+	}
+
+	state := State{Peers: []PeerEntry{
+		{
+			PeerName:   "master-a",
+			PeerRole:   role.RoleMaster,
+			PeerPubkey: bytesOf(0x42),
+			AllowedIPs: []string{
+				"172.21.92.1/32",
+				"172.21.92.130/32",
+				"172.21.92.1/32",
+			},
+		},
+		{
+			PeerName:   "master-b",
+			PeerRole:   role.RoleMaster,
+			PeerPubkey: bytesOf(0x43),
+			AllowedIPs: []string{"172.21.92.2/32"},
+		},
+	}}
+	if err := configurator.Apply(context.Background(), state); err != nil {
+		t.Fatalf("apply production transport routes: %v", err)
+	}
+
+	link.assertCalls(t, "awg-test0", overlay, []fakeLinkRoute{
+		{iface: "awg-test0", dest: "172.21.92.1/32", src: "172.21.92.130"},
+		{iface: "awg-test0", dest: "172.21.92.2/32", src: "172.21.92.130"},
+	})
 }
 
 func TestTransportConfiguratorSkipsStrippedSnapshot(t *testing.T) {
@@ -770,11 +809,18 @@ type fakeLinkConfigurator struct {
 	mu     sync.Mutex
 	addrs  []fakeLinkAddress
 	upIfcs []string
+	routes []fakeLinkRoute
 }
 
 type fakeLinkAddress struct {
 	iface string
 	addr  string
+}
+
+type fakeLinkRoute struct {
+	iface string
+	dest  string
+	src   string
 }
 
 func (l *fakeLinkConfigurator) AddrAdd(ifaceName string, addr *net.IPNet) error {
@@ -791,7 +837,18 @@ func (l *fakeLinkConfigurator) LinkSetUp(ifaceName string) error {
 	return nil
 }
 
-func (l *fakeLinkConfigurator) assertCalls(t *testing.T, wantIface string, wantAddr *net.IPNet) {
+func (l *fakeLinkConfigurator) RouteReplaceLinkWithSrc(dest *net.IPNet, ifaceName string, src net.IP) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	srcText := ""
+	if src != nil {
+		srcText = src.String()
+	}
+	l.routes = append(l.routes, fakeLinkRoute{iface: ifaceName, dest: dest.String(), src: srcText})
+	return nil
+}
+
+func (l *fakeLinkConfigurator) assertCalls(t *testing.T, wantIface string, wantAddr *net.IPNet, wantRoutes []fakeLinkRoute) {
 	t.Helper()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -800,6 +857,9 @@ func (l *fakeLinkConfigurator) assertCalls(t *testing.T, wantIface string, wantA
 	}
 	if len(l.upIfcs) != 1 || l.upIfcs[0] != wantIface {
 		t.Fatalf("LinkSetUp calls = %#v, want %s", l.upIfcs, wantIface)
+	}
+	if !reflect.DeepEqual(l.routes, wantRoutes) {
+		t.Fatalf("RouteReplaceLinkWithSrc calls = %#v, want %#v", l.routes, wantRoutes)
 	}
 }
 

@@ -43,6 +43,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	masterDevice := newSimulationDevice(t, "sim-master", masterPriv)
 	clientDevice := newUnconfiguredSimulationDevice(t, "sim-client")
 	clientTransport := newSimulationTransport("sim-client", clientDevice.dev)
+	clientLink := &simulationLinkConfigurator{}
 
 	configurePeer(t, masterDevice.dev, wg.PeerConfig{
 		PublicKey:         clientPub,
@@ -77,6 +78,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		t.Fatalf("seed stale clientd cache: %v", err)
 	}
 
+	clientOverlay := mustIPNet(t, clientIP.String()+"/32")
 	agent, err := clientd.NewAgent(clientd.Config{
 		NodeName:      "client-a",
 		Roles:         []role.Role{role.RoleClient},
@@ -89,9 +91,11 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		StatePath:     cachePath,
 		ApplyTimeout:  2 * time.Second,
 	}, cpClient, clientd.TransportConfigurator{
-		Transport:  clientTransport,
-		LocalRoles: []role.Role{role.RoleClient},
-		PrivateKey: &clientPriv,
+		Transport:        clientTransport,
+		LocalRoles:       []role.Role{role.RoleClient},
+		PrivateKey:       &clientPriv,
+		OverlayAddress:   &clientOverlay,
+		LinkConfigurator: clientLink,
 	})
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
@@ -115,6 +119,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	})
 
 	waitForAppliedPeer(t, clientTransport.applied, masterPub, masterDevice.endpoint(), 5*time.Second)
+	waitForPeerRoute(t, clientLink, clientTransport.Name(), masterIP.String()+"/32", clientIP.String(), 5*time.Second)
 	assertPacketTransit(t, clientDevice.tun, masterDevice.tun, clientIP, masterIP, 5*time.Second)
 	assertPeerHandshake(t, clientDevice.dev, masterPub, 5*time.Second)
 }
@@ -212,6 +217,31 @@ func (t *simulationTransport) Stats() (*wg.Device, error) {
 		})
 	}
 	return out, nil
+}
+
+type simulationLinkConfigurator struct {
+	mu     sync.Mutex
+	routes []simulationRoute
+}
+
+type simulationRoute struct {
+	iface string
+	dest  string
+	src   string
+}
+
+func (l *simulationLinkConfigurator) AddrAdd(string, *net.IPNet) error { return nil }
+func (l *simulationLinkConfigurator) LinkSetUp(string) error           { return nil }
+
+func (l *simulationLinkConfigurator) RouteReplaceLinkWithSrc(dest *net.IPNet, ifaceName string, src net.IP) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	srcText := ""
+	if src != nil {
+		srcText = src.String()
+	}
+	l.routes = append(l.routes, simulationRoute{iface: ifaceName, dest: dest.String(), src: srcText})
+	return nil
 }
 
 type masterCoordinationTransport struct {
@@ -316,6 +346,26 @@ func waitForAppliedPeer(t *testing.T, applied <-chan wg.Config, want wg.Key, wan
 		case <-timer.C:
 			t.Fatalf("clientd did not apply peer %s within %s", want.String(), timeout)
 		}
+	}
+}
+
+func waitForPeerRoute(t *testing.T, link *simulationLinkConfigurator, wantIface, wantDest, wantSrc string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		link.mu.Lock()
+		for _, route := range link.routes {
+			if route.iface == wantIface && route.dest == wantDest && route.src == wantSrc {
+				link.mu.Unlock()
+				return
+			}
+		}
+		routes := append([]simulationRoute(nil), link.routes...)
+		link.mu.Unlock()
+		if time.Now().Add(100 * time.Millisecond).After(deadline) {
+			t.Fatalf("clientd did not install peer route dev=%s dest=%s src=%s within %s; routes=%#v", wantIface, wantDest, wantSrc, timeout, routes)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
