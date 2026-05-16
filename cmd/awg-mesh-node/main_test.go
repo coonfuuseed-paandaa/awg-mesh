@@ -73,6 +73,7 @@ func TestRunMasterDryRunAcceptsCoordinationListenerFlags(t *testing.T) {
 		"--overlay-ip", "172.21.92.2",
 		"--coordination-listen", "127.0.0.1:0",
 		"--coordination-state-dir", stateDir,
+		"--public-ip", "203.0.113.10",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
@@ -80,11 +81,60 @@ func TestRunMasterDryRunAcceptsCoordinationListenerFlags(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"master dry-run node=master-01",
+		"endpoint=203.0.113.10:51821",
 		"coordination=127.0.0.1:0",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("dry-run output missing %q: %s", want, out)
 		}
+	}
+}
+
+func TestRunMasterDryRunAcceptsExplicitMeshEndpoint(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--mesh-listen-port", "443",
+		"--public-ip", "203.0.113.10",
+		"--mesh-endpoint", "mesh.example.test:8443",
+		"--coordination-listen", "127.0.0.1:0",
+		"--coordination-state-dir", stateDir,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "endpoint=mesh.example.test:8443") {
+		t.Fatalf("explicit mesh endpoint missing from dry-run output: %s", out)
+	}
+	if strings.Contains(out, "endpoint=203.0.113.10:443") {
+		t.Fatalf("explicit --mesh-endpoint must override --public-ip + --mesh-listen-port: %s", out)
+	}
+}
+
+func TestRunMasterRejectsCoordinationWithoutAdvertisedEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--coordination-listen", "127.0.0.1:0",
+		"--coordination-state-dir", t.TempDir(),
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit without advertised endpoint; stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "mesh endpoint is required") {
+		t.Fatalf("expected mesh endpoint error, got stderr=%s", stderr.String())
 	}
 }
 

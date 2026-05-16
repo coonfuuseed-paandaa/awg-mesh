@@ -136,6 +136,8 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	masterMeshIface := fs.String("mesh-iface", wg.DefaultMeshInterfaceName, "master: mesh-internal AmneziaWG interface name")
 	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
 	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
+	masterPublicIP := fs.String("public-ip", "", "master: public IP/DNS name advertised as the mesh endpoint host")
+	masterMeshEndpoint := fs.String("mesh-endpoint", "", "master: explicit public mesh endpoint host:port; overrides --public-ip + --mesh-listen-port")
 	masterClientPrivateKeyFile := fs.String("client-private-key-file", "", "master: base64 WireGuard private key file for the client-facing vanilla-WG listener")
 	var masterClientPeers routeFlags
 	fs.Var(&masterClientPeers, "client-peer", "master: static client-facing peer public_key=allowed_cidr[,allowed_cidr]; repeatable")
@@ -222,9 +224,15 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			writef(stderr, "master: %v\n", err)
 			return 2
 		}
+		meshEndpoint, err := advertisedMeshEndpoint(*masterMeshEndpoint, *masterPublicIP, *masterMeshListenPort)
+		if err != nil {
+			writef(stderr, "master: %v\n", err)
+			return 2
+		}
 		return runMaster(context.Background(), node.MasterConfig{
-			Name:      *nodeName,
-			OverlayIP: *overlayIP,
+			Name:             *nodeName,
+			OverlayIP:        *overlayIP,
+			MeshEndpointHost: meshEndpoint,
 			DualListener: wg.DualListenerConfig{
 				ClientInterfaceName: *masterClientIface,
 				MeshInterfaceName:   *masterMeshIface,
@@ -426,6 +434,40 @@ func buildMasterCoordinationConfig(listenAddr, stateDir, caDir string, certHosts
 	}, nil
 }
 
+func advertisedMeshEndpoint(explicitEndpoint, publicIP string, meshListenPort int) (string, error) {
+	explicitEndpoint = strings.TrimSpace(explicitEndpoint)
+	publicIP = strings.TrimSpace(publicIP)
+	if explicitEndpoint != "" {
+		return explicitEndpoint, validateEndpointAddress(explicitEndpoint, "--mesh-endpoint")
+	}
+	if publicIP == "" {
+		return "", nil
+	}
+	if _, _, err := net.SplitHostPort(publicIP); err == nil {
+		return "", errors.New("--public-ip must not include a port; use --mesh-endpoint for explicit host:port")
+	}
+	if strings.Trim(publicIP, "[]") == "" {
+		return "", errors.New("--public-ip must not be empty")
+	}
+	endpoint := net.JoinHostPort(strings.Trim(publicIP, "[]"), strconv.Itoa(meshListenPort))
+	return endpoint, validateEndpointAddress(endpoint, "--public-ip")
+}
+
+func validateEndpointAddress(endpoint, flagName string) error {
+	host, portText, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("%s must be host:port: %w", flagName, err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("%s must include a non-empty host", flagName)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("%s has invalid port %q", flagName, portText)
+	}
+	return nil
+}
+
 func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, stderr io.Writer) int {
 	master, err := node.NewMaster(cfg)
 	if err != nil {
@@ -437,8 +479,12 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 	if status.Coordination.Enabled {
 		coordination = fmt.Sprintf(" coordination=%s", status.Coordination.ListenAddr)
 	}
+	meshEndpoint := ""
+	if status.MeshEndpointHost != "" {
+		meshEndpoint = fmt.Sprintf(" endpoint=%s", status.MeshEndpointHost)
+	}
 	if dryRun {
-		writef(stdout, "master dry-run node=%s overlay=%s client=%s:%d/%s mesh=%s:%d/%s%s\n",
+		writef(stdout, "master dry-run node=%s overlay=%s client=%s:%d/%s mesh=%s:%d/%s%s%s\n",
 			status.Name,
 			status.OverlayIP,
 			status.Listeners.ClientInterfaceName,
@@ -447,11 +493,12 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 			status.Listeners.MeshInterfaceName,
 			status.Listeners.MeshListenPort,
 			status.Listeners.MeshProtocol,
+			meshEndpoint,
 			coordination,
 		)
 		return 0
 	}
-	writef(stdout, "awg-mesh-node %s — mode=master — node=%s overlay=%s client=%s:%d mesh=%s:%d%s\n",
+	writef(stdout, "awg-mesh-node %s — mode=master — node=%s overlay=%s client=%s:%d mesh=%s:%d%s%s\n",
 		versionString(),
 		status.Name,
 		status.OverlayIP,
@@ -459,6 +506,7 @@ func runMaster(ctx context.Context, cfg node.MasterConfig, dryRun bool, stdout, 
 		status.Listeners.ClientListenPort,
 		status.Listeners.MeshInterfaceName,
 		status.Listeners.MeshListenPort,
+		meshEndpoint,
 		coordination,
 	)
 	if err := master.Run(ctx); err != nil {

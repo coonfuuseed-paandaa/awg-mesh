@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -20,7 +19,7 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/device"
 	"github.com/amnezia-vpn/amneziawg-go/tun/tuntest"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/clientd"
-	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/control_plane"
+	meshnode "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/node"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
@@ -52,13 +51,11 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		AllowedIPs:        []net.IPNet{mustIPNet(t, clientIP.String()+"/32")},
 	})
 
-	cpClient, cleanupControlPlane := startSimulationControlPlane(t)
+	cpClient, cleanupControlPlane := startSimulationMasterCoordination(t, masterPub, masterDevice.endpoint(), masterIP)
 	defer cleanupControlPlane()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	registerMaster(t, ctx, cpClient, masterPub, masterDevice.endpoint(), masterIP)
 
 	cachePath := t.TempDir() + "/clientd-state.json"
 	staleCache := clientd.State{
@@ -117,7 +114,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		}
 	})
 
-	waitForAppliedPeer(t, clientTransport.applied, masterPub, 5*time.Second)
+	waitForAppliedPeer(t, clientTransport.applied, masterPub, masterDevice.endpoint(), 5*time.Second)
 	assertPacketTransit(t, clientDevice.tun, masterDevice.tun, clientIP, masterIP, 5*time.Second)
 	assertPeerHandshake(t, clientDevice.dev, masterPub, 5*time.Second)
 }
@@ -207,56 +204,81 @@ func (t *simulationTransport) Stats() (*wg.Device, error) {
 	return out, nil
 }
 
-func startSimulationControlPlane(t *testing.T) (pb.ControlPlaneClient, func()) {
-	t.Helper()
-	server := control_plane.NewServer(control_plane.NewRegistry(), control_plane.NewLedger(), control_plane.NewAuditLog(64))
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	grpcServer := grpc.NewServer()
-	pb.RegisterControlPlaneServer(grpcServer, server)
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- grpcServer.Serve(listener) }()
-
-	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		grpcServer.Stop()
-		t.Fatalf("dial control plane: %v", err)
-	}
-	return pb.NewControlPlaneClient(conn), func() {
-		_ = conn.Close()
-		grpcServer.Stop()
-		select {
-		case err := <-serveErr:
-			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-				t.Errorf("control-plane Serve: %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Errorf("control-plane Serve did not stop")
-		}
-	}
+type masterCoordinationTransport struct {
+	name     string
+	protocol wg.Protocol
+	pubkey   wg.Key
 }
 
-func registerMaster(t *testing.T, ctx context.Context, client pb.ControlPlaneClient, pubkey wg.Key, endpoint string, overlayIP netip.Addr) {
+func (t *masterCoordinationTransport) Protocol() wg.Protocol       { return t.protocol }
+func (t *masterCoordinationTransport) Name() string                { return t.name }
+func (t *masterCoordinationTransport) Configure(wg.Config) error   { return nil }
+func (t *masterCoordinationTransport) AddPeer(wg.PeerConfig) error { return nil }
+func (t *masterCoordinationTransport) RemovePeer(wg.Key) error     { return nil }
+func (t *masterCoordinationTransport) Close() error                { return nil }
+func (t *masterCoordinationTransport) Stats() (*wg.Device, error) {
+	return &wg.Device{Name: t.name, PublicKey: t.pubkey}, nil
+}
+
+func startSimulationMasterCoordination(t *testing.T, pubkey wg.Key, endpoint string, overlayIP netip.Addr) (pb.ControlPlaneClient, func()) {
 	t.Helper()
-	resp, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
-		NodeName:     "master-a",
-		Roles:        []string{string(role.RoleMaster)},
-		NodeCertPem:  []byte("master-cert"),
-		NodeVersion:  "sim",
-		OverlayIp:    overlayIP.String(),
-		Region:       "ru",
-		Pubkey:       pubkey[:],
-		EndpointHost: endpoint,
-		Protocol:     string(wg.ProtocolAmneziaWG),
+	master, err := meshnode.NewMaster(meshnode.MasterConfig{
+		Name:             "master-a",
+		OverlayIP:        overlayIP.String(),
+		MeshEndpointHost: endpoint,
+		DualListener: wg.DualListenerConfig{
+			VanillaFactory: func(name string) (wg.Transport, error) {
+				return &masterCoordinationTransport{name: name, protocol: wg.ProtocolVanilla}, nil
+			},
+			AWGFactory: func(name string) (wg.Transport, error) {
+				return &masterCoordinationTransport{name: name, protocol: wg.ProtocolAmneziaWG, pubkey: pubkey}, nil
+			},
+		},
+		Coordination: &meshnode.MasterCoordinationConfig{
+			ListenAddr: "127.0.0.1:0",
+			StateDir:   t.TempDir(),
+		},
 	})
 	if err != nil {
-		t.Fatalf("RegisterNode master: %v", err)
+		t.Fatalf("NewMaster: %v", err)
 	}
-	if !resp.GetAccepted() {
-		t.Fatalf("RegisterNode master rejected: %s", resp.GetRejectReason())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- master.Run(ctx) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status := master.Status().Coordination
+		if status.Enabled && status.Started && status.BoundAddr != "" {
+			conn, err := grpc.NewClient(status.BoundAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				cancel()
+				t.Fatalf("dial master coordination: %v", err)
+			}
+			return pb.NewControlPlaneClient(conn), func() {
+				_ = conn.Close()
+				cancel()
+				select {
+				case err := <-runErr:
+					if err != nil {
+						t.Errorf("master coordination Run: %v", err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Errorf("master coordination Run did not stop")
+				}
+			}
+		}
+		select {
+		case err := <-runErr:
+			t.Fatalf("master coordination stopped before ready: %v", err)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	cancel()
+	t.Fatal("master coordination did not become ready")
+	return nil, nil
 }
 
 func configurePeer(t *testing.T, dev *device.Device, peer wg.PeerConfig) {
@@ -266,7 +288,7 @@ func configurePeer(t *testing.T, dev *device.Device, peer wg.PeerConfig) {
 	}
 }
 
-func waitForAppliedPeer(t *testing.T, applied <-chan wg.Config, want wg.Key, timeout time.Duration) {
+func waitForAppliedPeer(t *testing.T, applied <-chan wg.Config, want wg.Key, wantEndpoint string, timeout time.Duration) {
 	t.Helper()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -275,6 +297,9 @@ func waitForAppliedPeer(t *testing.T, applied <-chan wg.Config, want wg.Key, tim
 		case cfg := <-applied:
 			for _, peer := range cfg.Peers {
 				if peer.PublicKey == want {
+					if peer.Endpoint == nil || peer.Endpoint.String() != wantEndpoint {
+						t.Fatalf("REGRESSION: applied peer endpoint = %v, want %s", peer.Endpoint, wantEndpoint)
+					}
 					return
 				}
 			}
