@@ -351,13 +351,6 @@ func startSimulationMasterCoordination(t *testing.T, masterDevice *simulationDev
 	return nil, nil
 }
 
-func configurePeer(t *testing.T, dev *device.Device, peer wg.PeerConfig) {
-	t.Helper()
-	if err := dev.IpcSet(encodeWGConfig(wg.Config{Peers: []wg.PeerConfig{peer}})); err != nil {
-		t.Fatalf("configure peer: %v", err)
-	}
-}
-
 func waitForAppliedPeer(t *testing.T, applied <-chan wg.Config, want wg.Key, wantEndpoint string, timeout time.Duration) {
 	t.Helper()
 	timer := time.NewTimer(timeout)
