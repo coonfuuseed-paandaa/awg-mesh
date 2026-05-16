@@ -41,6 +41,7 @@ type TransportConfigurator struct {
 type LinkConfigurator interface {
 	AddrAdd(ifaceName string, addr *net.IPNet) error
 	LinkSetUp(ifaceName string) error
+	RouteReplaceLinkWithSrc(dest *net.IPNet, ifaceName string, src net.IP) error
 }
 
 // Apply validates the state and updates local Transport peers.
@@ -85,6 +86,35 @@ func (c TransportConfigurator) Apply(ctx context.Context, state State) error {
 		}
 		if err := c.LinkConfigurator.LinkSetUp(c.Transport.Name()); err != nil {
 			return fmt.Errorf("bring overlay interface up: %w", err)
+		}
+		if err := c.installPeerRoutes(peers); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c TransportConfigurator) installPeerRoutes(peers []wg.PeerConfig) error {
+	if c.OverlayAddress == nil || c.LinkConfigurator == nil {
+		return nil
+	}
+	ifaceName := c.Transport.Name()
+	localOverlay := normalizeCIDR(*c.OverlayAddress)
+	seen := make(map[string]struct{})
+	for _, peer := range peers {
+		for _, allowedIP := range peer.AllowedIPs {
+			route := normalizeCIDR(allowedIP)
+			if route.String() == localOverlay.String() {
+				continue
+			}
+			key := route.String()
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			if err := c.LinkConfigurator.RouteReplaceLinkWithSrc(&route, ifaceName, c.OverlayAddress.IP); err != nil {
+				return fmt.Errorf("install peer route %s dev %s: %w", route.String(), ifaceName, err)
+			}
 		}
 	}
 	return nil
@@ -178,6 +208,28 @@ func parseAllowedIPs(values []string) ([]net.IPNet, error) {
 		out = append(out, *ipNet)
 	}
 	return out, nil
+}
+
+func normalizeCIDR(value net.IPNet) net.IPNet {
+	ones, bits := value.Mask.Size()
+	if ones < 0 || bits < 0 {
+		return value
+	}
+	ip := value.IP
+	if bits == 32 {
+		ip = ip.To4()
+	}
+	if ip == nil {
+		ip = value.IP
+	}
+	normalized := ip.Mask(value.Mask)
+	if normalized == nil {
+		normalized = ip
+	}
+	return net.IPNet{
+		IP:   append(net.IP(nil), normalized...),
+		Mask: append(net.IPMask(nil), value.Mask...),
+	}
 }
 
 func localHasClient(roles []role.Role) bool {
