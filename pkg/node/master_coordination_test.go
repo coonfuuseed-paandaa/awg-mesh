@@ -145,6 +145,95 @@ func TestMasterSelfRegistersAndStreamsPubkey(t *testing.T) {
 	if peer.GetPeerOverlayIp() != "172.21.92.2" {
 		t.Fatalf("peer overlay = %q, want 172.21.92.2", peer.GetPeerOverlayIp())
 	}
+	if peer.GetPeerEndpointHost() != "203.0.113.10:51821" {
+		t.Fatalf("REGRESSION: peer endpoint = %q, want 203.0.113.10:51821 — master did not self-register its advertised WG endpoint", peer.GetPeerEndpointHost())
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
+func TestMasterDoesNotServeCoordinationBeforeSelfRegister(t *testing.T) {
+	t.Parallel()
+
+	statsStarted := make(chan struct{})
+	statsRelease := make(chan struct{})
+	master, err := NewMaster(MasterConfig{
+		Name:             "master-01",
+		OverlayIP:        "172.21.92.2",
+		MeshEndpointHost: "203.0.113.10:51821",
+		DualListener: wg.DualListenerConfig{
+			VanillaFactory: func(name string) (wg.Transport, error) {
+				return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil
+			},
+			AWGFactory: func(name string) (wg.Transport, error) {
+				return &fakeMasterTransport{
+					name:       name,
+					protocol:   wg.ProtocolAmneziaWG,
+					pubkey:     testMasterPubkey,
+					statsStart: statsStarted,
+					statsBlock: statsRelease,
+				}, nil
+			},
+		},
+		Coordination: &MasterCoordinationConfig{
+			ListenAddr: "127.0.0.1:0",
+			StateDir:   t.TempDir(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewMaster: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- master.Run(ctx) }()
+
+	select {
+	case <-statsStarted:
+	case <-time.After(time.Second):
+		t.Fatal("self-register did not start before timeout")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if status := master.coordination.Snapshot(); status.Started || status.BoundAddr != "" {
+		t.Fatalf("REGRESSION: coordination served before self-register completed: %#v", status)
+	}
+
+	close(statsRelease)
+	waitFor(t, func() bool {
+		s := master.coordination.Snapshot()
+		return s.Enabled && s.Started && s.BoundAddr != ""
+	})
+
+	addr := master.coordination.Snapshot().BoundAddr
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	stream, err := pb.NewControlPlaneClient(conn).StreamPeerList(ctx, &pb.StreamPeerListRequest{NodeName: "client-01"})
+	if err != nil {
+		t.Fatalf("StreamPeerList: %v", err)
+	}
+	initial, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv initial peer list: %v", err)
+	}
+	if len(initial.GetPeers()) != 1 {
+		t.Fatalf("expected 1 peer, got %d", len(initial.GetPeers()))
+	}
+	peer := initial.GetPeers()[0]
+	if len(peer.GetPeerPubkey()) != 32 || peer.GetPeerEndpointHost() != "203.0.113.10:51821" {
+		t.Fatalf("first snapshot carried incomplete self-registration: pubkey_len=%d endpoint=%q", len(peer.GetPeerPubkey()), peer.GetPeerEndpointHost())
+	}
 
 	cancel()
 	select {
@@ -173,8 +262,9 @@ func TestMasterCoordinationBindFailureDoesNotCorruptDataPlaneConfig(t *testing.T
 	var clientTransport *fakeMasterTransport
 	var meshTransport *fakeMasterTransport
 	master, err := NewMaster(MasterConfig{
-		Name:      "master-01",
-		OverlayIP: "172.21.92.2",
+		Name:             "master-01",
+		OverlayIP:        "172.21.92.2",
+		MeshEndpointHost: "203.0.113.10:51821",
 		DualListener: wg.DualListenerConfig{
 			ClientInterfaceName: "wg-clientx",
 			MeshInterfaceName:   "wg-meshx",
@@ -221,8 +311,9 @@ func testMasterConfigWithCoordination(t *testing.T, listenAddr string) MasterCon
 	t.Helper()
 
 	return MasterConfig{
-		Name:      "master-01",
-		OverlayIP: "172.21.92.2",
+		Name:             "master-01",
+		OverlayIP:        "172.21.92.2",
+		MeshEndpointHost: "203.0.113.10:51821",
 		DualListener: wg.DualListenerConfig{
 			VanillaFactory: func(name string) (wg.Transport, error) {
 				return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil

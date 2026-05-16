@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,9 @@ type fakeMasterTransport struct {
 	name       string
 	protocol   wg.Protocol
 	pubkey     wg.Key
+	statsStart chan struct{}
+	statsBlock chan struct{}
+	statsOnce  sync.Once
 	closeCount int
 }
 
@@ -23,6 +27,12 @@ func (t *fakeMasterTransport) Configure(wg.Config) error   { return nil }
 func (t *fakeMasterTransport) AddPeer(wg.PeerConfig) error { return nil }
 func (t *fakeMasterTransport) RemovePeer(wg.Key) error     { return nil }
 func (t *fakeMasterTransport) Stats() (*wg.Device, error) {
+	if t.statsStart != nil {
+		t.statsOnce.Do(func() { close(t.statsStart) })
+	}
+	if t.statsBlock != nil {
+		<-t.statsBlock
+	}
 	return &wg.Device{Name: t.name, PublicKey: t.pubkey}, nil
 }
 func (t *fakeMasterTransport) Close() error {
@@ -41,6 +51,31 @@ func TestNewMasterValidation(t *testing.T) {
 		{name: "missing name", cfg: MasterConfig{OverlayIP: "172.21.92.2"}, wantErr: "name is required"},
 		{name: "missing overlay", cfg: MasterConfig{Name: "master-01"}, wantErr: "overlay IP is required"},
 		{name: "bad overlay", cfg: MasterConfig{Name: "master-01", OverlayIP: "not-ip"}, wantErr: "parse master overlay IP"},
+		{
+			name: "coordination missing mesh endpoint",
+			cfg: MasterConfig{
+				Name:      "master-01",
+				OverlayIP: "172.21.92.2",
+				Coordination: &MasterCoordinationConfig{
+					ListenAddr: "127.0.0.1:0",
+					StateDir:   t.TempDir(),
+				},
+			},
+			wantErr: "mesh endpoint is required",
+		},
+		{
+			name: "coordination invalid mesh endpoint",
+			cfg: MasterConfig{
+				Name:             "master-01",
+				OverlayIP:        "172.21.92.2",
+				MeshEndpointHost: "203.0.113.10",
+				Coordination: &MasterCoordinationConfig{
+					ListenAddr: "127.0.0.1:0",
+					StateDir:   t.TempDir(),
+				},
+			},
+			wantErr: "must be host:port",
+		},
 	}
 
 	for _, tt := range tests {
