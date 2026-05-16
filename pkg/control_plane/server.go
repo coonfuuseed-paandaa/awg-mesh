@@ -66,6 +66,16 @@ func (s *Server) SetRegistrationObserver(observer func(RegisteredNode) error) {
 	s.onRegister = observer
 }
 
+func (s *Server) notifyRegistrationObserver(node RegisteredNode) error {
+	if s.onRegister == nil {
+		return nil
+	}
+	if err := s.onRegister(node); err != nil {
+		return fmt.Errorf("registration observer: %w", err)
+	}
+	return nil
+}
+
 // RegisterNode handles initial registration. The node cert MUST be present
 // (operators provision it during onboarding). Returns Accepted=false with a
 // reject_reason on validation failure.
@@ -122,22 +132,20 @@ func (s *Server) RegisterNode(ctx context.Context, req *pb.RegisterNodeRequest) 
 		})
 		return &pb.RegisterNodeResponse{Accepted: false, RejectReason: "registered node missing after registry write"}, nil
 	}
-	if s.onRegister != nil {
-		if err := s.onRegister(saved); err != nil {
+	if err := s.notifyRegistrationObserver(saved); err != nil {
+		s.audit.Append(AuditEvent{
+			EventType: "register-rejected",
+			NodeName:  req.GetNodeName(),
+			Detail:    err.Error(),
+		})
+		if removeErr := s.registry.Remove(req.GetNodeName()); removeErr != nil {
 			s.audit.Append(AuditEvent{
-				EventType: "register-rejected",
+				EventType: "register-rollback-failed",
 				NodeName:  req.GetNodeName(),
-				Detail:    fmt.Sprintf("registration observer: %v", err),
+				Detail:    removeErr.Error(),
 			})
-			if removeErr := s.registry.Remove(req.GetNodeName()); removeErr != nil {
-				s.audit.Append(AuditEvent{
-					EventType: "register-rollback-failed",
-					NodeName:  req.GetNodeName(),
-					Detail:    removeErr.Error(),
-				})
-			}
-			return &pb.RegisterNodeResponse{Accepted: false, RejectReason: fmt.Sprintf("registration observer: %v", err)}, nil
 		}
+		return &pb.RegisterNodeResponse{Accepted: false, RejectReason: err.Error()}, nil
 	}
 	s.audit.Append(AuditEvent{
 		EventType: "register",
@@ -162,8 +170,23 @@ func (s *Server) Heartbeat(stream pb.ControlPlane_HeartbeatServer) error {
 			}
 			return err
 		}
+		hasPeerIdentity := len(req.GetPubkey()) > 0 || req.GetEndpointHost() != "" || req.GetProtocol() != ""
 		if err := s.registry.Heartbeat(req.GetNodeName(), req.GetHealth(), req.GetPubkey(), req.GetEndpointHost(), req.GetProtocol()); err != nil {
 			return status.Errorf(codes.NotFound, "node %q not registered", req.GetNodeName())
+		}
+		if hasPeerIdentity {
+			saved, ok := s.registry.Lookup(req.GetNodeName())
+			if !ok {
+				return status.Errorf(codes.NotFound, "node %q not registered", req.GetNodeName())
+			}
+			if err := s.notifyRegistrationObserver(saved); err != nil {
+				s.audit.Append(AuditEvent{
+					EventType: "heartbeat-rejected",
+					NodeName:  req.GetNodeName(),
+					Detail:    err.Error(),
+				})
+				return status.Errorf(codes.Internal, "%v", err)
+			}
 		}
 		s.audit.Append(AuditEvent{
 			EventType: "heartbeat",

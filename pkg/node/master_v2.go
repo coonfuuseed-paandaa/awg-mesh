@@ -194,6 +194,7 @@ func applyRegisteredMeshPeer(listener *wg.DualListener, masterName string, link 
 	if err := link.RouteReplaceLinkWithSrc(peerOverlay, snapshot.MeshInterfaceName, localOverlay.IP); err != nil {
 		return fmt.Errorf("route registered peer %q overlay: %w", node.Name, err)
 	}
+	log.Printf("master %s: applied registered peer %q to %s overlay=%s", masterName, node.Name, snapshot.MeshInterfaceName, peerOverlay.String())
 	return nil
 }
 
