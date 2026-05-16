@@ -527,6 +527,38 @@ func encodeWGConfig(cfg wg.Config) string {
 	if cfg.ReplacePeers {
 		writeUAPIKV(&b, "replace_peers", "true")
 	}
+	for _, kv := range []struct {
+		key string
+		val *int
+	}{
+		{"jc", cfg.Jc},
+		{"jmin", cfg.Jmin},
+		{"jmax", cfg.Jmax},
+		{"s1", cfg.S1},
+		{"s2", cfg.S2},
+	} {
+		if kv.val != nil {
+			writeUAPIKV(&b, kv.key, strconv.Itoa(*kv.val))
+		}
+	}
+	for _, kv := range []struct {
+		key string
+		val *string
+	}{
+		{"h1", cfg.H1},
+		{"h2", cfg.H2},
+		{"h3", cfg.H3},
+		{"h4", cfg.H4},
+		{"i1", cfg.I1},
+		{"i2", cfg.I2},
+		{"i3", cfg.I3},
+		{"i4", cfg.I4},
+		{"i5", cfg.I5},
+	} {
+		if kv.val != nil {
+			writeUAPIKV(&b, kv.key, *kv.val)
+		}
+	}
 	for _, peer := range cfg.Peers {
 		writeUAPIKV(&b, "public_key", hexKey(peer.PublicKey))
 		if peer.Remove {
