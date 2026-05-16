@@ -23,11 +23,18 @@ type fakeMasterTransport struct {
 	statsOnce  sync.Once
 	closeCount int
 	peers      []wg.PeerConfig
+	privateKey *wg.Key
 }
 
-func (t *fakeMasterTransport) Protocol() wg.Protocol     { return t.protocol }
-func (t *fakeMasterTransport) Name() string              { return t.name }
-func (t *fakeMasterTransport) Configure(wg.Config) error { return nil }
+func (t *fakeMasterTransport) Protocol() wg.Protocol { return t.protocol }
+func (t *fakeMasterTransport) Name() string          { return t.name }
+func (t *fakeMasterTransport) Configure(cfg wg.Config) error {
+	if cfg.PrivateKey != nil {
+		key := *cfg.PrivateKey
+		t.privateKey = &key
+	}
+	return nil
+}
 func (t *fakeMasterTransport) AddPeer(peer wg.PeerConfig) error {
 	t.peers = append(t.peers, peer)
 	return nil
@@ -40,7 +47,11 @@ func (t *fakeMasterTransport) Stats() (*wg.Device, error) {
 	if t.statsBlock != nil {
 		<-t.statsBlock
 	}
-	return &wg.Device{Name: t.name, PublicKey: t.pubkey}, nil
+	pubkey := t.pubkey
+	if t.privateKey != nil {
+		pubkey = t.privateKey.PublicKey()
+	}
+	return &wg.Device{Name: t.name, PublicKey: pubkey}, nil
 }
 func (t *fakeMasterTransport) Close() error {
 	t.closeCount++

@@ -161,6 +161,44 @@ func TestDualListenerStartConfiguresProtocolSpecificListeners(t *testing.T) {
 	}
 }
 
+func TestDualListenerStartUsesConfiguredPrivateKeys(t *testing.T) {
+	t.Parallel()
+
+	clientPrivateKey, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey client: %v", err)
+	}
+	meshPrivateKey, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey mesh: %v", err)
+	}
+	var clientTransports []*fakeDualTransport
+	var meshTransports []*fakeDualTransport
+	listener, err := NewDualListener(DualListenerConfig{
+		ClientPrivateKey: &clientPrivateKey,
+		MeshPrivateKey:   &meshPrivateKey,
+		VanillaFactory:   collectingFactory(ProtocolVanilla, &clientTransports, nil),
+		AWGFactory:       collectingFactory(ProtocolAmneziaWG, &meshTransports, nil),
+	})
+	if err != nil {
+		t.Fatalf("NewDualListener: %v", err)
+	}
+
+	if err := listener.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	clientCfg := onlyConfig(t, clientTransports[0])
+	meshCfg := onlyConfig(t, meshTransports[0])
+	if clientCfg.PrivateKey == nil || *clientCfg.PrivateKey != clientPrivateKey {
+		t.Fatalf("client listener private key = %#v, want configured key", clientCfg.PrivateKey)
+	}
+	if meshCfg.PrivateKey == nil || *meshCfg.PrivateKey != meshPrivateKey {
+		t.Fatalf("mesh listener private key = %#v, want configured key", meshCfg.PrivateKey)
+	}
+}
+
 func TestMeshBootstrapConfigUsesDriverAcceptedAWGParams(t *testing.T) {
 	t.Parallel()
 

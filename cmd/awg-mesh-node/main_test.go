@@ -193,6 +193,26 @@ func TestRunMasterDryRunAcceptsClientPrivateKeyFile(t *testing.T) {
 	}
 }
 
+func TestRunMasterDryRunAcceptsWireGuardPrivateKeyFile(t *testing.T) {
+	t.Parallel()
+
+	keyPath := writeTestWGKey(t)
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--wireguard-private-key", keyPath,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), readFileTrimmed(t, keyPath)) {
+		t.Fatalf("dry-run output leaked private key: %s", stdout.String())
+	}
+}
+
 func TestRunMasterDryRunAcceptsClientPeer(t *testing.T) {
 	t.Parallel()
 
@@ -229,6 +249,30 @@ func TestRunMasterDryRunRejectsInvalidClientPeer(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "invalid public key") {
 		t.Fatalf("expected public key parse error, got %s", stderr.String())
+	}
+}
+
+func TestRunMasterDryRunRejectsInvalidWireGuardPrivateKeyFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "bad.key")
+	if err := os.WriteFile(keyPath, []byte("not-a-key\n"), 0o600); err != nil {
+		t.Fatalf("write key fixture: %v", err)
+	}
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "master",
+		"--dry-run",
+		"--name", "master-01",
+		"--overlay-ip", "172.21.92.2",
+		"--wireguard-private-key", keyPath,
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "parse wireguard private key file") {
+		t.Fatalf("expected parse error, got %s", stderr.String())
 	}
 }
 
