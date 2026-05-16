@@ -160,6 +160,68 @@ func TestMasterSelfRegistersAndStreamsPubkey(t *testing.T) {
 	}
 }
 
+func TestMasterSelfRegistersConfiguredMeshPrivateKey(t *testing.T) {
+	t.Parallel()
+
+	meshPrivateKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey: %v", err)
+	}
+	cfg := testMasterConfigWithCoordination(t, "127.0.0.1:0")
+	cfg.DualListener.MeshPrivateKey = &meshPrivateKey
+	master, err := NewMaster(cfg)
+	if err != nil {
+		t.Fatalf("NewMaster: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- master.Run(ctx) }()
+
+	waitFor(t, func() bool {
+		s := master.Status().Coordination
+		return s.Enabled && s.Started && s.BoundAddr != ""
+	})
+	addr := master.Status().Coordination.BoundAddr
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	client := pb.NewControlPlaneClient(conn)
+
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer streamCancel()
+	stream, err := client.StreamPeerList(streamCtx, &pb.StreamPeerListRequest{NodeName: "client-01"})
+	if err != nil {
+		t.Fatalf("StreamPeerList: %v", err)
+	}
+	initial, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv initial peer list: %v", err)
+	}
+	if len(initial.GetPeers()) != 1 {
+		t.Fatalf("expected 1 peer (self-registered master), got %d", len(initial.GetPeers()))
+	}
+	got := wg.Key{}
+	copy(got[:], initial.GetPeers()[0].GetPeerPubkey())
+	if want := meshPrivateKey.PublicKey(); got != want {
+		t.Fatalf("REGRESSION: self-registered pubkey = %s, want mesh private key pubkey %s", got.String(), want.String())
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
 func TestMasterDoesNotServeCoordinationBeforeSelfRegister(t *testing.T) {
 	t.Parallel()
 
