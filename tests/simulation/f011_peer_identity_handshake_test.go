@@ -477,15 +477,6 @@ func mustPrivateKey(t *testing.T) wg.Key {
 	return key
 }
 
-func mustUDPAddr(t *testing.T, value string) *net.UDPAddr {
-	t.Helper()
-	addr, err := net.ResolveUDPAddr("udp", value)
-	if err != nil {
-		t.Fatalf("ResolveUDPAddr(%q): %v", value, err)
-	}
-	return addr
-}
-
 func mustIPNet(t *testing.T, cidr string) net.IPNet {
 	t.Helper()
 	_, ipNet, err := net.ParseCIDR(cidr)
