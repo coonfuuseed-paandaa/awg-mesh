@@ -15,6 +15,7 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	meshrotation "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/rotation"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -566,6 +567,68 @@ func TestServer_HeartbeatRefreshesPubkey(t *testing.T) {
 	}
 	if node.Protocol != "vanilla-wg" {
 		t.Fatalf("protocol = %q, want vanilla-wg", node.Protocol)
+	}
+}
+
+func TestServer_HeartbeatObserverReceivesRefreshedPeerIdentity(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var observed []RegisteredNode
+	srv.SetRegistrationObserver(func(node RegisteredNode) error {
+		observed = append(observed, node)
+		return nil
+	})
+
+	_, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "egress-01",
+		Roles:       []string{string(role.RoleEgress)},
+		NodeCertPem: fakeCert,
+		OverlayIp:   "10.0.0.50",
+		Region:      "us",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 1 {
+		t.Fatalf("observer calls after register = %d, want 1", len(observed))
+	}
+	if len(observed[0].Pubkey) != 0 {
+		t.Fatalf("initial observer pubkey length = %d, want 0", len(observed[0].Pubkey))
+	}
+
+	pubkey := []byte{42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42}
+	hbStream, err := client.Heartbeat(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hbStream.Send(&pb.HeartbeatRequest{
+		NodeName:     "egress-01",
+		SentAtUnix:   time.Now().Unix(),
+		Pubkey:       pubkey,
+		EndpointHost: "198.51.100.10:443",
+		Protocol:     string(wg.ProtocolAmneziaWG),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hbStream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(observed) != 2 {
+		t.Fatalf("observer calls after heartbeat identity refresh = %d, want 2", len(observed))
+	}
+	got := observed[1]
+	if !bytes.Equal(got.Pubkey, pubkey) {
+		t.Fatalf("observer pubkey = %v, want %v", got.Pubkey, pubkey)
+	}
+	if got.EndpointHost != "198.51.100.10:443" {
+		t.Fatalf("observer endpoint = %q", got.EndpointHost)
+	}
+	if got.Protocol != string(wg.ProtocolAmneziaWG) {
+		t.Fatalf("observer protocol = %q", got.Protocol)
 	}
 }
 

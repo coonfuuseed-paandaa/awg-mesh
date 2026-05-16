@@ -76,8 +76,8 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 
 	clientOverlay := mustIPNet(t, clientIP.String()+"/32")
 	agent, err := clientd.NewAgent(clientd.Config{
-		NodeName:      "client-a",
-		Roles:         []role.Role{role.RoleClient},
+		NodeName:      "egress-a",
+		Roles:         []role.Role{role.RoleEgress},
 		OverlayIP:     clientIP.String(),
 		Region:        "home",
 		NodeCertPEM:   []byte("client-cert"),

@@ -1,17 +1,21 @@
 package clientd
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
+	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 )
 
 func TestParseCommandConfigRequiredFlagsAndProtocol(t *testing.T) {
@@ -324,6 +328,82 @@ func TestLazyTransportConfiguratorCreatesTransportOnFirstApply(t *testing.T) {
 	}
 	if err := configurator.Close(); err != nil {
 		t.Fatalf("close lazy configurator: %v", err)
+	}
+}
+
+func TestRunWithConfigRegistersWireGuardPublicKeyFromPreparedKey(t *testing.T) {
+	privateKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate private key: %v", err)
+	}
+	preparedDir := t.TempDir()
+	certPath := filepath.Join(preparedDir, "node.crt")
+	wgKeyPath := filepath.Join(preparedDir, "wireguard-private.key")
+	if err := os.WriteFile(certPath, []byte("cert-bytes"), 0o600); err != nil {
+		t.Fatalf("write cert fixture: %v", err)
+	}
+	if err := os.WriteFile(wgKeyPath, []byte(privateKey.String()+"\n"), 0o600); err != nil {
+		t.Fatalf("write wireguard key fixture: %v", err)
+	}
+
+	server := &streamingTestServer{registered: make(chan *pb.RegisterNodeRequest, 1)}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	link := &fakeLinkConfigurator{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- runWithConfig(ctx, CommandConfig{
+			ControlPlane:              addr,
+			Name:                      "egress-01",
+			OverlayIP:                 "172.21.92.35",
+			Region:                    "us",
+			CertPath:                  certPath,
+			WireGuardPrivateKeyPath:   wgKeyPath,
+			StateDir:                  t.TempDir(),
+			InterfaceName:             "awg-test0",
+			Protocol:                  wg.ProtocolAmneziaWG,
+			Roles:                     []role.Role{role.RoleEgress},
+			AllowInsecureControlPlane: true,
+		}, &strings.Builder{}, commandRuntime{
+			link: link,
+			newTransport: func(protocol wg.Protocol, name string) (wg.Transport, error) {
+				if protocol != wg.ProtocolAmneziaWG || name != "awg-test0" {
+					return nil, fmt.Errorf("unexpected transport request: protocol=%s name=%s", protocol, name)
+				}
+				return transport, nil
+			},
+		})
+	}()
+
+	var req *pb.RegisterNodeRequest
+	select {
+	case req = <-server.registered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for production config registration")
+	}
+	publicKey := privateKey.PublicKey()
+	if !bytes.Equal(req.GetPubkey(), publicKey[:]) {
+		t.Fatalf("registered pubkey = %x, want %x", req.GetPubkey(), publicKey[:])
+	}
+	if got := req.GetRoles(); len(got) != 1 || got[0] != string(role.RoleEgress) {
+		t.Fatalf("registered roles = %v, want [egress]", got)
+	}
+	if req.GetProtocol() != string(wg.ProtocolAmneziaWG) {
+		t.Fatalf("registered protocol = %q", req.GetProtocol())
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("runWithConfig returned after cancel: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for runWithConfig shutdown")
 	}
 }
 

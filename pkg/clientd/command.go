@@ -154,6 +154,32 @@ func isLoopbackControlPlaneTarget(target string) bool {
 
 // RunWithConfig creates the gRPC client and a lazy transport configurator, then runs the agent.
 func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) error {
+	return runWithConfig(ctx, cfg, stdout, commandRuntime{
+		link:         routing.NewNetlinkRouter(),
+		newTransport: newTransport,
+	})
+}
+
+type commandRuntime struct {
+	link         LinkConfigurator
+	newTransport func(wg.Protocol, string) (wg.Transport, error)
+}
+
+func (r commandRuntime) linkConfigurator() LinkConfigurator {
+	if r.link != nil {
+		return r.link
+	}
+	return routing.NewNetlinkRouter()
+}
+
+func (r commandRuntime) transportFactory() func(wg.Protocol, string) (wg.Transport, error) {
+	if r.newTransport != nil {
+		return r.newTransport
+	}
+	return newTransport
+}
+
+func runWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer, runtime commandRuntime) error {
 	validated, err := ValidateCommandConfig(cfg)
 	if err != nil {
 		return err
@@ -187,8 +213,8 @@ func RunWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer) err
 		localRoles:   cfg.Roles,
 		privateKey:   &privateKey,
 		overlayAddr:  overlayAddress,
-		link:         routing.NewNetlinkRouter(),
-		newTransport: newTransport,
+		link:         runtime.linkConfigurator(),
+		newTransport: runtime.transportFactory(),
 	}
 	defer func() { _ = configurator.Close() }()
 
