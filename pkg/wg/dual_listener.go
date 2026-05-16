@@ -2,7 +2,6 @@ package wg
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
@@ -303,29 +302,8 @@ func listenerPrivateKey(key *Key) (Key, error) {
 }
 
 func meshBootstrapConfig() (Config, error) {
-	seed, err := GenerateKey()
-	if err != nil {
-		return Config{}, err
-	}
-	jmin := 64 + int(seed[0]%32)
-	jmax := jmin + 32 + int(seed[1]%32)
-	s1 := 16 + int(seed[2]%32)
-	s2 := 32 + int(seed[3]%32)
-	return Config{
-		Jc:   IntPtr(1 + int(seed[2]%8)),
-		Jmin: IntPtr(jmin),
-		Jmax: IntPtr(jmax),
-		S1:   IntPtr(s1),
-		S2:   IntPtr(s2),
-		H1:   StrPtr(awgHeader(seed, 4, 1)),
-		H2:   StrPtr(awgHeader(seed, 8, 2)),
-		H3:   StrPtr(awgHeader(seed, 12, 3)),
-		H4:   StrPtr(awgHeader(seed, 16, 4)),
-		I1:   StrPtr(fmt.Sprintf("<b 0x%08x><c><t>", binary.BigEndian.Uint32(seed[20:24]))),
-	}, nil
-}
-
-func awgHeader(seed Key, offset int, bucket uint32) string {
-	value := bucket*100000000 + binary.BigEndian.Uint32(seed[offset:offset+4])%90000000
-	return fmt.Sprintf("%d", value)
+	// Non-default AmneziaWG framing parameters must be mesh-wide. Generating
+	// listener-local random H/S/I values makes peers without the exact same
+	// config send undecodable handshake packets.
+	return Config{}, nil
 }
