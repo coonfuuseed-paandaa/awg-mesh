@@ -219,7 +219,7 @@ func TestRunNodePrepareCommandWritesMikrotikContainerRouterOSScript(t *testing.T
 		"key=MESH_NODE_CERT_B64",
 		"key=MESH_NODE_KEY_B64",
 		"key=MESH_CA_CERT_B64",
-		`cmd="--mode clientd --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --ca-cert /config/ca.crt --state-dir /config --iface awg-mesh0 --protocol amneziawg --listen-port 51821"`,
+		`cmd="--mode clientd --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --ca-cert /config/ca.crt --state-dir /config --iface awg-mesh0 --protocol amneziawg --mesh-listen-port 51821"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("RouterOS script missing %q:\n%s", want, redactRouterOSScript(script))

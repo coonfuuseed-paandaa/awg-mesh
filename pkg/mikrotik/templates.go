@@ -350,7 +350,7 @@ func buildClientCommand(ds DeployScript) string {
 		"--protocol", protocol,
 	}
 	if ds.ListenPort > 0 {
-		args = append(args, "--listen-port", strconv.Itoa(ds.ListenPort))
+		args = append(args, "--mesh-listen-port", strconv.Itoa(ds.ListenPort))
 	}
 	if endpoint := strings.TrimSpace(ds.EndpointHost); endpoint != "" {
 		args = append(args, "--endpoint-host", endpoint)
