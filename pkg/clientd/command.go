@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/awgmesh"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
@@ -198,10 +199,6 @@ func runWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer, run
 		return err
 	}
 	cfg = validated
-	certPEM, err := os.ReadFile(cfg.CertPath)
-	if err != nil {
-		return fmt.Errorf("read cert: %w", err)
-	}
 	transportCredentials, err := controlPlaneTransportCredentials(cfg)
 	if err != nil {
 		return err
@@ -233,26 +230,64 @@ func runWithConfig(ctx context.Context, cfg CommandConfig, stdout io.Writer, run
 	defer func() { _ = configurator.Close() }()
 
 	certUpdatePath, certUpdateKeyPath := certUpdatePaths(cfg)
-	agent, err := NewAgent(Config{
-		NodeName:      cfg.Name,
-		Roles:         cfg.Roles,
-		OverlayIP:     cfg.OverlayIP,
-		Region:        cfg.Region,
-		NodeCertPEM:   certPEM,
-		CertPath:      certUpdatePath,
-		KeyPath:       certUpdateKeyPath,
-		Version:       awgmesh.Version,
-		InterfaceName: cfg.InterfaceName,
-		Protocol:      cfg.Protocol,
-		PublicKey:     privateKey.PublicKey(),
-		EndpointHost:  cfg.EndpointHost,
-		StatePath:     filepath.Join(cfg.StateDir, "clientd-state.json"),
-	}, pb.NewControlPlaneClient(conn), configurator)
-	if err != nil {
-		return err
+	controlPlane := pb.NewControlPlaneClient(conn)
+
+	const (
+		reconnectInitialBackoff = time.Second
+		reconnectMaxBackoff     = 30 * time.Second
+		reconnectStableAfter    = 30 * time.Second
+	)
+	backoff := reconnectInitialBackoff
+	first := true
+
+	for {
+		certPEM, err := os.ReadFile(cfg.CertPath)
+		if err != nil {
+			return fmt.Errorf("read cert: %w", err)
+		}
+		agent, err := NewAgent(Config{
+			NodeName:      cfg.Name,
+			Roles:         cfg.Roles,
+			OverlayIP:     cfg.OverlayIP,
+			Region:        cfg.Region,
+			NodeCertPEM:   certPEM,
+			CertPath:      certUpdatePath,
+			KeyPath:       certUpdateKeyPath,
+			Version:       awgmesh.Version,
+			InterfaceName: cfg.InterfaceName,
+			Protocol:      cfg.Protocol,
+			PublicKey:     privateKey.PublicKey(),
+			EndpointHost:  cfg.EndpointHost,
+			StatePath:     filepath.Join(cfg.StateDir, "clientd-state.json"),
+		}, controlPlane, configurator)
+		if err != nil {
+			return err
+		}
+		if first {
+			_, _ = fmt.Fprintf(stdout, "clientd node=%s coordination-target=%s iface=%s protocol=%s\n", cfg.Name, cfg.ControlPlane, cfg.InterfaceName, cfg.Protocol)
+			first = false
+		}
+
+		runStart := time.Now()
+		runErr := agent.Run(ctx)
+		if runErr == nil || ctx.Err() != nil {
+			return runErr
+		}
+
+		if time.Since(runStart) >= reconnectStableAfter {
+			backoff = reconnectInitialBackoff
+		}
+
+		_, _ = fmt.Fprintf(stdout, "clientd: coordination stream lost (%v) — reconnecting in %s\n", runErr, backoff)
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(backoff):
+		}
+
+		backoff = min(backoff*2, reconnectMaxBackoff)
 	}
-	_, _ = fmt.Fprintf(stdout, "clientd node=%s coordination-target=%s iface=%s protocol=%s\n", cfg.Name, cfg.ControlPlane, cfg.InterfaceName, cfg.Protocol)
-	return agent.Run(ctx)
 }
 
 func controlPlaneTransportCredentials(cfg CommandConfig) (credentials.TransportCredentials, error) {
