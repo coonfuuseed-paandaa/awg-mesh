@@ -363,6 +363,33 @@ func TestRunEgressDryRunUsesInternetInterface(t *testing.T) {
 	}
 }
 
+func TestRunEgressDryRunAdvertisesMeshEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr strings.Builder
+	code := runCommand([]string{
+		"--mode", "egress",
+		"--dry-run",
+		"--name", "egress-01",
+		"--overlay-ip", "172.21.92.20",
+		"--internet-iface", "eth0",
+		"--mesh-listen-port", "443",
+		"--public-ip", "203.0.113.35",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"listen=443",
+		"endpoint=203.0.113.35:443",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q: %s", want, out)
+		}
+	}
+}
+
 func TestRunEgressDryRunRejectsMeshInterface(t *testing.T) {
 	t.Parallel()
 

@@ -92,6 +92,8 @@ type DeployScript struct {
 	CACertB64     string   // optional base64-encoded ca.crt copied into /config
 	ControlPlane  string   // optional responsible master coordination target for runnable clientd command
 	Region        string   // node region passed to clientd
+	ListenPort    int      // clientd WireGuard listen port
+	EndpointHost  string   // optional public WireGuard endpoint host:port advertised by clientd
 	Protocol      string   // clientd protocol (default: amneziawg)
 	InterfaceName string   // clientd interface name (default: awg-mesh0)
 	TargetROS     string   // RouterOS target version for container CLI dialect selection
@@ -237,6 +239,12 @@ func validateDeployScript(ds DeployScript) error {
 	if err := validateControlPlaneTarget(ds.ControlPlane); err != nil {
 		return err
 	}
+	if ds.ListenPort < 0 || ds.ListenPort > 65535 {
+		return fmt.Errorf("listen_port must be in range 0..65535")
+	}
+	if err := validateEndpointHost(ds.EndpointHost); err != nil {
+		return err
+	}
 
 	if _, err := netip.ParseAddr(ds.OverlayIP); err != nil {
 		return fmt.Errorf("invalid overlay IP %q: %w", ds.OverlayIP, err)
@@ -264,6 +272,26 @@ func validateControlPlaneTarget(value string) error {
 	portNumber, err := strconv.ParseUint(port, 10, 16)
 	if err != nil || portNumber == 0 {
 		return fmt.Errorf("control-plane must be a single-line host:port value")
+	}
+	return nil
+}
+
+func validateEndpointHost(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) != 1 || !strings.Contains(trimmed, ":") {
+		return fmt.Errorf("endpoint_host must be a single-line host:port value")
+	}
+	host, port, err := net.SplitHostPort(trimmed)
+	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return fmt.Errorf("endpoint_host must be a single-line host:port value")
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNumber == 0 {
+		return fmt.Errorf("endpoint_host must be a single-line host:port value")
 	}
 	return nil
 }
@@ -316,6 +344,12 @@ func buildClientCommand(ds DeployScript) string {
 		"--state-dir", "/config",
 		"--iface", iface,
 		"--protocol", protocol,
+	}
+	if ds.ListenPort > 0 {
+		args = append(args, "--listen-port", strconv.Itoa(ds.ListenPort))
+	}
+	if endpoint := strings.TrimSpace(ds.EndpointHost); endpoint != "" {
+		args = append(args, "--endpoint-host", endpoint)
 	}
 	return strings.Join(args, " ")
 }

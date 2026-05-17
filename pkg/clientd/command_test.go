@@ -365,6 +365,8 @@ func TestRunWithConfigRegistersWireGuardPublicKeyFromPreparedKey(t *testing.T) {
 			WireGuardPrivateKeyPath:   wgKeyPath,
 			StateDir:                  t.TempDir(),
 			InterfaceName:             "awg-test0",
+			ListenPort:                51820,
+			EndpointHost:              "198.51.100.10:51820",
 			Protocol:                  wg.ProtocolAmneziaWG,
 			Roles:                     []role.Role{role.RoleEgress},
 			AllowInsecureControlPlane: true,
@@ -394,6 +396,9 @@ func TestRunWithConfigRegistersWireGuardPublicKeyFromPreparedKey(t *testing.T) {
 	}
 	if req.GetProtocol() != string(wg.ProtocolAmneziaWG) {
 		t.Fatalf("registered protocol = %q", req.GetProtocol())
+	}
+	if req.GetEndpointHost() != "198.51.100.10:51820" {
+		t.Fatalf("registered endpoint = %q, want 198.51.100.10:51820", req.GetEndpointHost())
 	}
 
 	cancel()

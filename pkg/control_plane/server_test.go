@@ -469,6 +469,9 @@ func TestServer_StreamPeerList_IncludesPubkey(t *testing.T) {
 	if peer.GetPeerEndpointHost() != "203.0.113.10:51820" {
 		t.Fatalf("peer endpoint = %q, want 203.0.113.10:51820", peer.GetPeerEndpointHost())
 	}
+	if peer.GetPersistentKeepaliveSecs() != 25 {
+		t.Fatalf("peer persistent keepalive = %d, want 25", peer.GetPersistentKeepaliveSecs())
+	}
 	if peer.GetProtocol() != "amneziawg" {
 		t.Fatalf("peer protocol = %q, want amneziawg", peer.GetProtocol())
 	}

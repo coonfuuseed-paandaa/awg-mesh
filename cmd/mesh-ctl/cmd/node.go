@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/topology"
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 	controlpb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"github.com/spf13/cobra"
 )
@@ -333,9 +336,9 @@ func runNodeInitCommand(options nodeInitOptions) error {
 		}
 	}
 
-	var endpointHost string
-	if node.PublicIP != "" {
-		endpointHost = node.PublicIP + ":51820"
+	endpointHost, err := nodeAdvertisedMeshEndpoint(node)
+	if err != nil {
+		return err
 	}
 
 	protocol := node.MeshProtocol
@@ -641,6 +644,49 @@ func nodeCertificateHosts(node topology.NodeV2) []string {
 		hosts = append(hosts, trimmed)
 	}
 	return hosts
+}
+
+func nodeAdvertisedMeshEndpoint(node topology.NodeV2) (string, error) {
+	if endpoint := strings.TrimSpace(node.MeshEndpoint); endpoint != "" {
+		if err := validateNodeMeshEndpoint(endpoint); err != nil {
+			return "", fmt.Errorf("node %q mesh_endpoint: %w", node.Name, err)
+		}
+		return endpoint, nil
+	}
+	publicIP := strings.TrimSpace(node.PublicIP)
+	if publicIP == "" {
+		return "", nil
+	}
+	if _, _, err := net.SplitHostPort(publicIP); err == nil {
+		return "", fmt.Errorf("node %q public_ip must not include a port; use mesh_endpoint for explicit host:port", node.Name)
+	}
+	endpoint := net.JoinHostPort(strings.Trim(publicIP, "[]"), strconv.Itoa(nodeMeshListenPort(node)))
+	if err := validateNodeMeshEndpoint(endpoint); err != nil {
+		return "", fmt.Errorf("node %q public_ip: %w", node.Name, err)
+	}
+	return endpoint, nil
+}
+
+func nodeMeshListenPort(node topology.NodeV2) int {
+	if node.MeshListenPort > 0 {
+		return node.MeshListenPort
+	}
+	return wg.DefaultMeshListenPort
+}
+
+func validateNodeMeshEndpoint(endpoint string) error {
+	host, portText, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("must be host:port: %w", err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("must include a non-empty host")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("has invalid port %q", portText)
+	}
+	return nil
 }
 
 func buildNodeListEntries(topo *topology.TopologyV2) []nodeListEntry {

@@ -137,9 +137,9 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	masterClientIface := fs.String("client-iface", wg.DefaultClientInterfaceName, "master: client-facing vanilla-WG interface name")
 	masterMeshIface := fs.String("mesh-iface", wg.DefaultMeshInterfaceName, "master: mesh-internal AmneziaWG interface name")
 	masterClientListenPort := fs.Int("client-listen-port", wg.DefaultClientListenPort, "master: client-facing vanilla-WG UDP listen port")
-	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "master: mesh-internal AmneziaWG UDP listen port")
-	masterPublicIP := fs.String("public-ip", "", "master: public IP/DNS name advertised as the mesh endpoint host")
-	masterMeshEndpoint := fs.String("mesh-endpoint", "", "master: explicit public mesh endpoint host:port; overrides --public-ip + --mesh-listen-port")
+	masterMeshListenPort := fs.Int("mesh-listen-port", wg.DefaultMeshListenPort, "mesh/clientd: mesh-internal AmneziaWG UDP listen port")
+	masterPublicIP := fs.String("public-ip", "", "mesh/clientd: public IP/DNS name advertised as the mesh endpoint host")
+	masterMeshEndpoint := fs.String("mesh-endpoint", "", "mesh/clientd: explicit public mesh endpoint host:port; overrides --public-ip + --mesh-listen-port")
 	masterClientPrivateKeyFile := fs.String("client-private-key-file", "", "master: base64 WireGuard private key file for the client-facing vanilla-WG listener")
 	var masterClientPeers routeFlags
 	fs.Var(&masterClientPeers, "client-peer", "master: static client-facing peer public_key=allowed_cidr[,allowed_cidr]; repeatable")
@@ -253,6 +253,11 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			LinkConfigurator: routing.NewNetlinkRouter(),
 		}, *dryRun, stdout, stderr)
 	case "endpoint", "egress":
+		meshEndpoint, err := advertisedMeshEndpoint(*masterMeshEndpoint, *masterPublicIP, *masterMeshListenPort)
+		if err != nil {
+			writef(stderr, "egress: %v\n", err)
+			return 2
+		}
 		clientdCfg := clientd.CommandConfig{
 			ControlPlane:              *controlPlaneAddr,
 			Name:                      *nodeName,
@@ -264,6 +269,8 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 			WireGuardPrivateKeyPath:   *nodeWGPrivateKey,
 			StateDir:                  *stateDir,
 			InterfaceName:             *clientdIface,
+			ListenPort:                *masterMeshListenPort,
+			EndpointHost:              meshEndpoint,
 			Protocol:                  wg.Protocol(*clientdProtocol),
 			Roles:                     []role.Role{role.RoleEgress},
 			AllowInsecureControlPlane: *allowInsecureControlPlane,
@@ -309,6 +316,19 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		if *nodeWGPrivateKey != "" {
 			clientdArgs = append(clientdArgs, "--wireguard-private-key", *nodeWGPrivateKey)
+		}
+		if *masterMeshListenPort > 0 {
+			clientdArgs = append(clientdArgs, "--listen-port", strconv.Itoa(*masterMeshListenPort))
+		}
+		if *masterPublicIP != "" || *masterMeshEndpoint != "" {
+			meshEndpoint, err := advertisedMeshEndpoint(*masterMeshEndpoint, *masterPublicIP, *masterMeshListenPort)
+			if err != nil {
+				writef(stderr, "clientd: %v\n", err)
+				return 2
+			}
+			if meshEndpoint != "" {
+				clientdArgs = append(clientdArgs, "--endpoint-host", meshEndpoint)
+			}
 		}
 		return clientd.RunCommand(context.Background(), clientdArgs, stdout, stderr)
 	default:
@@ -540,10 +560,16 @@ func runEgress(ctx context.Context, cfg node.EgressConfig, clientCfg clientd.Com
 	}
 	status := egress.Status()
 	if dryRun {
-		writef(stdout, "egress dry-run node=%s overlay=%s internet=%s nat=%s:%s/%s\n",
+		endpoint := ""
+		if clientCfg.EndpointHost != "" {
+			endpoint = fmt.Sprintf(" endpoint=%s", clientCfg.EndpointHost)
+		}
+		writef(stdout, "egress dry-run node=%s overlay=%s internet=%s listen=%d%s nat=%s:%s/%s\n",
 			status.Name,
 			status.OverlayIP,
 			status.InternetInterface,
+			clientCfg.ListenPort,
+			endpoint,
 			status.Masquerade.Table,
 			status.Masquerade.Chain,
 			status.Masquerade.Operation,

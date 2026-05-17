@@ -43,6 +43,8 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	masterDevice := newSimulationDevice(t, "sim-master", masterPriv)
 	clientDevice := newUnconfiguredSimulationDevice(t, "sim-client")
 	clientTransport := newSimulationTransport("sim-client", clientDevice.dev)
+	clientListenPort := reserveUDPPort(t)
+	clientEndpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(clientListenPort))
 	clientLink := &simulationLinkConfigurator{}
 	masterLink := &simulationLinkConfigurator{}
 
@@ -85,12 +87,14 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		InterfaceName: clientTransport.Name(),
 		Protocol:      wg.ProtocolAmneziaWG,
 		PublicKey:     clientPub,
+		EndpointHost:  clientEndpoint,
 		StatePath:     cachePath,
 		ApplyTimeout:  2 * time.Second,
 	}, cpClient, clientd.TransportConfigurator{
 		Transport:        clientTransport,
 		LocalRoles:       []role.Role{role.RoleEgress},
 		PrivateKey:       &clientPriv,
+		ListenPort:       clientListenPort,
 		OverlayAddress:   &clientOverlay,
 		LinkConfigurator: clientLink,
 	})
@@ -125,6 +129,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		clientIP.String() + "/32",
 	}, 5*time.Second)
 	waitForPeerRoute(t, clientLink, clientTransport.Name(), masterIP.String()+"/32", clientIP.String(), 5*time.Second)
+	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 5*time.Second)
 	assertPacketTransit(t, clientDevice.tun, masterDevice.tun, clientIP, masterIP, 5*time.Second)
 	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 5*time.Second)
 	assertFreshPeerHandshake(t, clientDevice.dev, masterPub, 130*time.Second, 5*time.Second)
@@ -551,6 +556,24 @@ func readListenPort(t *testing.T, dev *device.Device) int {
 	}
 	t.Fatalf("listen_port missing from IpcGet:\n%s", raw)
 	return 0
+}
+
+func reserveUDPPort(t *testing.T) int {
+	t.Helper()
+	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("resolve UDP addr: %v", err)
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		t.Fatalf("reserve UDP port: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+	if port <= 0 {
+		t.Fatalf("reserved UDP port = %d", port)
+	}
+	return port
 }
 
 type peerStats struct {

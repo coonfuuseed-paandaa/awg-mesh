@@ -33,6 +33,7 @@ type TransportConfigurator struct {
 	Transport        wg.Transport
 	LocalRoles       []role.Role
 	PrivateKey       *wg.Key
+	ListenPort       int
 	OverlayAddress   *net.IPNet
 	LinkConfigurator LinkConfigurator
 }
@@ -74,6 +75,9 @@ func (c TransportConfigurator) Apply(ctx context.Context, state State) error {
 	default:
 	}
 	cfg := wg.Config{PrivateKey: c.PrivateKey, Peers: peers, ReplacePeers: true}
+	if c.ListenPort > 0 {
+		cfg.ListenPort = &c.ListenPort
+	}
 	if err := c.Transport.Configure(cfg); err != nil {
 		return fmt.Errorf("configure peers: %w", err)
 	}

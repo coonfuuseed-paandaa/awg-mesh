@@ -30,6 +30,7 @@ type Config struct {
 	InterfaceName string
 	Protocol      wg.Protocol
 	PublicKey     wg.Key
+	EndpointHost  string
 	StatePath     string
 	ApplyTimeout  time.Duration
 }
@@ -218,14 +219,15 @@ func (a *Agent) register(ctx context.Context) error {
 		roles = append(roles, string(r))
 	}
 	resp, err := a.client.RegisterNode(ctx, &pb.RegisterNodeRequest{
-		NodeName:    a.cfg.NodeName,
-		Roles:       roles,
-		NodeCertPem: append([]byte(nil), a.cfg.NodeCertPEM...),
-		NodeVersion: a.cfg.Version,
-		OverlayIp:   a.cfg.OverlayIP,
-		Region:      a.cfg.Region,
-		Pubkey:      publicKeyBytes(a.cfg.PublicKey),
-		Protocol:    string(a.cfg.Protocol),
+		NodeName:     a.cfg.NodeName,
+		Roles:        roles,
+		NodeCertPem:  append([]byte(nil), a.cfg.NodeCertPEM...),
+		NodeVersion:  a.cfg.Version,
+		OverlayIp:    a.cfg.OverlayIP,
+		Region:       a.cfg.Region,
+		Pubkey:       publicKeyBytes(a.cfg.PublicKey),
+		EndpointHost: strings.TrimSpace(a.cfg.EndpointHost),
+		Protocol:     string(a.cfg.Protocol),
 	})
 	if err != nil {
 		return fmt.Errorf("register node: %w", err)

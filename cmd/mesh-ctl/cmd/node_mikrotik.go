@@ -71,6 +71,10 @@ func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, co
 	}
 
 	containerName := mikrotik.DeriveContainerName(node.Name)
+	endpointHost, err := nodeAdvertisedMeshEndpoint(node)
+	if err != nil {
+		return mikrotikPrepareArtifacts{}, err
+	}
 	script, err := mikrotik.GenerateDeployRSC(mikrotik.DeployScript{
 		TopologyName:  node.Name,
 		ContainerName: containerName,
@@ -84,6 +88,8 @@ func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, co
 		CACertB64:     caB64,
 		ControlPlane:  controlPlane,
 		Region:        node.Region,
+		ListenPort:    nodeMeshListenPort(node),
+		EndpointHost:  endpointHost,
 		TargetROS:     targetROS,
 	})
 	if err != nil {
