@@ -58,6 +58,7 @@ write_config_file "${MESH_TOKEN_HASH:-}" /config/mesh.token MESH_TOKEN_HASH
 write_b64_file "${MESH_NODE_CERT_B64:-}" /config/node.crt MESH_NODE_CERT_B64
 write_b64_file "${MESH_NODE_KEY_B64:-}" /config/node.key MESH_NODE_KEY_B64
 write_b64_file "${MESH_CA_CERT_B64:-}" /config/ca.crt MESH_CA_CERT_B64
+write_b64_file "${MESH_WG_KEY_B64:-}" /config/wireguard-private.key MESH_WG_KEY_B64
 
 ###############################################################################
 # 0.5. Merge MESH_* env vars into CLI args (env < CLI precedence)
