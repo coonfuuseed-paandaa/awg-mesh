@@ -69,6 +69,7 @@ func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, co
 	if err != nil {
 		return mikrotikPrepareArtifacts{}, fmt.Errorf("read mesh CA certificate: %w", err)
 	}
+	wgKeyB64, _ := readBase64File(filepath.Join(nodeDir, "wireguard-private.key"))
 
 	containerName := mikrotik.DeriveContainerName(node.Name)
 	endpointHost, err := nodeAdvertisedMeshEndpoint(node)
@@ -86,6 +87,7 @@ func prepareMikrotikRouterOS(topo *topology.TopologyV2, node topology.NodeV2, co
 		NodeCertB64:   certB64,
 		NodeKeyB64:    keyB64,
 		CACertB64:     caB64,
+		WGKeyB64:      wgKeyB64,
 		ControlPlane:  controlPlane,
 		Region:        node.Region,
 		ListenPort:    nodeMeshListenPort(node),

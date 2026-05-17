@@ -352,7 +352,7 @@ func TestRouterOSTemplate_OtherValuesQuoted(t *testing.T) {
 
 	// Each non-hash env var must carry a quoted value.
 	quotedChecks := []string{
-		`key=MESH_MODE value="client"`,
+		`key=MESH_MODE value="clientd"`,
 		`key=MESH_NAME value="mikrotik-home"`,
 		`key=MESH_OVERLAY_IP value="10.10.0.10"`,
 	}
