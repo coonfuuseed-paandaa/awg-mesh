@@ -1,4 +1,10 @@
-FROM golang:1.25-alpine AS builder
+# syntax=docker/dockerfile:1
+
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
 
 WORKDIR /build
 
@@ -8,7 +14,10 @@ RUN go mod download
 COPY . .
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -tags nocapture -trimpath -ldflags "-X main.versionFromBuild=${VERSION} -s -w" -o /build/bin/awg-mesh-node ./cmd/awg-mesh-node
+RUN goarm="${TARGETVARIANT#v}" && \
+    if [ "${TARGETARCH}" != "arm" ]; then goarm=""; fi && \
+    CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" GOARM="${goarm}" \
+    go build -tags nocapture -trimpath -ldflags "-X main.versionFromBuild=${VERSION} -s -w" -o /build/bin/awg-mesh-node ./cmd/awg-mesh-node
 
 FROM alpine:3.21
 
