@@ -90,6 +90,7 @@ type DeployScript struct {
 	NodeCertB64   string   // base64-encoded node.crt copied into /config on first boot
 	NodeKeyB64    string   // base64-encoded node.key copied into /config on first boot
 	CACertB64     string   // optional base64-encoded ca.crt copied into /config
+	WGKeyB64      string   // base64-encoded wireguard-private.key copied into /config
 	ControlPlane  string   // optional responsible master coordination target for runnable clientd command
 	Region        string   // node region passed to clientd
 	ListenPort    int      // clientd WireGuard listen port
@@ -299,7 +300,7 @@ func validateEndpointHost(value string) error {
 func buildDeployEnvVars(ds DeployScript) map[string]string {
 	envVars := map[string]string{
 		"MESH_TOKEN_HASH": strings.TrimSpace(ds.TokenHash),
-		"MESH_MODE":       "client",
+		"MESH_MODE":       "clientd",
 		"MESH_NAME":       strings.TrimSpace(ds.TopologyName),
 		"MESH_OVERLAY_IP": strings.TrimSpace(ds.OverlayIP),
 	}
@@ -311,6 +312,9 @@ func buildDeployEnvVars(ds DeployScript) map[string]string {
 	}
 	if strings.TrimSpace(ds.CACertB64) != "" {
 		envVars["MESH_CA_CERT_B64"] = strings.TrimSpace(ds.CACertB64)
+	}
+	if strings.TrimSpace(ds.WGKeyB64) != "" {
+		envVars["MESH_WG_KEY_B64"] = strings.TrimSpace(ds.WGKeyB64)
 	}
 	return envVars
 }
@@ -333,7 +337,7 @@ func buildClientCommand(ds DeployScript) string {
 		iface = "awg-mesh0"
 	}
 	args := []string{
-		"--mode", "client",
+		"--mode", "clientd",
 		"--control-plane", controlPlane,
 		"--name", strings.TrimSpace(ds.TopologyName),
 		"--overlay-ip", strings.TrimSpace(ds.OverlayIP),

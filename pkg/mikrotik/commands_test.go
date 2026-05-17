@@ -16,9 +16,9 @@ func TestGenerateContainerCommands(t *testing.T) {
 		MountName: "AWG_MESH_HOME_CONFIG",
 		MountSrc:  "/docker/etc/awg-mesh-client-home-config",
 		DNS:       []string{"1.1.1.1", "8.8.8.8"},
-		Command:   "--mode client --name mikrotik-home",
+		Command:   "--mode clientd --name mikrotik-home",
 		EnvVars: map[string]string{
-			"MESH_MODE": "client",
+			"MESH_MODE": "clientd",
 			"MESH_NAME": "mikrotik-home",
 		},
 	}
@@ -47,7 +47,7 @@ func TestGenerateContainerCommands(t *testing.T) {
 		"remote-image=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:latest",
 		"mountlists=AWG_MESH_HOME_CONFIG",
 		"dns=1.1.1.1,8.8.8.8",
-		`cmd="--mode client --name mikrotik-home"`,
+		`cmd="--mode clientd --name mikrotik-home"`,
 		"logging=yes",
 		"start-on-boot=yes",
 	}

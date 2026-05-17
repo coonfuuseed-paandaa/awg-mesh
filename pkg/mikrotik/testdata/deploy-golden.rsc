@@ -40,7 +40,7 @@
 
 # === Mount + Container ===
 /container/mounts/add list=AWG_MESH_HOME_CONFIG src=/disk1/etc/awg-mesh-client-mikrotik-home-config dst=/config
-/container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_MODE value="client"
+/container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_MODE value="clientd"
 /container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_NAME value="mikrotik-home"
 /container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_OVERLAY_IP value="10.10.0.10"
 /container/envs/add list=AWG_MESH_HOME_ENVS key=MESH_TOKEN_HASH value=mesh1.AAEBABACAQEABAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKyws
