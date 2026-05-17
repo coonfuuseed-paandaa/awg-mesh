@@ -117,6 +117,10 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 
 	waitForAppliedPeer(t, clientTransport.applied, masterPub, masterDevice.endpoint(), 5*time.Second)
 	waitForPeerRoute(t, masterLink, wg.DefaultMeshInterfaceName, clientIP.String()+"/32", masterIP.String(), 5*time.Second)
+	assertClientPeerListAllows(t, cpClient, "client-a", "master-a", []string{
+		masterIP.String() + "/32",
+		clientIP.String() + "/32",
+	}, 5*time.Second)
 	waitForPeerRoute(t, clientLink, clientTransport.Name(), masterIP.String()+"/32", clientIP.String(), 5*time.Second)
 	assertPacketTransit(t, clientDevice.tun, masterDevice.tun, clientIP, masterIP, 5*time.Second)
 	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 5*time.Second)
@@ -408,6 +412,47 @@ func waitForPeerRoute(t *testing.T, link *simulationLinkConfigurator, wantIface,
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func assertClientPeerListAllows(t *testing.T, client pb.ControlPlaneClient, subject, peerName string, wantAllowed []string, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	stream, err := client.StreamPeerList(ctx, &pb.StreamPeerListRequest{NodeName: subject})
+	if err != nil {
+		t.Fatalf("stream peer-list for %s: %v", subject, err)
+	}
+	update, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv peer-list snapshot for %s: %v", subject, err)
+	}
+	for _, peer := range update.GetPeers() {
+		if peer.GetPeerName() != peerName {
+			continue
+		}
+		allowed := peer.GetAllowedIps()
+		var missing []string
+		for _, want := range wantAllowed {
+			if !containsString(allowed, want) {
+				missing = append(missing, want)
+			}
+		}
+		if len(missing) > 0 {
+			t.Fatalf("peer-list %s allowed_ips = %v, missing %v", peerName, allowed, missing)
+		}
+		return
+	}
+	t.Fatalf("peer-list snapshot for %s missing peer %s: %#v", subject, peerName, update.GetPeers())
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertPacketTransit(t *testing.T, src, dst *tuntest.ChannelTUN, srcIP, dstIP netip.Addr, timeout time.Duration) {

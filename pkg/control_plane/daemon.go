@@ -316,6 +316,9 @@ func (d *Daemon) SelfRegister(node RegisteredNode) error {
 			if _, err := d.ledger.Reassign(node.OverlayIP, node.Name, "self-register"); err != nil {
 				return fmt.Errorf("ledger reassign for self-register: %w", err)
 			}
+			if err := seedExistingRegisteredNodeOwnership(d.registry, d.ledger); err != nil {
+				return fmt.Errorf("seed registered node ownership after self-register: %w", err)
+			}
 			break
 		}
 	}

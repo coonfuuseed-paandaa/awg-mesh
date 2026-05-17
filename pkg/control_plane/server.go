@@ -132,6 +132,21 @@ func (s *Server) RegisterNode(ctx context.Context, req *pb.RegisterNodeRequest) 
 		})
 		return &pb.RegisterNodeResponse{Accepted: false, RejectReason: "registered node missing after registry write"}, nil
 	}
+	if err := s.seedRegistrationOwnership(saved); err != nil {
+		s.audit.Append(AuditEvent{
+			EventType: "register-rejected",
+			NodeName:  req.GetNodeName(),
+			Detail:    err.Error(),
+		})
+		if removeErr := s.registry.Remove(req.GetNodeName()); removeErr != nil {
+			s.audit.Append(AuditEvent{
+				EventType: "register-rollback-failed",
+				NodeName:  req.GetNodeName(),
+				Detail:    removeErr.Error(),
+			})
+		}
+		return &pb.RegisterNodeResponse{Accepted: false, RejectReason: err.Error()}, nil
+	}
 	if err := s.notifyRegistrationObserver(saved); err != nil {
 		s.audit.Append(AuditEvent{
 			EventType: "register-rejected",
@@ -179,6 +194,14 @@ func (s *Server) Heartbeat(stream pb.ControlPlane_HeartbeatServer) error {
 			if !ok {
 				return status.Errorf(codes.NotFound, "node %q not registered", req.GetNodeName())
 			}
+			if err := s.seedRegistrationOwnership(saved); err != nil {
+				s.audit.Append(AuditEvent{
+					EventType: "heartbeat-rejected",
+					NodeName:  req.GetNodeName(),
+					Detail:    err.Error(),
+				})
+				return status.Errorf(codes.Internal, "%v", err)
+			}
 			if err := s.notifyRegistrationObserver(saved); err != nil {
 				s.audit.Append(AuditEvent{
 					EventType: "heartbeat-rejected",
@@ -200,6 +223,58 @@ func (s *Server) Heartbeat(stream pb.ControlPlane_HeartbeatServer) error {
 			return err
 		}
 	}
+}
+
+func (s *Server) seedRegistrationOwnership(node RegisteredNode) error {
+	if slices.Contains(node.Roles, role.RoleMaster) {
+		return seedExistingRegisteredNodeOwnership(s.registry, s.ledger)
+	}
+	return seedRegisteredNodeOwnership(s.registry, s.ledger, node)
+}
+
+func seedExistingRegisteredNodeOwnership(registry *Registry, ledger *Ledger) error {
+	for _, node := range registry.List() {
+		if err := seedRegisteredNodeOwnership(registry, ledger, node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedRegisteredNodeOwnership(registry *Registry, ledger *Ledger, node RegisteredNode) error {
+	if slices.Contains(node.Roles, role.RoleMaster) || slices.Contains(node.Roles, role.RoleClient) {
+		return nil
+	}
+	owner, ok := singleSelfRegisteredMaster(registry, ledger)
+	if !ok {
+		return nil
+	}
+	if _, ok := ledger.Lookup(node.OverlayIP); ok {
+		return nil
+	}
+	if _, err := ledger.Reassign(node.OverlayIP, owner, "register"); err != nil {
+		return fmt.Errorf("seed ownership for registered node %q: %w", node.Name, err)
+	}
+	return nil
+}
+
+func singleSelfRegisteredMaster(registry *Registry, ledger *Ledger) (string, bool) {
+	snapshot, _ := ledger.Snapshot()
+	owner := ""
+	for _, entry := range snapshot {
+		if entry.OwningMaster == "" {
+			continue
+		}
+		node, ok := registry.Lookup(entry.OwningMaster)
+		if !ok || !slices.Contains(node.Roles, role.RoleMaster) || node.OverlayIP != entry.OverlayIP {
+			continue
+		}
+		if owner != "" && owner != entry.OwningMaster {
+			return "", false
+		}
+		owner = entry.OwningMaster
+	}
+	return owner, owner != ""
 }
 
 // StreamPeerList: server-streaming. The first message is a full snapshot; we
