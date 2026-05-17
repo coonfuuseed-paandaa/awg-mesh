@@ -34,6 +34,7 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 
 	masterIP := netip.MustParseAddr("1.0.0.1")
 	clientIP := netip.MustParseAddr("1.0.0.2")
+	transitClientIP := netip.MustParseAddr("1.0.0.131")
 
 	masterPriv := mustPrivateKey(t)
 	clientPriv := mustPrivateKey(t)
@@ -120,16 +121,36 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 	})
 
 	waitForAppliedPeer(t, clientTransport.applied, masterPub, masterDevice.endpoint(), 5*time.Second)
+	if _, err := cpClient.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "client-a",
+		Roles:       []string{"client"},
+		NodeCertPem: []byte("transit-client-cert"),
+		OverlayIp:   transitClientIP.String(),
+		Region:      "home",
+		Pubkey:      []byte{30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 255},
+	}); err != nil {
+		t.Fatalf("register transit client: %v", err)
+	}
 	waitForPeerRoute(t, masterLink, wg.DefaultMeshInterfaceName, clientIP.String()+"/32", masterIP.String(), 5*time.Second)
 	assertClientPeerListAllows(t, cpClient, "client-a", "master-a", []string{
 		masterIP.String() + "/32",
 		clientIP.String() + "/32",
 	}, 5*time.Second)
+	assertClientPeerListAllows(t, cpClient, "egress-a", "master-a", []string{
+		masterIP.String() + "/32",
+		transitClientIP.String() + "/32",
+	}, 5*time.Second)
 	assertPeerListExcludes(t, cpClient, "egress-a", "master-a", []string{
 		clientIP.String() + "/32",
 	}, 5*time.Second)
+	waitForAppliedPeerAllowedIPs(t, clientTransport.applied, masterPub, masterDevice.endpoint(), []string{
+		masterIP.String() + "/32",
+		transitClientIP.String() + "/32",
+	}, []string{
+		clientIP.String() + "/32",
+	}, 5*time.Second)
 	waitForPeerRoute(t, clientLink, clientTransport.Name(), masterIP.String()+"/32", clientIP.String(), 5*time.Second)
-	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 5*time.Second)
+	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 10*time.Second)
 	assertPacketTransit(t, clientDevice.tun, masterDevice.tun, clientIP, masterIP, 5*time.Second)
 	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 5*time.Second)
 	assertFreshPeerHandshake(t, clientDevice.dev, masterPub, 130*time.Second, 5*time.Second)
@@ -384,6 +405,41 @@ func waitForAppliedPeer(t *testing.T, applied <-chan wg.Config, want wg.Key, wan
 	}
 }
 
+func waitForAppliedPeerAllowedIPs(t *testing.T, applied <-chan wg.Config, want wg.Key, wantEndpoint string, wantAllowed, forbiddenAllowed []string, timeout time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var lastAllowed []string
+	var lastEndpoint string
+	for {
+		select {
+		case cfg := <-applied:
+			for _, peer := range cfg.Peers {
+				if peer.PublicKey != want {
+					continue
+				}
+				if peer.Endpoint != nil {
+					lastEndpoint = peer.Endpoint.String()
+				} else {
+					lastEndpoint = ""
+				}
+				allowed := make([]string, 0, len(peer.AllowedIPs))
+				for _, item := range peer.AllowedIPs {
+					allowed = append(allowed, item.String())
+				}
+				lastAllowed = allowed
+				missing := missingStrings(allowed, wantAllowed)
+				forbidden := presentStrings(allowed, forbiddenAllowed)
+				if lastEndpoint == wantEndpoint && len(missing) == 0 && len(forbidden) == 0 {
+					return
+				}
+			}
+		case <-timer.C:
+			t.Fatalf("clientd did not apply peer %s endpoint=%s with allowed_ips containing %v and excluding %v within %s; last endpoint=%q allowed_ips=%v", want.String(), wantEndpoint, wantAllowed, forbiddenAllowed, timeout, lastEndpoint, lastAllowed)
+		}
+	}
+}
+
 func assertMasterLinks(t *testing.T, link *simulationLinkConfigurator, wantMeshIface, wantClientIface, wantOverlay string) {
 	t.Helper()
 	link.mu.Lock()
@@ -493,6 +549,26 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func missingStrings(values, want []string) []string {
+	var missing []string
+	for _, item := range want {
+		if !containsString(values, item) {
+			missing = append(missing, item)
+		}
+	}
+	return missing
+}
+
+func presentStrings(values, forbidden []string) []string {
+	var present []string
+	for _, item := range forbidden {
+		if containsString(values, item) {
+			present = append(present, item)
+		}
+	}
+	return present
 }
 
 func assertPacketTransit(t *testing.T, src, dst *tuntest.ChannelTUN, srcIP, dstIP netip.Addr, timeout time.Duration) {

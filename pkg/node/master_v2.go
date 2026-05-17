@@ -163,7 +163,7 @@ func applyRegisteredMeshPeer(listener *wg.DualListener, masterName string, link 
 	if node.Name == "" || node.Name == masterName {
 		return nil
 	}
-	if hasRole(node.Roles, role.RoleMaster) {
+	if hasRole(node.Roles, role.RoleMaster) || hasRole(node.Roles, role.RoleClient) {
 		return nil
 	}
 	if node.Protocol != "" && node.Protocol != string(wg.ProtocolAmneziaWG) {
