@@ -561,21 +561,30 @@ func authenticatedStreamNodeName(ctx context.Context) (string, error) {
 // --- Helpers -----------------------------------------------------------------
 
 func (s *Server) buildPeerListUpdate(subject string, snapshot []OwnershipEntry, version int64) *pb.PeerListUpdate {
-	// Step 1: Group overlay IPs by owning master, preserving first-seen order.
+	subjectOverlay := ""
+	if node, ok := s.registry.Lookup(subject); ok {
+		subjectOverlay = node.OverlayIP
+	}
+
+	// Step 1: Group remote overlay IPs by owning master, preserving first-seen order.
 	type masterAgg struct {
 		allowedIPs []string
-		overlayIP  string // first overlay IP (for PeerOverlayIp field)
+		overlayIP  string
 	}
 	byMaster := make(map[string]*masterAgg)
 	var masterOrder []string
 	for _, e := range snapshot {
+		overlayIP := e.OverlayIp()
+		if subjectOverlay != "" && overlayIP == subjectOverlay {
+			continue
+		}
 		agg, ok := byMaster[e.OwningMaster]
 		if !ok {
-			agg = &masterAgg{overlayIP: e.OverlayIp()}
+			agg = &masterAgg{overlayIP: overlayIP}
 			byMaster[e.OwningMaster] = agg
 			masterOrder = append(masterOrder, e.OwningMaster)
 		}
-		agg.allowedIPs = append(agg.allowedIPs, e.OverlayIp()+"/32")
+		agg.allowedIPs = append(agg.allowedIPs, overlayIP+"/32")
 	}
 
 	// Step 2: Build one PeerEntry per unique master, enriched from the registry.
@@ -588,6 +597,9 @@ func (s *Server) buildPeerListUpdate(subject string, snapshot []OwnershipEntry, 
 			AllowedIps:    agg.allowedIPs,
 		}
 		if node, ok := s.registry.Lookup(masterName); ok {
+			if node.OverlayIP != "" {
+				entry.PeerOverlayIp = node.OverlayIP
+			}
 			entry.PeerPubkey = node.Pubkey
 			entry.PeerEndpointHost = node.EndpointHost
 			entry.Protocol = node.Protocol

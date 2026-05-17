@@ -28,4 +28,4 @@ critical_run_go_tests_required "$test_output" \
     ./tests/simulation -- \
     TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake
 
-echo "PASS - f011-peer-identity-handshake.sh: master self-registration and egress clientd registration drive peer config, client peer-list allowed_ips, packet transit, and non-zero handshake"
+echo "PASS - f011-peer-identity-handshake.sh: master self-registration and egress clientd registration drive peer config, client peer-list transit allowed_ips, egress self-route exclusion, packet transit, and non-zero handshake"

@@ -121,6 +121,9 @@ func TestF011ClientdStreamSnapshotDrivesAmneziaWGHandshake(t *testing.T) {
 		masterIP.String() + "/32",
 		clientIP.String() + "/32",
 	}, 5*time.Second)
+	assertPeerListExcludes(t, cpClient, "egress-a", "master-a", []string{
+		clientIP.String() + "/32",
+	}, 5*time.Second)
 	waitForPeerRoute(t, clientLink, clientTransport.Name(), masterIP.String()+"/32", clientIP.String(), 5*time.Second)
 	assertPacketTransit(t, clientDevice.tun, masterDevice.tun, clientIP, masterIP, 5*time.Second)
 	assertPacketTransit(t, masterDevice.tun, clientDevice.tun, masterIP, clientIP, 5*time.Second)
@@ -440,6 +443,38 @@ func assertClientPeerListAllows(t *testing.T, client pb.ControlPlaneClient, subj
 		}
 		if len(missing) > 0 {
 			t.Fatalf("peer-list %s allowed_ips = %v, missing %v", peerName, allowed, missing)
+		}
+		return
+	}
+	t.Fatalf("peer-list snapshot for %s missing peer %s: %#v", subject, peerName, update.GetPeers())
+}
+
+func assertPeerListExcludes(t *testing.T, client pb.ControlPlaneClient, subject, peerName string, forbiddenAllowed []string, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	stream, err := client.StreamPeerList(ctx, &pb.StreamPeerListRequest{NodeName: subject})
+	if err != nil {
+		t.Fatalf("stream peer-list for %s: %v", subject, err)
+	}
+	update, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv peer-list snapshot for %s: %v", subject, err)
+	}
+	for _, peer := range update.GetPeers() {
+		if peer.GetPeerName() != peerName {
+			continue
+		}
+		allowed := peer.GetAllowedIps()
+		var forbidden []string
+		for _, wantAbsent := range forbiddenAllowed {
+			if containsString(allowed, wantAbsent) {
+				forbidden = append(forbidden, wantAbsent)
+			}
+		}
+		if len(forbidden) > 0 {
+			t.Fatalf("peer-list %s allowed_ips = %v, forbidden %v for subject %s", peerName, allowed, forbidden, subject)
 		}
 		return
 	}
