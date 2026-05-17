@@ -105,6 +105,25 @@ if { [ "${MESH_ALLOW_INSECURE_CP:-}" = "true" ] || [ "${MESH_ALLOW_INSECURE_CP:-
     env_flags="${env_flags} --allow-insecure-control-plane"
 fi
 
+# Default path flags — auto-detect prepared layout in /config/ when the
+# corresponding CLI flag is absent. Section 0 writes certs from env (B64),
+# so these files exist by the time we reach this point.
+if ! _cli_has "--cert" "$@" && [ -f /config/node.crt ]; then
+    env_flags="${env_flags} --cert=/config/node.crt"
+fi
+if ! _cli_has "--key" "$@" && [ -f /config/node.key ]; then
+    env_flags="${env_flags} --key=/config/node.key"
+fi
+if ! _cli_has "--ca-cert" "$@" && [ -f /config/ca.crt ]; then
+    env_flags="${env_flags} --ca-cert=/config/ca.crt"
+fi
+if ! _cli_has "--state-dir" "$@"; then
+    env_flags="${env_flags} --state-dir=/config"
+fi
+if ! _cli_has "--wireguard-private-key" "$@" && [ -f /config/wireguard-private.key ]; then
+    env_flags="${env_flags} --wireguard-private-key=/config/wireguard-private.key"
+fi
+
 if [ -n "${env_flags}" ]; then
     echo "client-init: merging env-derived flags:${env_flags}"
     # shellcheck disable=SC2086
