@@ -363,6 +363,51 @@ func TestApplyRegisteredMeshPeerAddsPeerAndRoute(t *testing.T) {
 	}
 }
 
+func TestApplyRegisteredMeshPeerSkipsClientRole(t *testing.T) {
+	t.Parallel()
+
+	var meshTransport *fakeMasterTransport
+	listener, err := wg.NewDualListener(wg.DualListenerConfig{
+		VanillaFactory: func(name string) (wg.Transport, error) {
+			return &fakeMasterTransport{name: name, protocol: wg.ProtocolVanilla}, nil
+		},
+		AWGFactory: func(name string) (wg.Transport, error) {
+			meshTransport = &fakeMasterTransport{name: name, protocol: wg.ProtocolAmneziaWG}
+			return meshTransport, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDualListener: %v", err)
+	}
+	if err := listener.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	link := &fakeMasterLinkConfigurator{}
+	peerKey := wg.Key{1, 2, 3}
+	err = applyRegisteredMeshPeer(listener, "master-a", link, mustIPNet(t, "1.0.0.1/32"), control_plane.RegisteredNode{
+		Name:         "client-a",
+		Roles:        []role.Role{role.RoleClient},
+		OverlayIP:    "1.0.0.131",
+		Pubkey:       peerKey[:],
+		EndpointHost: "127.0.0.1:51820",
+		Protocol:     string(wg.ProtocolAmneziaWG),
+	})
+	if err != nil {
+		t.Fatalf("applyRegisteredMeshPeer: %v", err)
+	}
+	if len(meshTransport.peers) != 0 {
+		t.Fatalf("mesh peers = %#v, want no client peer", meshTransport.peers)
+	}
+	link.mu.Lock()
+	routes := append([]fakeMasterLinkRoute(nil), link.routes...)
+	link.mu.Unlock()
+	if len(routes) != 0 {
+		t.Fatalf("routes = %#v, want no client mesh route", routes)
+	}
+}
+
 func mustIPNet(t *testing.T, cidr string) *net.IPNet {
 	t.Helper()
 	ip, ipNet, err := net.ParseCIDR(cidr)

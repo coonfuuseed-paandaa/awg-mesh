@@ -613,6 +613,82 @@ func TestServer_StreamPeerListExcludesRegisteredSubjectOverlayFromAllowedIPs(t *
 	}
 }
 
+func TestServer_StreamPeerListIncludesRegisteredClientTransitOverlayForEgress(t *testing.T) {
+	client, srv, teardown := startTestServer(t)
+	defer teardown()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "master-01",
+		Roles:       []string{"master"},
+		NodeCertPem: []byte("test-cert"),
+		OverlayIp:   "172.20.70.3",
+		Region:      "ru",
+		Pubkey:      []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "egress-us",
+		Roles:       []string{"egress"},
+		NodeCertPem: []byte("test-cert-egress-us"),
+		OverlayIp:   "172.20.70.35",
+		Region:      "us",
+		Pubkey:      []byte{32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "egress-kz",
+		Roles:       []string{"egress"},
+		NodeCertPem: []byte("test-cert-egress-kz"),
+		OverlayIp:   "172.20.70.37",
+		Region:      "kz",
+		Pubkey:      []byte{31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.RegisterNode(ctx, &pb.RegisterNodeRequest{
+		NodeName:    "local-test",
+		Roles:       []string{"client"},
+		NodeCertPem: []byte("test-cert-client"),
+		OverlayIp:   "172.20.70.131",
+		Region:      "local",
+		Pubkey:      []byte{30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 255},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if entry, ok := srv.ledger.Lookup("172.20.70.131"); !ok || entry.OwningMaster != "master-01" {
+		t.Fatalf("client ownership after register = (%+v, %v), want owner master-01", entry, ok)
+	}
+	stream, err := client.StreamPeerList(ctx, &pb.StreamPeerListRequest{NodeName: "egress-us"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(update.GetPeers()) != 1 {
+		t.Fatalf("expected one master peer, got %d", len(update.GetPeers()))
+	}
+	allowed := update.GetPeers()[0].GetAllowedIps()
+	for _, want := range []string{"172.20.70.3/32", "172.20.70.37/32", "172.20.70.131/32"} {
+		if !stringSliceContains(allowed, want) {
+			t.Fatalf("allowed_ips = %v, missing transit overlay %s", allowed, want)
+		}
+	}
+	if stringSliceContains(allowed, "172.20.70.35/32") {
+		t.Fatalf("allowed_ips = %v, must not include subject overlay", allowed)
+	}
+}
+
 func TestServer_RegisterNodeBackfillsExistingNonClientOverlayWhenMasterRegisters(t *testing.T) {
 	client, srv, teardown := startTestServer(t)
 	defer teardown()

@@ -244,7 +244,7 @@ func seedExistingRegisteredNodeOwnership(registry *Registry, ledger *Ledger) err
 }
 
 func seedRegisteredNodeOwnership(registry *Registry, ledger *Ledger, node RegisteredNode) error {
-	if slices.Contains(node.Roles, role.RoleMaster) || slices.Contains(node.Roles, role.RoleClient) {
+	if slices.Contains(node.Roles, role.RoleMaster) {
 		return nil
 	}
 	owner, ok := singleSelfRegisteredMaster(registry, ledger)
