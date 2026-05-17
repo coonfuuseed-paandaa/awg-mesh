@@ -129,8 +129,8 @@ func TestGenerateDeployRSCClientCommandUsesMTLS(t *testing.T) {
 	if !strings.Contains(script, "--ca-cert /config/ca.crt") {
 		t.Fatalf("client command missing CA cert flag:\n%s", script)
 	}
-	if !strings.Contains(script, "--listen-port 443") {
-		t.Fatalf("client command missing WireGuard listen-port flag:\n%s", script)
+	if !strings.Contains(script, "--mesh-listen-port 443") {
+		t.Fatalf("client command missing WireGuard mesh-listen-port flag:\n%s", script)
 	}
 	if !strings.Contains(script, "--endpoint-host router.example.test:443") {
 		t.Fatalf("client command missing endpoint-host flag:\n%s", script)
