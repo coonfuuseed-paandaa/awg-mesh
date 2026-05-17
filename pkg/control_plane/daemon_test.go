@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
 	"google.golang.org/grpc"
@@ -105,6 +106,42 @@ func TestNewDaemon_RejectsIncompleteDefaultCAMaterial(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected incomplete default CA material to fail")
+	}
+}
+
+func TestDaemon_SelfRegisterBackfillsExistingNonClientOwnership(t *testing.T) {
+	d, err := NewDaemon(Config{
+		ListenAddr:   "127.0.0.1:0",
+		StateDir:     t.TempDir(),
+		StartupGrace: 0,
+	})
+	if err != nil {
+		t.Fatalf("NewDaemon: %v", err)
+	}
+	if err := d.registry.Register(RegisteredNode{
+		Name:        "egress-us",
+		Roles:       []role.Role{role.RoleEgress},
+		OverlayIP:   "172.20.70.35",
+		Region:      "us",
+		NodeCertPEM: fakeCert,
+	}); err != nil {
+		t.Fatalf("register stale egress: %v", err)
+	}
+	if entry, ok := d.ledger.Lookup("172.20.70.35"); ok {
+		t.Fatalf("egress ownership before master self-register = %+v, want absent", entry)
+	}
+
+	if err := d.SelfRegister(RegisteredNode{
+		Name:        "master-01",
+		Roles:       []role.Role{role.RoleMaster},
+		OverlayIP:   "172.20.70.3",
+		Region:      "ru",
+		NodeCertPEM: []byte("self-registered-master"),
+	}); err != nil {
+		t.Fatalf("SelfRegister: %v", err)
+	}
+	if entry, ok := d.ledger.Lookup("172.20.70.35"); !ok || entry.OwningMaster != "master-01" {
+		t.Fatalf("egress ownership after master self-register = (%+v, %v), want owner master-01", entry, ok)
 	}
 }
 
