@@ -103,6 +103,7 @@ nodes:
     roles: [master, balancer, egress]
     overlay_ip: 172.21.92.2
     public_ip: 203.0.113.10
+    mesh_listen_port: 443
     internet_iface: eth0
   - name: home-01
     roles: [client]

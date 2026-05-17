@@ -188,6 +188,13 @@ func applyRegisteredMeshPeer(listener *wg.DualListener, masterName string, link 
 		ReplaceAllowedIPs: true,
 		AllowedIPs:        []net.IPNet{*peerOverlay},
 	}
+	if endpoint := strings.TrimSpace(node.EndpointHost); endpoint != "" {
+		addr, err := net.ResolveUDPAddr("udp", endpoint)
+		if err != nil {
+			return fmt.Errorf("parse registered peer %q endpoint %q: %w", node.Name, node.EndpointHost, err)
+		}
+		peer.Endpoint = addr
+	}
 	if err := listener.AddMeshPeer(peer); err != nil {
 		return fmt.Errorf("add registered peer %q to mesh listener: %w", node.Name, err)
 	}

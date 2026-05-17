@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/role"
 )
@@ -63,7 +65,9 @@ type NodeV2 struct {
 	Roles           []role.Role `yaml:"roles"`
 	OverlayIP       string      `yaml:"overlay_ip"`
 	BridgeIP        string      `yaml:"bridge_ip,omitempty"`
-	PublicIP        string      `yaml:"public_ip,omitempty"` // ingress only
+	PublicIP        string      `yaml:"public_ip,omitempty"`
+	MeshListenPort  int         `yaml:"mesh_listen_port,omitempty"`
+	MeshEndpoint    string      `yaml:"mesh_endpoint,omitempty"`
 	Region          string      `yaml:"region,omitempty"`
 	Platform        string      `yaml:"platform,omitempty"`         // "linux" | "mikrotik" | etc.
 	PreferredMaster string      `yaml:"preferred_master,omitempty"` // clients (HA-2 metric hint)
@@ -139,6 +143,17 @@ func ValidateV2(t *TopologyV2) error {
 		if err := role.ValidateComposability(n.Roles); err != nil {
 			return fmt.Errorf("topology: node %q role composability: %w", n.Name, err)
 		}
+		if n.MeshListenPort < 0 || n.MeshListenPort > 65535 {
+			return fmt.Errorf("topology: node %q mesh_listen_port must be in range 0..65535", n.Name)
+		}
+		if endpoint := strings.TrimSpace(n.MeshEndpoint); endpoint != "" {
+			if err := validateV2MeshEndpoint(endpoint); err != nil {
+				return fmt.Errorf("topology: node %q mesh_endpoint: %w", n.Name, err)
+			}
+		}
+		if _, _, err := net.SplitHostPort(strings.TrimSpace(n.PublicIP)); err == nil {
+			return fmt.Errorf("topology: node %q public_ip must not include a port; use mesh_endpoint for explicit host:port", n.Name)
+		}
 		if n.OverlayIP == "" {
 			return fmt.Errorf("%w (node %q)", ErrV2NodeMissingOverlay, n.Name)
 		}
@@ -157,5 +172,20 @@ func ValidateV2(t *TopologyV2) error {
 		seenOverlay[n.OverlayIP] = n.Name
 	}
 
+	return nil
+}
+
+func validateV2MeshEndpoint(endpoint string) error {
+	host, portText, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("must be host:port: %w", err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("must include a non-empty host")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("has invalid port %q", portText)
+	}
 	return nil
 }

@@ -119,6 +119,8 @@ func TestGenerateDeployRSCClientCommandUsesMTLS(t *testing.T) {
 		NodeKeyB64:    "bm9kZS1rZXk=",
 		CACertB64:     "Y2EtY2VydA==",
 		ControlPlane:  "192.0.2.5:9090",
+		ListenPort:    443,
+		EndpointHost:  "router.example.test:443",
 	})
 	if err != nil {
 		t.Fatalf("GenerateDeployRSC returned error: %v", err)
@@ -126,6 +128,12 @@ func TestGenerateDeployRSCClientCommandUsesMTLS(t *testing.T) {
 
 	if !strings.Contains(script, "--ca-cert /config/ca.crt") {
 		t.Fatalf("client command missing CA cert flag:\n%s", script)
+	}
+	if !strings.Contains(script, "--listen-port 443") {
+		t.Fatalf("client command missing WireGuard listen-port flag:\n%s", script)
+	}
+	if !strings.Contains(script, "--endpoint-host router.example.test:443") {
+		t.Fatalf("client command missing endpoint-host flag:\n%s", script)
 	}
 	if !strings.Contains(script, "Responsible master coordination target: 192.0.2.5:9090") {
 		t.Fatalf("script does not label the responsible master coordination target:\n%s", script)
@@ -221,6 +229,11 @@ func TestGenerateDeployRSCErrors(t *testing.T) {
 		{name: "non-numeric coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:http" }, expectError: "control-plane must be a single-line host:port value"},
 		{name: "zero coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:0" }, expectError: "control-plane must be a single-line host:port value"},
 		{name: "overflow coordination target port", mutate: func(ds *DeployScript) { ds.ControlPlane = "example.com:65536" }, expectError: "control-plane must be a single-line host:port value"},
+		{name: "negative listen port", mutate: func(ds *DeployScript) { ds.ListenPort = -1 }, expectError: "listen_port must be in range"},
+		{name: "overflow listen port", mutate: func(ds *DeployScript) { ds.ListenPort = 65536 }, expectError: "listen_port must be in range"},
+		{name: "multiline endpoint host", mutate: func(ds *DeployScript) { ds.EndpointHost = "198.51.100.10:443\n/system reboot" }, expectError: "endpoint_host must be a single-line host:port value"},
+		{name: "whitespace endpoint host", mutate: func(ds *DeployScript) { ds.EndpointHost = "198.51.100.10:443 --debug" }, expectError: "endpoint_host must be a single-line host:port value"},
+		{name: "zero endpoint host port", mutate: func(ds *DeployScript) { ds.EndpointHost = "example.com:0" }, expectError: "endpoint_host must be a single-line host:port value"},
 	}
 
 	for _, tt := range tests {

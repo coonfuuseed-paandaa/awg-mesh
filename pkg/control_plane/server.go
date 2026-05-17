@@ -17,6 +17,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const defaultPeerPersistentKeepaliveSecs int32 = 25
+
 // Server implements pb.ControlPlaneServer. Wire it into a grpc.Server
 // via pb.RegisterControlPlaneServer.
 //
@@ -602,6 +604,7 @@ func (s *Server) buildPeerListUpdate(subject string, snapshot []OwnershipEntry, 
 			}
 			entry.PeerPubkey = node.Pubkey
 			entry.PeerEndpointHost = node.EndpointHost
+			entry.PersistentKeepaliveSecs = defaultPeerPersistentKeepaliveSecs
 			entry.Protocol = node.Protocol
 		}
 		peers = append(peers, entry)

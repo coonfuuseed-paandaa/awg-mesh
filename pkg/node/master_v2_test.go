@@ -331,11 +331,12 @@ func TestApplyRegisteredMeshPeerAddsPeerAndRoute(t *testing.T) {
 	link := &fakeMasterLinkConfigurator{}
 	peerKey := wg.Key{1, 2, 3}
 	err = applyRegisteredMeshPeer(listener, "master-a", link, mustIPNet(t, "1.0.0.1/32"), control_plane.RegisteredNode{
-		Name:      "egress-a",
-		Roles:     []role.Role{role.RoleEgress},
-		OverlayIP: "1.0.0.2",
-		Pubkey:    peerKey[:],
-		Protocol:  string(wg.ProtocolAmneziaWG),
+		Name:         "egress-a",
+		Roles:        []role.Role{role.RoleEgress},
+		OverlayIP:    "1.0.0.2",
+		Pubkey:       peerKey[:],
+		EndpointHost: "127.0.0.1:51820",
+		Protocol:     string(wg.ProtocolAmneziaWG),
 	})
 	if err != nil {
 		t.Fatalf("applyRegisteredMeshPeer: %v", err)
@@ -349,6 +350,9 @@ func TestApplyRegisteredMeshPeerAddsPeerAndRoute(t *testing.T) {
 	}
 	if len(peer.AllowedIPs) != 1 || peer.AllowedIPs[0].String() != "1.0.0.2/32" {
 		t.Fatalf("peer allowed IPs = %#v, want 1.0.0.2/32", peer.AllowedIPs)
+	}
+	if peer.Endpoint == nil || peer.Endpoint.String() != "127.0.0.1:51820" {
+		t.Fatalf("peer endpoint = %v, want 127.0.0.1:51820", peer.Endpoint)
 	}
 	link.mu.Lock()
 	routes := append([]fakeMasterLinkRoute(nil), link.routes...)

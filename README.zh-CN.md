@@ -228,6 +228,7 @@ nodes:
     overlay_ip: 172.21.92.2
     bridge_ip: 192.168.93.10
     public_ip: 203.0.113.10
+    mesh_listen_port: 443
     region: eu
     internet_iface: eth0
 

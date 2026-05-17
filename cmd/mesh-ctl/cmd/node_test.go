@@ -219,7 +219,7 @@ func TestRunNodePrepareCommandWritesMikrotikContainerRouterOSScript(t *testing.T
 		"key=MESH_NODE_CERT_B64",
 		"key=MESH_NODE_KEY_B64",
 		"key=MESH_CA_CERT_B64",
-		`cmd="--mode client --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --ca-cert /config/ca.crt --state-dir /config --iface awg-mesh0 --protocol amneziawg"`,
+		`cmd="--mode client --control-plane 192.0.2.5:9090 --name router-01 --overlay-ip 172.21.92.130 --region default --cert /config/node.crt --key /config/node.key --ca-cert /config/ca.crt --state-dir /config --iface awg-mesh0 --protocol amneziawg --listen-port 51821"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("RouterOS script missing %q:\n%s", want, redactRouterOSScript(script))
@@ -557,6 +557,53 @@ func TestRunNodeInitCommandRegistersPreparedNode(t *testing.T) {
 	}
 	if got.NodeName != "master-01" || !got.Accepted || got.RegisteredAtUnix != 123 {
 		t.Fatalf("unexpected init JSON: %+v", got)
+	}
+}
+
+func TestRunNodeInitCommandRegistersPreparedMeshEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	topologyPath := writeNodeMeshEndpointTopology(t, dir)
+	configDir := filepath.Join(dir, "config")
+
+	if err := runNodePrepareCommand(nodePrepareOptions{
+		nodeName:     "egress-us",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		output:       "human",
+		stdout:       &bytes.Buffer{},
+	}); err != nil {
+		t.Fatalf("prepare node: %v", err)
+	}
+
+	server := &capturingRegisterServer{
+		response: &controlpb.RegisterNodeResponse{Accepted: true, RegisteredAtUnix: 123},
+	}
+	addr, _, teardown := startMTLSControlPlaneTestServer(t, configDir, server)
+	defer teardown()
+
+	err := runNodeInitCommand(nodeInitOptions{
+		nodeName:     "egress-us",
+		topologyPath: topologyPath,
+		configDir:    configDir,
+		controlPlane: addr,
+		nodeVersion:  "test-build-version",
+		output:       "json",
+		timeout:      2 * time.Second,
+		stdout:       &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatalf("runNodeInitCommand: %v", err)
+	}
+
+	req := server.capturedRegisterRequest(t)
+	if req.GetEndpointHost() != "203.0.113.35:443" {
+		t.Fatalf("RegisterNode endpoint = %q, want 203.0.113.35:443", req.GetEndpointHost())
+	}
+	if len(req.GetPubkey()) != 32 {
+		t.Fatalf("RegisterNode pubkey length = %d, want 32", len(req.GetPubkey()))
+	}
+	if req.GetProtocol() != "amneziawg" {
+		t.Fatalf("RegisterNode protocol = %q, want amneziawg", req.GetProtocol())
 	}
 }
 
@@ -937,6 +984,28 @@ nodes:
 `
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatalf("write mikrotik topology fixture: %v", err)
+	}
+	return path
+}
+
+func writeNodeMeshEndpointTopology(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "mesh-endpoint-topology.yml")
+	data := `
+schema_version: 2
+mesh:
+  name: mesh-endpoint-test
+  overlay_supernet: 172.21.92.0/24
+nodes:
+  - name: egress-us
+    roles: [egress]
+    overlay_ip: 172.21.92.35
+    public_ip: 203.0.113.35
+    mesh_listen_port: 443
+    mesh_protocol: amneziawg
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write mesh endpoint topology fixture: %v", err)
 	}
 	return path
 }
