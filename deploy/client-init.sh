@@ -60,6 +60,58 @@ write_b64_file "${MESH_NODE_KEY_B64:-}" /config/node.key MESH_NODE_KEY_B64
 write_b64_file "${MESH_CA_CERT_B64:-}" /config/ca.crt MESH_CA_CERT_B64
 
 ###############################################################################
+# 0.5. Merge MESH_* env vars into CLI args (env < CLI precedence)
+###############################################################################
+# Adds env-derived flags only when the corresponding CLI flag is absent from
+# $@. This lets MikroTik RouterOS Container deployments set env vars instead
+# of baking everything into cmd, while explicit CLI flags always win.
+
+_cli_has() {
+    _flag="$1"; shift
+    for _a; do case "$_a" in "${_flag}"|"${_flag}="*) return 0 ;; esac; done
+    return 1
+}
+
+env_flags=""
+if [ -n "${MESH_MODE:-}" ] && ! _cli_has "--mode" "$@"; then
+    env_flags="${env_flags} --mode=${MESH_MODE}"
+fi
+if [ -n "${MESH_NAME:-}" ] && ! _cli_has "--name" "$@"; then
+    env_flags="${env_flags} --name=${MESH_NAME}"
+fi
+if [ -n "${MESH_OVERLAY_IP:-}" ] && ! _cli_has "--overlay-ip" "$@"; then
+    env_flags="${env_flags} --overlay-ip=${MESH_OVERLAY_IP}"
+fi
+if [ -n "${MESH_CONTROL_PLANE:-}" ] && ! _cli_has "--control-plane" "$@"; then
+    env_flags="${env_flags} --control-plane=${MESH_CONTROL_PLANE}"
+fi
+if [ -n "${MESH_REGION:-}" ] && ! _cli_has "--region" "$@"; then
+    env_flags="${env_flags} --region=${MESH_REGION}"
+fi
+if [ -n "${MESH_LISTEN_PORT:-}" ] && ! _cli_has "--listen-port" "$@"; then
+    env_flags="${env_flags} --listen-port=${MESH_LISTEN_PORT}"
+fi
+if [ -n "${MESH_ENDPOINT_HOST:-}" ] && ! _cli_has "--endpoint-host" "$@"; then
+    env_flags="${env_flags} --endpoint-host=${MESH_ENDPOINT_HOST}"
+fi
+if [ -n "${MESH_PROTOCOL:-}" ] && ! _cli_has "--protocol" "$@"; then
+    env_flags="${env_flags} --protocol=${MESH_PROTOCOL}"
+fi
+if [ -n "${MESH_PUBLIC_IP:-}" ] && ! _cli_has "--public-ip" "$@"; then
+    env_flags="${env_flags} --public-ip=${MESH_PUBLIC_IP}"
+fi
+if { [ "${MESH_ALLOW_INSECURE_CP:-}" = "true" ] || [ "${MESH_ALLOW_INSECURE_CP:-}" = "1" ]; } \
+        && ! _cli_has "--allow-insecure-control-plane" "$@"; then
+    env_flags="${env_flags} --allow-insecure-control-plane"
+fi
+
+if [ -n "${env_flags}" ]; then
+    echo "client-init: merging env-derived flags:${env_flags}"
+    # shellcheck disable=SC2086
+    set -- ${env_flags} "$@"
+fi
+
+###############################################################################
 # 1. Pin control-plane route before the Go process creates a TUN device
 ###############################################################################
 
