@@ -79,7 +79,8 @@ jobs:
 
       - name: Run Privileged Tests
         run: |
-          sudo CGO_ENABLED=1 $(which go) test -race -coverprofile=coverage-priv.out -covermode=atomic \
+          go_bin="$(command -v go)"
+          sudo CGO_ENABLED=1 "$go_bin" test -race -coverprofile=coverage-priv.out -covermode=atomic \
             -count=1 -timeout 120s ./pkg/routing/ -v
 
       - name: Install govulncheck
@@ -361,22 +362,19 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
 
-      - name: Build and Push awg-mesh alias (node only)
+      - name: Retag awg-mesh alias (node only)
         if: matrix.image == 'node' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name == 'push'
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platforms }}
-          push: true
-          tags: ${{ steps.meta-alias.outputs.tags }}
-          labels: ${{ steps.meta-alias.outputs.labels }}
-          sbom: true
-          provenance: mode=max
-          build-args: |
-            VERSION=${{ steps.ver.outputs.version }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+        env:
+          SOURCE_IMAGE: ghcr.io/coonfuuseed-paandaa/awg-mesh-node:${{ github.sha }}
+          ALIAS_TAGS: ${{ steps.meta-alias.outputs.tags }}
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            args+=(--tag "$tag")
+          done <<< "$ALIAS_TAGS"
+          docker buildx imagetools create "${args[@]}" "$SOURCE_IMAGE"
 
       # Verify the published manifest list advertises every platform the
       # matrix declared. Catches silent regressions where a config change
