@@ -26,7 +26,7 @@ FROM alpine:3.21
 # package symlinks to iptables-nft, which collides with the direct nftables
 # Go API used by the client — silent rule absence in some kernels per ADR-2).
 # iproute2 provides 'ip' for routing/rule manipulation and rt_tables files.
-RUN apk add --no-cache iproute2 nftables iptables-legacy
+RUN apk add --no-cache iproute2 nftables iptables-legacy wireguard-tools
 
 COPY --from=builder /build/bin/awg-mesh-node /usr/local/bin/awg-mesh-node
 COPY deploy/client-init.sh /usr/local/bin/client-init.sh

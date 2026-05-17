@@ -121,8 +121,15 @@ fi
 if ! _cli_has "--state-dir" "$@"; then
     env_flags="${env_flags} --state-dir=/config"
 fi
-if ! _cli_has "--wireguard-private-key" "$@" && [ -f /config/wireguard-private.key ]; then
-    env_flags="${env_flags} --wireguard-private-key=/config/wireguard-private.key"
+if ! _cli_has "--wireguard-private-key" "$@"; then
+    if [ ! -f /config/wireguard-private.key ] && command -v wg >/dev/null 2>&1; then
+        wg genkey > /config/wireguard-private.key
+        chmod 600 /config/wireguard-private.key
+        echo "client-init: generated WireGuard private key at /config/wireguard-private.key"
+    fi
+    if [ -f /config/wireguard-private.key ]; then
+        env_flags="${env_flags} --wireguard-private-key=/config/wireguard-private.key"
+    fi
 fi
 
 if [ -n "${env_flags}" ]; then
