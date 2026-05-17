@@ -681,7 +681,7 @@ pass "T4: .rsc fixture ready: ${RSC_FILE} (${RSC_LINES} lines)"
 
 if grep -q "/container/add interface=${ROUTEROS_CONTAINER_NAME}" "${RSC_FILE}" \
     && grep -Eq '(remote-image|image)=ghcr.io/coonfuuseed-paandaa/awg-mesh-client:[^"[:space:]]+' "${RSC_FILE}" \
-    && grep -q "cmd=\"--mode client --control-plane ${CP_ROUTEROS_ADDR}" "${RSC_FILE}" \
+    && grep -q "cmd=\"--mode clientd --control-plane ${CP_ROUTEROS_ADDR}" "${RSC_FILE}" \
     && grep -q -- "--ca-cert /config/ca.crt" "${RSC_FILE}" \
     && ! grep -q -- "--allow-insecure-control-plane" "${RSC_FILE}"; then
     pass "T4.a: generated .rsc defines awg-mesh-client container command"
