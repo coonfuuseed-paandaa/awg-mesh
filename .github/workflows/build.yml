@@ -165,9 +165,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     # Release multi-arch images — one manifest list covers every platform the
-    # project is expected to run on. Main pushes publish amd64-only SHA/latest
-    # images after the same Docker smoke test so deploy-test images are fast;
-    # full platform parity remains a release/tag responsibility.
+    # project is expected to run on. Main pushes use per-image main_platforms:
+    # node = amd64 only (fast deploy-test); client = amd64+arm64 (MikroTik
+    # hAP ax/ax³ targets are ARM64). Release tags pay the full five-platform cost.
     #
     # Release platforms:
     #   linux/amd64    Intel/AMD servers, workstations, x86_64 laptops
@@ -183,9 +183,11 @@ jobs:
           - image: node
             dockerfile: deploy/Dockerfile.node
             platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6
+            main_platforms: linux/amd64
           - image: client
             dockerfile: deploy/Dockerfile.client
             platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6
+            main_platforms: linux/amd64,linux/arm64
     permissions:
       contents: read
       packages: write
@@ -327,16 +329,17 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
 
-      # Main is the fast deploy-test lane: publish only the amd64 image after
-      # Dockerfile smoke checks. Release/tag pushes below pay the full
-      # multi-arch cost.
-      - name: Build and Push (amd64 main)
+      # Main is the fast deploy-test lane: node publishes amd64 only;
+      # client publishes amd64+arm64 because MikroTik RouterOS Container
+      # targets are ARM64 (hAP ax/ax³). Release tags pay the full
+      # five-platform cost.
+      - name: Build and Push (main)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: ${{ matrix.main_platforms }}
           push: true
           tags: ${{ steps.meta-primary.outputs.tags }}
           labels: ${{ steps.meta-primary.outputs.labels }}
@@ -403,18 +406,21 @@ jobs:
 
       # Main pushes publish amd64-only deploy-test images. Verify that the
       # SHA tag reached both registries before a deployer tries to pull it.
-      - name: Verify amd64 manifest (GHCR + Docker Hub)
+      - name: Verify main manifest (GHCR + Docker Hub)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           set -e
+          IFS=',' read -ra PLATFORMS <<< "${{ matrix.main_platforms }}"
           for registry in \
               "ghcr.io/coonfuuseed-paandaa/awg-mesh-${{ matrix.image }}" \
               "${{ secrets.DOCKERHUB_USERNAME }}/awg-mesh-${{ matrix.image }}"; do
             echo "::group::Verify ${registry}:${{ github.sha }}"
             MANIFEST=$(docker buildx imagetools inspect "${registry}:${{ github.sha }}")
             echo "$MANIFEST"
-            echo "$MANIFEST" | grep -q "linux/amd64" || \
-              (echo "::error::${registry}: manifest missing linux/amd64" && exit 1)
+            for platform in "${PLATFORMS[@]}"; do
+              echo "$MANIFEST" | grep -q "$platform" || \
+                (echo "::error::${registry}: manifest missing $platform" && exit 1)
+            done
             echo "::endgroup::"
           done
 
