@@ -363,7 +363,7 @@ func TestApplyRegisteredMeshPeerAddsPeerAndRoute(t *testing.T) {
 	}
 }
 
-func TestApplyRegisteredMeshPeerSkipsClientRole(t *testing.T) {
+func TestApplyRegisteredMeshPeerAppliesClientRole(t *testing.T) {
 	t.Parallel()
 
 	var meshTransport *fakeMasterTransport
@@ -397,14 +397,17 @@ func TestApplyRegisteredMeshPeerSkipsClientRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyRegisteredMeshPeer: %v", err)
 	}
-	if len(meshTransport.peers) != 0 {
-		t.Fatalf("mesh peers = %#v, want no client peer", meshTransport.peers)
+	if len(meshTransport.peers) != 1 {
+		t.Fatalf("mesh peers count = %d, want 1 (client peer applied)", len(meshTransport.peers))
+	}
+	if meshTransport.peers[0].PublicKey != peerKey {
+		t.Fatalf("mesh peer pubkey = %s, want %s", meshTransport.peers[0].PublicKey, peerKey)
 	}
 	link.mu.Lock()
 	routes := append([]fakeMasterLinkRoute(nil), link.routes...)
 	link.mu.Unlock()
-	if len(routes) != 0 {
-		t.Fatalf("routes = %#v, want no client mesh route", routes)
+	if len(routes) != 1 {
+		t.Fatalf("routes count = %d, want 1 (client overlay route)", len(routes))
 	}
 }
 
