@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	pkgtls "github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/tls"
 	"github.com/coonfuuseed-paandaa/awg-mesh/v2/pkg/wg"
 	pb "github.com/coonfuuseed-paandaa/awg-mesh/v2/proto/control_plane"
+	"google.golang.org/grpc"
 )
 
 func TestParseCommandConfigRequiredFlagsAndProtocol(t *testing.T) {
@@ -445,4 +447,113 @@ func clientCertCommonName(t *testing.T, cert *tls.Certificate) string {
 		t.Fatalf("parse client cert: %v", err)
 	}
 	return parsed.Subject.CommonName
+}
+
+type reconnectTestServer struct {
+	pb.UnimplementedControlPlaneServer
+	registrations chan *pb.RegisterNodeRequest
+	peerCalls     atomic.Int32
+}
+
+func (s *reconnectTestServer) RegisterNode(_ context.Context, req *pb.RegisterNodeRequest) (*pb.RegisterNodeResponse, error) {
+	s.registrations <- req
+	return &pb.RegisterNodeResponse{Accepted: true}, nil
+}
+
+func (s *reconnectTestServer) StreamPeerList(req *pb.StreamPeerListRequest, stream grpc.ServerStreamingServer[pb.PeerListUpdate]) error {
+	call := s.peerCalls.Add(1)
+	if call == 1 {
+		_ = stream.Send(&pb.PeerListUpdate{SubjectNode: req.GetNodeName(), Version: 1})
+		return nil
+	}
+	<-stream.Context().Done()
+	return nil
+}
+
+func (s *reconnectTestServer) StreamOwnership(_ *pb.StreamOwnershipRequest, stream grpc.ServerStreamingServer[pb.OwnershipUpdate]) error {
+	_ = stream.Send(&pb.OwnershipUpdate{Version: 1, FullSnapshot: true})
+	<-stream.Context().Done()
+	return nil
+}
+
+func TestRunWithConfigReconnectsAfterStreamEOF(t *testing.T) {
+	privateKey, err := wg.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate private key: %v", err)
+	}
+	preparedDir := t.TempDir()
+	certPath := filepath.Join(preparedDir, "node.crt")
+	wgKeyPath := filepath.Join(preparedDir, "wireguard-private.key")
+	if err := os.WriteFile(certPath, []byte("cert-bytes"), 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(wgKeyPath, []byte(privateKey.String()+"\n"), 0o600); err != nil {
+		t.Fatalf("write wg key: %v", err)
+	}
+
+	server := &reconnectTestServer{registrations: make(chan *pb.RegisterNodeRequest, 4)}
+	addr, cleanup := startTestControlPlane(t, server)
+	defer cleanup()
+
+	transport := &fakeTransport{protocol: wg.ProtocolAmneziaWG, name: "awg-test0"}
+	link := &fakeLinkConfigurator{}
+	var stdout strings.Builder
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runWithConfig(ctx, CommandConfig{
+			ControlPlane:              addr,
+			Name:                      "client-a",
+			OverlayIP:                 "10.10.0.10",
+			Region:                    "eu-test",
+			CertPath:                  certPath,
+			WireGuardPrivateKeyPath:   wgKeyPath,
+			StateDir:                  t.TempDir(),
+			InterfaceName:             "awg-test0",
+			Protocol:                  wg.ProtocolAmneziaWG,
+			Roles:                     []role.Role{role.RoleClient},
+			AllowInsecureControlPlane: true,
+		}, &stdout, commandRuntime{
+			link: link,
+			newTransport: func(protocol wg.Protocol, name string) (wg.Transport, error) {
+				return transport, nil
+			},
+		})
+	}()
+
+	select {
+	case <-server.registrations:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for first registration")
+	}
+
+	select {
+	case <-server.registrations:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for reconnect registration")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for server.peerCalls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := server.peerCalls.Load(); got < 2 {
+		t.Fatalf("peer stream opened %d times, want >= 2", got)
+	}
+
+	if !strings.Contains(stdout.String(), "reconnecting in") {
+		t.Fatal("expected reconnect log message in stdout")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runWithConfig error after cancel: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for clean shutdown")
+	}
 }
