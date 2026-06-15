@@ -8,7 +8,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/amnezia-vpn/amneziawg-go v1.0.4
 	github.com/cilium/ebpf v0.21.0
-	github.com/coder/websocket v1.8.14
+	github.com/coder/websocket v1.8.15
 	github.com/google/gopacket v1.1.19
 	github.com/google/nftables v0.3.0
 	github.com/miekg/dns v1.1.72
