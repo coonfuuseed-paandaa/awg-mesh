@@ -54,6 +54,9 @@ tools/github-panda/
 # local test/coverage artifacts
 .cache/
 coverage.out
+coverage-priv.out
+coverage-merged.out
+.scannerwork/
 bin/*.log
 bin/race-test.sh
 bin/diag.sh
